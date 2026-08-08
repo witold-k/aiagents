@@ -1,12 +1,11 @@
-name: rust ci
+# .github/workflows/ci.yml
+# GitHub Actions CI/CD Pipeline for Rust
+
+name: Rust CI
 
 on:
   push:
-    branches: 
-      - "*"
   pull_request:
-    branches: 
-      - "*"
 
 env:
   CARGO_TERM_COLOR: always
@@ -15,21 +14,11 @@ env:
 jobs:
   # 1. Build and Test Job
   build-and-test:
-    name: build & test
+    name: Build & Test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libopenblas-dev gfortran
-
-      - name: Install CUDA Toolkit
-        uses: jimver/cuda-toolkit@v0.2.35
-        with:
-          cuda: '13.1.0' 
+        uses: actions/checkout@v7 
 
       - name: Set up Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -37,33 +26,22 @@ jobs:
           toolchain: stable
           components: clippy, llvm-tools-preview
 
-      - name: Compile CPU backend
-        run: cargo build --verbose --features cpu
+      - name: Compile project
+        run: cargo build --verbose
 
-      - name: Run CPU test suite
-        run: cargo test --verbose --features cpu
+      - name: Run test suite
+        run: cargo test --verbose
 
-      - name: Verify CUDA code syntax
-        run: cargo check --verbose --features cuda
+      - name: Run code linter
+        run: cargo clippy -- -D warnings
 
-      - name: Run code linter (CPU)
-        run: cargo clippy --features cpu -- -D warnings
-
-      - name: Run code linter (CUDA)
-        run: cargo clippy --features cuda -- -D warnings
-
-  # 2. Separate Coverage Job
+  # 2. Separate Coverage Job to isolate coverage instrumentation
   coverage:
-    name: test coverage
+    name: Test Coverage
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libopenblas-dev gfortran
+        uses: actions/checkout@v7 
 
       - name: Set up Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -71,9 +49,25 @@ jobs:
           toolchain: stable
           components: llvm-tools-preview
 
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Install grcov
+        run: cargo install grcov
 
-      - name: Generate code coverage
-        run: cargo llvm-cov --features cpu --workspace --lcov --output-path lcov.info
+      - name: Generate profile data
+        env:
+          CARGO_INCREMENTAL: "0"
+          RUSTFLAGS: "-Cinstrument-coverage"
+          LLVM_PROFILE_FILE: "target/coverage/cargo-test-%p-%m.profraw"
+        run: cargo test
+
+      - name: Process report with grcov
+        run: |
+          mkdir -p target/coverage/html
+          grcov . --binary-path ./target/debug/deps/ -s . -t html --branch --ignore-not-existing --ignore '../*' --ignore "/*" -o target/coverage/html
+
+      - name: Upload coverage report artifact
+        uses: actions/upload-artifact@v7 
+        with:
+          name: coverage-report
+          path: target/coverage/html/
+          retention-days: 1
 
