@@ -1,0 +1,79 @@
+name: rust ci
+
+on:
+  push:
+    branches: 
+      - "*"
+  pull_request:
+    branches: 
+      - "*"
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+jobs:
+  # 1. Build and Test Job
+  build-and-test:
+    name: build & test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libopenblas-dev gfortran
+
+      - name: Install CUDA Toolkit
+        uses: jimver/cuda-toolkit@v0.2.35
+        with:
+          cuda: '13.1.0' 
+
+      - name: Set up Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          components: clippy, llvm-tools-preview
+
+      - name: Compile CPU backend
+        run: cargo build --verbose --features cpu
+
+      - name: Run CPU test suite
+        run: cargo test --verbose --features cpu
+
+      - name: Verify CUDA code syntax
+        run: cargo check --verbose --features cuda
+
+      - name: Run code linter (CPU)
+        run: cargo clippy --features cpu -- -D warnings
+
+      - name: Run code linter (CUDA)
+        run: cargo clippy --features cuda -- -D warnings
+
+  # 2. Separate Coverage Job
+  coverage:
+    name: test coverage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libopenblas-dev gfortran
+
+      - name: Set up Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          components: llvm-tools-preview
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Generate code coverage
+        run: cargo llvm-cov --features cpu --workspace --lcov --output-path lcov.info
+
