@@ -93,7 +93,6 @@ pub fn parse_args() -> Result<Args, String> {
                 if task.is_none() {
                      if let Some((before, after)) = value.split_once(':') {
                         task = Some(before.to_string());
-                        FileEntry::from_str(after);
                         let entry = FileEntry::from_str(after);
                         taskdata = Some(entry.unwrap());
                     } else {
