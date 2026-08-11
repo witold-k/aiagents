@@ -6,6 +6,7 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use fsscanner::{
     fileentry::FileEntry,
+    fsscanner_base::collect_files_all,
     pathfilter::Pathfilter,
     pathutils::normalize_path,
 };
@@ -99,6 +100,10 @@ impl<'a> AIAgentLoop<'a> {
          let proj_str = normalize_path(projdir).display().to_string();
          let build_path = format!("{}/build/", proj_str);
          let target_path = format!("{}/target/", proj_str);
+         let mut selected_paths = Vec::<PathBuf>::with_capacity(256);
+         for sel in selected {
+             collect_files_all(sel, &mut selected_paths);
+         }
          let mut selected_entries = FileEntry::vec_from_filtered_pathbufvec(filter, selected.to_vec());
          selected_entries.retain(|entry| {
              let s = entry.to_string();
