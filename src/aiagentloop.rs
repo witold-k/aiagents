@@ -88,80 +88,48 @@ impl<'a> AIAgentLoop<'a> {
     }
 
     pub fn create_files_info(
-        config: &Config,
+        _config: &Config,
         projdir: &Path,
         workspacedir: Option<&Path>,
-        task_id: Tasks,
+        _task_id: Tasks,
         filter: &'a Pathfilter,
         selected: &'a [PathBuf],
-        rng: &mut SimpleRng
+        _rng: &mut SimpleRng
     ) -> Vec<FileEntry> {
-        if matches!(
-            task_id,
-            Tasks::WriteBlockDoc |
-            Tasks::WriteItemDoc |
-            Tasks::WriteModuleDoc |
-            Tasks::ReviewCode
-        ) {
-            let scan_filter_refs: Vec<&str> = config.scanfilter.iter().map(|s| s.as_str()).collect();
-            let mut entries = scan_with_globset_and_filter(
-                projdir, &scan_filter_refs, filter,
-            );
+         let proj_str = normalize_path(projdir).display().to_string();
+         let build_path = format!("{}/build/", proj_str);
+         let target_path = format!("{}/target/", proj_str);
+         let mut selected_entries = FileEntry::vec_from_filtered_pathbufvec(filter, selected.to_vec());
+         selected_entries.retain(|entry| {
+             let s = entry.to_string();
+             s.contains(&build_path) &&
+             s.contains(&target_path)
+         });
 
-            let proj_str = normalize_path(projdir).display().to_string();
-            let build_path = format!("{}/build/", proj_str);
-            let target_path = format!("{}/target/", proj_str);
+         match workspacedir {
+             Some(ws) => {
+                 let mut all_entries = Vec::<FileEntry>::with_capacity(128);
 
-            if entries.is_empty() {
-                let mut ret = FileEntry::vec_from_filtered_pathbufvec(filter, selected.to_vec());
-                ret.retain(|entry| {
-                    let s = entry.to_string();
-                    s.contains(&build_path) &&
-                    s.contains(&target_path)
-                });
-                ret
-            }
-            else {
-                let proj_str = normalize_path(projdir).display().to_string();
-                let test_path = format!("{}/tests/", proj_str);
-                entries.retain(|entry| {
-                    let s = entry.to_string_lossy();
-                    !s.contains(&test_path) &&
-                    !s.contains(&build_path) &&
-                    !s.contains(&target_path)
-                });
-                // Choose one random entry
-                let choice_idx = (rng.next_u32() % entries.len() as u32) as usize;
-                let choice = &entries[choice_idx];
-                vec![FileEntry::from_path(choice)]
-            }
-        }
-        else {
-            match workspacedir {
-                Some(ws) => {
-                    let mut all_entries = Vec::<FileEntry>::with_capacity(128);
+                 for path in scan_with_globset_and_filter(
+                     ws,
+                     &["**/*.md", "**/*.txt"],
+                     filter,
+                 ) {
+                     all_entries.push(FileEntry::from_path(&path));
+                 }
 
-                    for path in scan_with_globset_and_filter(
-                        ws,
-                        &["**/*.md", "**/*.txt"],
-                        filter,
-                    ) {
-                        all_entries.push(FileEntry::from_path(&path));
-                    }
-
-                    for path in scan_with_globset_and_filter(
-                        ws,
-                        &["**"],
-                        filter,
-                    ) {
-                        all_entries.push(FileEntry::from_path(&path));
-                    }
-
-                    all_entries
-                },
-                None => Vec::<FileEntry>::new()
-            }
-        }
+                 for path in scan_with_globset_and_filter(
+                     ws,
+                     &["**"],
+                     filter,
+                 ) {
+                     all_entries.push(FileEntry::from_path(&path));
+                 }
+                 all_entries.append(&mut selected_entries);
+                 all_entries
+             },
+             None => selected_entries
+         }
     }
 
     pub fn run(&self) {
