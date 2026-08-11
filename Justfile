@@ -25,13 +25,13 @@ fixws:
     RUST_BACKTRACE=1 {{target_dir}}/debug/aifix -l rust -t fix_code -w ~/svn/_workspace -f {{current_dir}} -f {{current_dir}}/.. -f ~/svn/_workspace
 
 doc_item:
-    RUST_BACKTRACE=1 {{target_dir}}/debug/aifix -l rust -t write_item_doc -f {{current_dir}} -f {{current_dir}}/..
+    RUST_BACKTRACE=1 {{target_dir}}/debug/aifix -l rust -t write_item_doc -s src/aiagentloop.rs -f {{current_dir}} -f {{current_dir}}/..
 
 review:
-    RUST_BACKTRACE=1 {{target_dir}}/debug/aifix -l rust -t review_code -f {{current_dir}} -f {{current_dir}}/..
+    RUST_BACKTRACE=1 {{target_dir}}/debug/aifix -l rust -t review_code -s src/aiagentloop.rs -f {{current_dir}} -f {{current_dir}}/..
 
 doc_module:
-    RUST_BACKTRACE=1 {{target_dir}}/debug/aifix -l rust -t write_module_doc -f {{current_dir}} -f {{current_dir}}/..
+    RUST_BACKTRACE=1 {{target_dir}}/debug/aifix -l rust -t write_module_doc -s src/aiagentloop.rs -f {{current_dir}} -f {{current_dir}}/..
 
 clean:
 	@cargo clean -p {{module_name}}
