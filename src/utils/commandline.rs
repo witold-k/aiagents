@@ -1,15 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Witold Kaminski
 
-//! -t --task [required]: select task: one of: generated_tasks.to_vec_str().join(", ")
-//!            or provide path to taskdesciption
-//! -s --subtask [optional]: provide path to subdescription
-//! -c --config [optional]: load config from path
-//! -g --generate [optional]: generate config to path
-//! -f --pathfilter [multiple, required at least once]: directory list
-//! -d --debug [default = false]: dump debug
-//! -h --help [default = false]: dump help
-
 use std::env;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -41,7 +32,7 @@ pub fn help() {
 -t --task [required, multiple possible invalid with -w switch]:
     - first -t selects task: one of: {}
     - following are paths to subtasks that enhance the task description
--s --select [optional, multiple possible]: one or more files,
+-s --select [optional, multiple possible]: one or more files or dirs,
     - if task needs a file to operate and none is given a random file will be choosen
 -c --config [optional]: load config from path
     - default config will be generated in path if no config availabe
