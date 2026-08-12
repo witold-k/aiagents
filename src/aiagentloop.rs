@@ -104,7 +104,7 @@ impl<'a> AIAgentLoop<'a> {
          for sel in selected {
              collect_files_all(sel, &mut selected_paths);
          }
-         let mut selected_entries = FileEntry::vec_from_filtered_pathbufvec(filter, selected_paths.to_vec());
+         let mut selected_entries = FileEntry::vec_from_filtered_pathbufvec(None, selected_paths.to_vec());
          selected_entries.retain(|entry| {
              let s = entry.to_string();
              s.contains(&build_path) &&
