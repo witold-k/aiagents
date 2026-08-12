@@ -4,6 +4,7 @@
 use serde_json::{json, Value};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
+use globset::{Glob, GlobSetBuilder};
 use fsscanner::{
     fileentry::FileEntry,
     fsscanner_base::collect_files_all,
@@ -89,7 +90,7 @@ impl<'a> AIAgentLoop<'a> {
     }
 
     pub fn create_files_info(
-        _config: &Config,
+        config: &Config,
         projdir: &Path,
         workspacedir: Option<&Path>,
         _task_id: Tasks,
@@ -97,44 +98,55 @@ impl<'a> AIAgentLoop<'a> {
         selected: &'a [PathBuf],
         _rng: &mut SimpleRng
     ) -> Vec<FileEntry> {
-         let proj_str = normalize_path(projdir).display().to_string();
-         let build_path = format!("{}/build/", proj_str);
-         let target_path = format!("{}/target/", proj_str);
-         let mut selected_paths = Vec::<PathBuf>::with_capacity(256);
-         for sel in selected {
-             collect_files_all(sel, &mut selected_paths);
-         }
-         let mut selected_entries = FileEntry::vec_from_filtered_pathbufvec(None, selected_paths.to_vec());
-         selected_entries.retain(|entry| {
+        let proj_str = normalize_path(projdir).display().to_string();
+        let build_path = format!("{}/build/", proj_str);
+        let target_path = format!("{}/target/", proj_str);
+        let mut selected_paths = Vec::<PathBuf>::with_capacity(256);
+        for sel in selected {
+            collect_files_all(sel, &mut selected_paths);
+        }
+        let mut selected_entries = FileEntry::vec_from_filtered_pathbufvec(None, selected_paths.to_vec());
+        let mut builder = GlobSetBuilder::new();
+
+        for pattern in &config.scanfilter {
+            if let Ok(glob) = Glob::new(pattern) {
+                builder.add(glob);
+            }
+        }
+
+        let scanfilter = builder.build().unwrap();
+
+        selected_entries.retain(|entry| {
              let s = entry.to_string();
              s.contains(&build_path) &&
-             s.contains(&target_path)
-         });
+             s.contains(&target_path) &&
+             !scanfilter.is_match(&s)
+        });
 
-         match workspacedir {
-             Some(ws) => {
-                 let mut all_entries = Vec::<FileEntry>::with_capacity(128);
+        match workspacedir {
+            Some(ws) => {
+                let mut all_entries = Vec::<FileEntry>::with_capacity(128);
 
-                 for path in scan_with_globset_and_filter(
-                     ws,
-                     &["**/*.md", "**/*.txt"],
-                     filter,
-                 ) {
-                     all_entries.push(FileEntry::from_path(&path));
-                 }
+                for path in scan_with_globset_and_filter(
+                    ws,
+                    &["**/*.md", "**/*.txt"],
+                    filter,
+                ) {
+                    all_entries.push(FileEntry::from_path(&path));
+                }
 
-                 for path in scan_with_globset_and_filter(
-                     ws,
-                     &["**"],
-                     filter,
-                 ) {
-                     all_entries.push(FileEntry::from_path(&path));
-                 }
-                 all_entries.append(&mut selected_entries);
-                 all_entries
-             },
-             None => selected_entries
-         }
+                for path in scan_with_globset_and_filter(
+                    ws,
+                    &["**"],
+                    filter,
+                ) {
+                    all_entries.push(FileEntry::from_path(&path));
+                }
+                all_entries.append(&mut selected_entries);
+                all_entries
+            },
+            None => selected_entries
+        }
     }
 
     pub fn run(&self) {
