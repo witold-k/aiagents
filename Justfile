@@ -11,6 +11,9 @@ build:
 	RUST_BACKTRACE=1 cargo test
 	cargo clippy
 
+build-jvm:
+    RUSTFLAGS="-C panic=unwind" cargo jvm build
+
 install:
 	cargo build --release
 	cp {{target_dir}}/release/aifix ~/bin
@@ -32,6 +35,9 @@ review:
 
 doc_module:
     RUST_BACKTRACE=1 {{target_dir}}/debug/aifix -l rust -t write_module_doc -s src/aiagentloop.rs -f {{current_dir}} -f {{current_dir}}/..
+
+test-jvm:
+    java -cp $HOME/.local/share/cargo-jvm/rustc_codegen_jvm/runtime/build/libs/runtime-0.1.0.jar:{{target_dir}}/jvm-unknown-jvm/debug/collect_to_md.jar aifix.aifix
 
 clean:
 	@cargo clean -p {{module_name}}
