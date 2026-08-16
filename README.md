@@ -1,7 +1,5 @@
 # AI Agents - An experimental agent runtime for AI-assisted software engineering
 
-# AI Agents - An experimental agent runtime for AI-assisted software engineering
-
 An experimental Rust-based agent runtime for integrating LLMs into
 software engineering workflows.
 
