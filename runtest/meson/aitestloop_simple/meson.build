@@ -5,8 +5,10 @@ project(
   default_options: ['cpp_std=c++20']
 )
 
-executable(
-  'hello',
+aitestloop = executable(
+  'aitestloop',
   'src/main.cpp',
   install: true
 )
+
+test('main', aitestloop)
