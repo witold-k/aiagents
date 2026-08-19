@@ -258,18 +258,21 @@ The project explores several questions:
 5. How can different engineering tasks share the same agent infrastructure?
 6. How can local LLMs be integrated into practical development workflows?
 
-## Why Rust?
+## Examples / Howto
 
-Rust is used for the agent infrastructure because it provides:
+Take a look in the folder `runtests/**`, it contains code that need to be fixed.
 
-* strong type safety
-* explicit error handling
-* predictable resource management
-* good performance
-* a suitable foundation for long-running tooling
+- First build this project and put the artefact/binary `aifix` to your path.
+`~/bin` should be sufficient.
 
-The project also serves as a practical exploration of Rust for systems-level
-AI tooling.
+- Then start the service via `aifix -r default` this will not work since settings
+  are not correct, but a default settings file will created ` ~/.config/aifix/config.json`.
+  Modify it and setting your settings, than start again `aifix -r default`
+
+- finally run the code fixing as an rust example, change to dir `runtests/cargo/aitestloop_simple`
+  and start the codefixing with `just fix`.
+
+- you can do simular for c++ and java.
 
 ## License
 
