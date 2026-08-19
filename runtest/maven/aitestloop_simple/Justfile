@@ -1,5 +1,5 @@
 current_dir      := justfile_directory()
-target_dir       := 'target'
+target_dir       := current_dir / 'target'
 
 default: build
 

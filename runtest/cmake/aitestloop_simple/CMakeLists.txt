@@ -8,3 +8,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_executable(aitestloop
     src/main.cpp
 )
+
+enable_testing()
+
+add_test(
+    NAME main
+    COMMAND aitestloop
+)

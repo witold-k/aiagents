@@ -189,7 +189,7 @@ impl Buildsystem {
                     vec!["cmake".into(), "-S".into(), sdir.clone(), "-B".into(), tdir.clone(), "-G".into(), "Ninja".into()],
                     vec!["cmake".into(), "--build".into(), tdir.clone()],
                     vec![],
-                    vec!["cmake".into(), "test".into(), "--build".into(), tdir.clone()],
+                    vec!["cmake".into(), "--build".into(), tdir.clone(), "--target".into(), "test".into()],
                 )
             }
 
@@ -207,7 +207,7 @@ impl Buildsystem {
                     vec!["meson".into(), "setup".into(), tdir.clone()],
                     vec!["meson".into(), "compile".into(), "-C".into(), tdir.clone()],
                     vec![],
-                    vec![],
+                    vec!["meson".into(), "test".into(), "-C".into(), tdir.clone()],
                 )
             }
 
