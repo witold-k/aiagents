@@ -131,6 +131,13 @@ impl Buildsystem {
         }
     }
 
+    pub fn from_current_dir() -> Self {
+        match std::env::current_dir() {
+            Ok(path) => Self::from_dir(&path),
+            Err(_) => Buildsystem::None,
+        }
+    }
+
     pub fn from_versioned_project(path: &Path) -> Self {
         let proj = fsscanner::pathutils::from_versioned_project(path);
         Self::from_dir(&proj)

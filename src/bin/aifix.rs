@@ -141,7 +141,8 @@ pub fn main() {
             if bs.is_none() { Buildsystem::from_versioned_project(&src_path) } else { bs }
         }
         else {
-            Buildsystem::from_versioned_project(&src_path)
+            let bs = Buildsystem::from_current_dir();
+            if bs.is_none() { Buildsystem::from_versioned_project(&src_path) } else { bs }
         }
     };
     let target_path: PathBuf = {
