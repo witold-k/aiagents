@@ -1,0 +1,34 @@
+current_dir      := justfile_directory()
+target_dir       := 'target'
+
+default: build
+
+build:
+    mvn install
+
+test:
+	mvn test
+
+fix:
+    git checkout .
+    aifix -l java -t fix_code -f {{current_dir}} -f {{current_dir}}/..
+
+fixd:
+    git checkout .
+    aifix -d -l java -t fix_code -f {{current_dir}} -f {{current_dir}}/..
+
+fixws:
+    git checkout .
+    aifix -l java -t fix_code -w ~/svn/_workspace -f {{current_dir}} -f {{current_dir}}/.. -f ~/svn/_workspace
+
+doc:
+    git checkout .
+    aifix -l java -t write_doc -w ~/svn/_workspace -f {{current_dir}} -f {{current_dir}}/..
+
+fixfail:
+    git checkout .
+    aifix -l java -t fix_code -f {{current_dir}}/target -f {{current_dir}}/..
+
+clean:
+    rm -rf {{target_dir}}
+
