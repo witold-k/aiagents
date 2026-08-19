@@ -37,22 +37,15 @@ impl AIRequest {
     }
 
     pub fn request(&self, messages: &str) -> Result<Value, String> {
-        // Build JSON payload manually, same as reqwest version
-        let mut payload = String::with_capacity(4096);
+        let messages: Value =
+            serde_json::from_str(messages).map_err(|e| format!("Invalid messages JSON: {e}"))?;
 
-        payload.push_str("{\"model\":\"");
-        payload.push_str(&self.model);
-        payload.push_str("\",\"messages\":");
-        payload.push_str(messages);
-        payload.push_str(",\"max_tokens\":");
-        payload.push_str(&self.max_tokens.to_string());
-        payload.push_str(",\"temperature\":");
-        payload.push_str(&self.temperature.to_string());
-        payload.push('}');
-
-        // Parse into serde_json::Value for send_json()
-        let json_payload: Value =
-            serde_json::from_str(&payload).map_err(|e| e.to_string())?;
+        let json_payload = serde_json::json!({
+            "model": self.model,
+            "messages": messages,
+            "max_tokens": self.max_tokens,
+            "temperature": self.temperature,
+        });
 
         let agent = self.create_agent();
 
@@ -61,25 +54,31 @@ impl AIRequest {
             .header("Content-Type", "application/json");
 
         if !self.api_key.is_empty() {
-            req = req.header("Authorization", &format!("Bearer {}", self.api_key));
+            req = req.header(
+                "Authorization",
+                &format!("Bearer {}", self.api_key),
+            );
         }
 
-        // send_json() returns Result<Response<Body>, Error> in ureq 3.x
         let mut response = req
-            .send_json(json_payload)
-            .map_err(|e| e.to_string())?;
+            .send_json(json_payload.clone())
+            .map_err(|e| format!("Request failed: {e}"))?;
 
-        // Extract JSON body via body_mut().read_json() in ureq 3.x
         let json: Value = response
             .body_mut()
             .read_json()
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| format!("Invalid JSON response: {e}"))?;
 
-        if json.get("error").is_some() {
-            return Err(format!("Error: {}\nPayload: {}", json, payload));
+        if let Some(error) = json.get("error") {
+            return Err(format!(
+                "API error: {}\nPayload: {}",
+                error,
+                json_payload
+            ));
         }
 
         Ok(json)
     }
+
 }
 

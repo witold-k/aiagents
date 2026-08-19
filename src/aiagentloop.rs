@@ -117,10 +117,8 @@ impl<'a> AIAgentLoop<'a> {
         let scanfilter = builder.build().unwrap();
 
         selected_entries.retain(|entry| {
-             let s = entry.to_string();
-             s.contains(&build_path) &&
-             s.contains(&target_path) &&
-             !scanfilter.is_match(&s)
+            let s = entry.to_string();
+            !s.contains(&build_path) && !s.contains(&target_path) && !scanfilter.is_match(&s)
         });
 
         match workspacedir {
