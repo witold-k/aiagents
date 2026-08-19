@@ -1,13 +1,12 @@
 current_dir      := justfile_directory()
-module_name      := file_name(current_dir)
-target_dir       := 'target'
+target_dir       := 'build'
 
 default: build
 
 config: clean
     meson setup {{target_dir}}
 
-build:
+build: config
     meson compile -C {{target_dir}}
 
 fix:

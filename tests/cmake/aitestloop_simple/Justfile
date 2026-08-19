@@ -1,24 +1,23 @@
 current_dir      := justfile_directory()
-module_name      := file_name(current_dir)
-target_dir       := 'target'
+target_dir       := 'build'
 
 default: build
 
 config: clean
-    cmake -S . -B {{target_dir}} -G ninja
+    cmake -S {{current_dir}} -B {{target_dir}} -G Ninja
 
-build:
+build: config
     cmake --build {{target_dir}}
 
-fix:
+fix: config
     git checkout .
     aifix -l cpp -t fix_code -f {{current_dir}} -f {{current_dir}}/..
 
-fixd:
+fixd: config
     git checkout .
     aifix -d -l cpp -t fix_code -f {{current_dir}} -f {{current_dir}}/..
 
-fixws:
+fixws: config
     git checkout .
     aifix -l cpp -t fix_code -w ~/svn/_workspace -f {{current_dir}} -f {{current_dir}}/.. -f ~/svn/_workspace
 
@@ -26,7 +25,7 @@ doc:
     git checkout .
     aifix -l cpp -t write_doc -w ~/svn/_workspace -f {{current_dir}} -f {{current_dir}}/..
 
-fixfail:
+fixfail: config
     git checkout .
     aifix -l cpp -t fix_code -f {{current_dir}}/target -f {{current_dir}}/..
 

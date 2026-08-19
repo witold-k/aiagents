@@ -1,4 +1,5 @@
 target
+build
 buildscripts
 debug/
 generated_src/
