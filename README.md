@@ -1,5 +1,9 @@
 # AI Agents - An experimental agent runtime for AI-assisted software engineering
 
+- **ATTENTION** this repository is under active development
+- **ATTENTION** use at own risk, currently missing test
+- **ATTENTION** may run inifinite when agent can finish it task, only CTRL+C helps
+
 An experimental Rust-based agent runtime for integrating LLMs into
 software engineering workflows.
 
