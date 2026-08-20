@@ -23,10 +23,16 @@ pub struct AITaskProvider {
     pub temperature: f32,
 }
 
+#[derive(Clone, Default, Serialize, Deserialize)]
+pub struct DockerSettings {
+    pub image_name: String,
+    pub arguments: Vec<String>,
+}
 
 /// which provider with with temperature to select for a given task
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Config {
+    pub docker_settings: DockerSettings,
     pub provider: String,
     pub providerlist: Vec<AIProvider>,
     pub taskproviderlist: Vec<AITaskProvider>,
@@ -40,6 +46,10 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Config {
+            docker_settings: {
+                image_name "",
+                arguments: Vec::<String>::new()
+            }
             provider: "default".into(),
             providerlist: vec![
                 AIProvider {
