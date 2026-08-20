@@ -7,6 +7,5 @@ pub mod config;
 pub mod doprocess;
 pub mod jsonutils;
 pub mod scan_dir;
-pub mod simplerandom;
 pub mod stringutils;
 

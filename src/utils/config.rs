@@ -46,10 +46,10 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            docker_settings: {
-                image_name "",
+            docker_settings: DockerSettings {
+                image_name: "".to_string(),
                 arguments: Vec::<String>::new()
-            }
+            },
             provider: "default".into(),
             providerlist: vec![
                 AIProvider {
