@@ -1,9 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Witold Kaminski
 
-use serde::{Serialize, Deserialize};
-use std::{fs, env, path::Path, path::PathBuf};
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Witold Kaminski
 
+use serde::{Deserialize, Serialize};
+use std::{
+    env,
+    fs,
+    io,
+    path::{Path, PathBuf},
+};
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct AIProvider {
@@ -29,7 +36,7 @@ pub struct DockerSettings {
     pub arguments: Vec<String>,
 }
 
-/// which provider with with temperature to select for a given task
+/// Specifies which provider and temperature to use for a given task.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Config {
     pub docker_settings: DockerSettings,
@@ -45,149 +52,241 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Config {
+        Self {
             docker_settings: DockerSettings {
-                image_name: "".to_string(),
-                arguments: Vec::<String>::new()
+                image_name: String::new(),
+                arguments: Vec::new(),
             },
+
             provider: "default".into(),
+
             providerlist: vec![
                 AIProvider {
                     name: "default".into(),
                     endpoint: "http://localhost:8080/v1".into(),
                     model: "qwen2.5-coder-14b-instruct-q5_k_m.gguf".into(),
-                    api_key: "".into(),
+                    api_key: String::new(),
                     llmbin: "llama-server".into(),
                     llmmodeldir: PathBuf::from("/data/ai/llm/"),
                     llmparam: vec![
-                        "--ctx-size".to_string(), "49152".to_string(),
-                        "--n-gpu-layers".to_string(), "999".to_string(),
-                        "--port".to_string(), "8080".to_string(),
-                        "--host".to_string(), "127.0.0.1".to_string(),
-                        "--timeout".to_string(), "600".to_string(),
-                        "--flash-attn".to_string(), "on".to_string(),
-                        "--batch-size".to_string(), "1024".to_string(),
-                        "--ubatch-size".to_string(), "512".to_string(),
-                        "--cache-type-k".to_string(), "q8_0".to_string(),
-                        "--cache-type-v".to_string(), "q8_0".to_string(),
-                        "--predict".to_string(), "8192".to_string(),
-                        "--no-mmap".to_string(),
-                    ]
-                }
+                        "--ctx-size".into(),
+                        "49152".into(),
+                        "--n-gpu-layers".into(),
+                        "999".into(),
+                        "--port".into(),
+                        "8080".into(),
+                        "--host".into(),
+                        "127.0.0.1".into(),
+                        "--timeout".into(),
+                        "600".into(),
+                        "--flash-attn".into(),
+                        "on".into(),
+                        "--batch-size".into(),
+                        "1024".into(),
+                        "--ubatch-size".into(),
+                        "512".into(),
+                        "--cache-type-k".into(),
+                        "q8_0".into(),
+                        "--cache-type-v".into(),
+                        "q8_0".into(),
+                        "--predict".into(),
+                        "8192".into(),
+                        "--no-mmap".into(),
+                    ],
+                },
             ],
-            taskproviderlist: Vec::<AITaskProvider>::new(),
+
+            taskproviderlist: Vec::new(),
+
             queue_length_max: 14,
             queue_length_save: 1,
+
             scanfilter: vec![
-                "**/*.c".to_string(),
-                "**/*.cc".to_string(),
-                "**/*.cpp".to_string(),
-                "**/*.cxx".to_string(),
-                "**/*.h".to_string(),
-                "**/*.hh".to_string(),
-                "**/*.hpp".to_string(),
-                "**/*.hxx".to_string(),
-                "**/*.in".to_string(),
-                "**/*.java".to_string(),
-                "**/*.rs".to_string(),
-                "**/*.sv".to_string(),
-                "**/*.tcl".to_string(),
-                "CMakeLists.txt".to_string(),
-                "Cargo.toml".to_string(),
-                "meson.build".to_string(),
-                "pom.xml".to_string(),
+                "**/*.c".into(),
+                "**/*.cc".into(),
+                "**/*.cpp".into(),
+                "**/*.cxx".into(),
+                "**/*.h".into(),
+                "**/*.hh".into(),
+                "**/*.hpp".into(),
+                "**/*.hxx".into(),
+                "**/*.in".into(),
+                "**/*.java".into(),
+                "**/*.rs".into(),
+                "**/*.sv".into(),
+                "**/*.tcl".into(),
+                "CMakeLists.txt".into(),
+                "Cargo.toml".into(),
+                "meson.build".into(),
+                "pom.xml".into(),
             ],
+
             writefilter: vec![
-                "{{projectdir}}".to_string(),
+                "{{projectdir}}".into(),
             ],
+
             readfilter: vec![
-                "{{projectdir}}/..".to_string(),
-                "/opt".to_string(),
+                "{{projectdir}}/..".into(),
+                "/opt".into(),
             ],
         }
     }
 }
 
 impl Config {
-    pub fn load(path: &Path) -> Config {
+    pub fn load(path: &Path) -> Result<Self, ConfigError> {
         let data = fs::read_to_string(path)
-            .expect("Failed to read config.json");
+            .map_err(|source| ConfigError::Read {
+                path: path.to_path_buf(),
+                source,
+            })?;
 
-        serde_json::from_str::<Config>(&data)
-            .expect("Failed to parse config.json")
+        let config = serde_json::from_str::<Self>(&data)
+            .map_err(|source| ConfigError::Parse {
+                path: path.to_path_buf(),
+                source,
+            })?;
+
+        config.validate()?;
+
+        Ok(config)
     }
 
-     pub fn save(&self, path: &Path) {
+    pub fn save(&self, path: &Path) -> Result<(), ConfigError> {
         let json = serde_json::to_string_pretty(self)
-            .expect("Failed to serialize config");
+            .map_err(ConfigError::Serialize)?;
 
-        // 1. Verzeichnis erstellen falls nötig
-        if let Some(parent) = path.parent() &&
-            let Err(e) = fs::create_dir_all(parent) {
-                panic!(
-                    "Failed to create directory {:?}. Code: {:?}. Reason: {}",
-                    parent, e.raw_os_error(), e
-                );
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|source| ConfigError::CreateDirectory {
+                    path: parent.to_path_buf(),
+                    source,
+                })?;
         }
 
-        // 2. Datei schreiben
-        if let Err(e) = fs::write(path, json) {
-            panic!(
-                "Failed to write {:?}. Code: {:?}. Reason: {}",
-                path, e.raw_os_error(), e
-            );
-        }
+        fs::write(path, json)
+            .map_err(|source| ConfigError::Write {
+                path: path.to_path_buf(),
+                source,
+            })?;
+
+        Ok(())
     }
 
-    /**
-     * rturns true if created
-     */
-    pub fn ensure_exist(path: &Path) -> bool {
-        if !path.exists() {
-            Config::default().save(path);
-            true
+    /// Returns `true` if the configuration file was created.
+    pub fn ensure_exist(path: &Path) -> Result<bool, ConfigError> {
+        if path.exists() {
+            return Ok(false);
         }
-        else {
-            false
-        }
+
+        Self::default().save(path)?;
+        Ok(true)
     }
 
-    pub fn load_or_create(path: Option<String>) -> Self {
+    pub fn load_or_create(path: Option<String>) -> Result<Self, ConfigError> {
         let path = match path {
             Some(path) => PathBuf::from(path),
-            None       => Self::default_path()
+            None => Self::default_path(),
         };
-        if Self::ensure_exist(&path) {
+
+        if Self::ensure_exist(&path)? {
             println!("Created default config at {:?}", path);
-            Config::default()
-        }
-        else {
+            Ok(Self::default())
+        } else {
             Self::load(&path)
         }
     }
 
     pub fn default_path() -> PathBuf {
-        if let Ok(xdg) = env::var("XDG_CONFIG_HOME") {
-            return PathBuf::from(xdg)
-                .join("aifix")
-                .join("config.json");
-        }
+        if let Ok(xdg) = env::var("XDG_CONFIG_HOME")
+            && !xdg.is_empty() {
+                return PathBuf::from(xdg)
+                    .join("aifix")
+                    .join("config.json");
+            }
 
         let home = env::var("HOME").expect("HOME not set");
+
         PathBuf::from(home)
             .join(".config")
             .join("aifix")
             .join("config.json")
     }
 
-    pub fn get_provider(&self, name: &str) -> Option<AIProvider> {
+    pub fn get_provider(&self, name: &str) -> Option<&AIProvider> {
         self.providerlist
             .iter()
             .find(|entry| entry.name == name)
-            .cloned()
     }
 
-    pub fn get_selected_provider(&self) -> Option<AIProvider> {
+    pub fn get_selected_provider(&self) -> Option<&AIProvider> {
         self.get_provider(&self.provider)
     }
+
+    fn validate(&self) -> Result<(), ConfigError> {
+        if self.queue_length_save > self.queue_length_max {
+            return Err(ConfigError::Invalid(
+                "queue_length_save cannot be greater than queue_length_max"
+                    .to_string(),
+            ));
+        }
+
+        for task_provider in &self.taskproviderlist {
+            if !self
+                .providerlist
+                .iter()
+                .any(|provider| provider.name == task_provider.provider)
+            {
+                return Err(ConfigError::Invalid(format!(
+                    "task '{}' references unknown provider '{}'",
+                    task_provider.task,
+                    task_provider.provider,
+                )));
+            }
+
+            if !task_provider.temperature.is_finite() {
+                return Err(ConfigError::Invalid(format!(
+                    "task '{}' has a non-finite temperature",
+                    task_provider.task,
+                )));
+            }
+        }
+
+        if !self.providerlist.iter().any(|p| p.name == self.provider) {
+            return Err(ConfigError::Invalid(format!(
+                "selected provider '{}' does not exist",
+                self.provider,
+            )));
+        }
+
+        Ok(())
+    }
 }
+
+#[derive(Debug)]
+pub enum ConfigError {
+    Read {
+        path: PathBuf,
+        source: io::Error,
+    },
+
+    Write {
+        path: PathBuf,
+        source: io::Error,
+    },
+
+    CreateDirectory {
+        path: PathBuf,
+        source: io::Error,
+    },
+
+    Parse {
+        path: PathBuf,
+        source: serde_json::Error,
+    },
+
+    Serialize(serde_json::Error),
+
+    Invalid(String),
+}
+
