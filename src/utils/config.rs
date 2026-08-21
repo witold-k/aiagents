@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Witold Kaminski
 
-// SPDX-License-Identifier: Apache-2.0
-// Copyright (c) 2026 Witold Kaminski
-
 use serde::{Deserialize, Serialize};
 use std::{
     env,
@@ -43,6 +40,7 @@ pub struct Config {
     pub provider: String,
     pub providerlist: Vec<AIProvider>,
     pub taskproviderlist: Vec<AITaskProvider>,
+    pub max_try_count: usize,
     pub queue_length_max: usize,
     pub queue_length_save: usize,
     pub scanfilter: Vec<String>,
@@ -98,6 +96,7 @@ impl Default for Config {
 
             taskproviderlist: Vec::new(),
 
+            max_try_count: 10,
             queue_length_max: 14,
             queue_length_save: 1,
 
