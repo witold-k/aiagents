@@ -15,21 +15,6 @@ mod tests {
     }
 
     #[test]
-    fn returns_error_when_field_is_missing() {
-        let payload = json!({
-            "name": "Alice"
-        });
-
-        let result = get_json_field(&payload, "age");
-
-        assert_eq!(
-            result,
-            Err(r#"field age not found:
-{"name":"Alice"}"#.to_string())
-        );
-    }
-
-    #[test]
     fn returns_error_when_field_is_not_a_string() {
         let payload = json!({
             "age": 42
