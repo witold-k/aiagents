@@ -161,14 +161,18 @@ impl<'a> AIAgentLoop<'a> {
             self.analyze(&mut air, name, result)
         };
 
-        while okcount < 2 {
+
+        let mut totalleft = self.config.max_try_count as isize;
+        while okcount < 2 && totalleft > 0 {
             let br = self.workflow.execute(&mut cb);
             if br.has_error() {
                 okcount = 0;
             }
             else {
                 okcount += 1;
+                totalleft += 1;
             }
+            totalleft -= 1;
         }
     }
 
