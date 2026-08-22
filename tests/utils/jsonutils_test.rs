@@ -39,8 +39,7 @@ mod tests {
 
         assert_eq!(
             result,
-            Err(r#"got field name, but it is empty:
-{"name":null}"#.to_string())
+            Err(r#"got field name, but it is empty: {"name":null}"#.to_string())
         );
     }
 
