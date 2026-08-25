@@ -32,15 +32,63 @@
 - docker integration: provide simple docker based start defined in config file
     aifix (used as docker/podman starter) => starts docker with aifix again that runs in docker/podman
 
-# found issues
+# next todos:
 
-Priority	Change
-P0	Add comprehensive filesystem/security tests
-P0	Remove panic-prone unwrap() from LLM-controlled tool input
-P1	Preserve and propagate detailed errors
-    - provide a simple logging abstraction, forward trace direct do stdout as first attempt
-P2	Improve context/retrieval architecture
-P2	Add observability / execution traces
+# AI Agents — Priority List
+
+## P0 — Make the agent impossible to hang/crash
+
+1. Remove every LLM-input `unwrap()` / `expect()`.
+2. Make `max_try_count` an actual hard execution limit.
+3. Add a hard LLM-call limit.
+4. Add a wall-clock timeout.
+5. Define explicit terminal states.
+
+## P1 — Security
+
+6. Add comprehensive path-traversal tests.
+7. Add symlink tests.
+8. Add absolute-path tests.
+9. Add read/write capability tests.
+10. Centralize path validation.
+
+## P1 — Agent Protocol
+
+11. Replace the `"action": "..."` text protocol with structured tool requests.
+12. Give every tool call an ID.
+13. Separate `ToolResult` from wire-format messages.
+14. Make malformed tool requests ordinary errors instead of panics.
+
+## P1 — Evaluation
+
+15. Build a small deterministic benchmark suite.
+
+Example:
+
+* 10 Rust bugs
+* 10 C++ bugs
+* 10 Java bugs
+
+Measure:
+
+* Task success
+* Number of iterations
+* Number of LLM calls
+* Token usage
+* Execution time
+* Compiler failures
+* Incorrect edits
+
+## P2 — Context
+
+16. Add symbol-level indexing.
+17. Add AST-aware retrieval.
+18. Add relevance scoring.
+19. Only then experiment with embeddings.
+
+## Major Milestone
+
+Run **20 representative coding tasks unattended** and record exactly why each task succeeded or failed.
 
 # future plans / ideas
 
@@ -62,3 +110,20 @@ current only very simple workflow type supported: linear execution with error or
 need later on complex workflow with multi tool call, depend on current running internal task.
 => most probably more or several statemachine(s) needed here
 
+## Interactive Mode
+
+An interactive mode is planned to allow users to work with the agent conversationally during a development session.
+
+The goal is to support an iterative workflow where the user can:
+
+- give the agent a task
+- inspect what the agent is doing
+- provide additional instructions
+- review proposed changes
+- allow or reject actions
+- continue the task interactively
+- inspect build and test feedback
+
+Implementation will be done via markdown documents - so no addition tooling is needed.
+Just an editor that is may be aware of fileupdates. And on save actions should be detected
+by other tool and forward text to agent, if user request is complete (may be keyword at and of markdown)
