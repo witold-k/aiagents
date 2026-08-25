@@ -74,7 +74,7 @@ pub fn main() {
     }
 
     let is_workspace = args.is_workspace();
-    let config = Config::load_or_create(args.config);
+    let config = Config::load_or_create(args.config).expect("FAIL");
 
     if args.start_service.is_some() {
         run_service(&config, &args.start_service);

@@ -18,9 +18,9 @@ pub enum AIMessageType {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AIMessage {
-    pub msgtype: AIMessageType,
+    pub msgtype:  AIMessageType,
     pub tooltype: AIToolType, // in case AIMessageType::Tool
-    pub data: Value,
+    pub data:     Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,28 +32,28 @@ pub struct AIFileinfo {
 pub struct AIMessageList {
     pub messages: Vec<AIMessage>,
     pub message_id: usize,
-    pub depth: usize,
-    pub task_id: Tasks,
+    pub depth:      usize,
+    pub task_id:    Tasks,
     pub task_description: String,
-    pub subtask: Vec<String>,
+    pub subtask:       Vec<String>,
     pub structureinfo: String,
-    pub files: Vec<FileEntry>,
-    pub note: String,
-    pub focus: String,
+    pub files:  Vec<FileEntry>,
+    pub note:   String,
+    pub focus:  String,
     pub faults: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AIMessageListData {
-    pub messages: Vec<AIMessage>,
+    pub messages:   Vec<AIMessage>,
     pub message_id: usize,
-    pub depth: usize,
-    pub task_id: Tasks,
+    pub depth:      usize,
+    pub task_id:    Tasks,
     pub task_description: String,
-    pub subtask: Vec<String>,
-    pub structureinfo: String,
-    pub files: Vec<FileEntry>,
-    pub focus: String,
+    pub subtask:          Vec<String>,
+    pub structureinfo:    String,
+    pub files:  Vec<FileEntry>,
+    pub focus:  String,
     pub faults: Option<String>,
 }
 
@@ -70,16 +70,16 @@ impl AIMessage {
 impl AIMessageList {
     pub fn new(data: AIMessageListData) -> Self {
         Self {
-            messages: data.messages,
+            messages:   data.messages,
             message_id: data.message_id,
-            depth: data.depth,
+            depth:   data.depth,
             task_id: data.task_id,
             task_description: data.task_description,
-            subtask: data.subtask,
+            subtask:       data.subtask,
             structureinfo: data.structureinfo,
-            files: data.files,
+            files:         data.files,
             note: "".into(),
-            focus: data.focus,
+            focus:  data.focus,
             faults: data.faults,
         }
     }

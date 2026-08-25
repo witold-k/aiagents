@@ -9,13 +9,13 @@ pub fn get_json_field(payload: &Value, name: &str) -> Result<String, String> {
             match content.as_str() {
                 Some(text) => Ok(text.to_string()),
                 None       => {
-                    let e = format!("got field {}, but it is empty:\n{}", name, payload);
+                    let e = format!("got field {}, but it is empty: {}", name, payload);
                     Err(e)
                 }
             }
         }
         None => {
-            let e = format!("field {} not found:\n{}", name, payload);
+            let e = format!("field {} not found: {}", name, payload);
             Err(e)
         }
     }

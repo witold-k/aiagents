@@ -27,7 +27,6 @@ use crate::utils:: {
     ast::get_ast_string,
     config::Config,
     scan_dir::scan_with_globset_and_filter,
-    simplerandom::SimpleRng,
     stringutils::{strip_code_fences, raw_fence_to_string},
 };
 use crate::generated_tasks::Tasks;
@@ -40,7 +39,6 @@ pub struct AIAgentLoop<'a> {
     filter: &'a Pathfilter,
     workflow: &'a dyn RunBuild,
     messages: RefCell<AIMessageList>,
-    rng: RefCell<SimpleRng>,
     dump: bool,
 }
 
@@ -58,7 +56,6 @@ impl<'a> AIAgentLoop<'a> {
         workflow: &'a dyn RunBuild,
         dump: bool,
     ) -> Self {
-        let mut rng = SimpleRng::new_monotonic();
         let data = AIMessageListData {
             messages: Vec::new(),
             message_id: 1,
@@ -68,7 +65,7 @@ impl<'a> AIAgentLoop<'a> {
             subtask,
             structureinfo: Self::create_structure_info(),
             files: Self::create_files_info(
-                &config, &projdir, workspacedir.as_deref(), task_id, filter, selected, &mut rng
+                &config, &projdir, workspacedir.as_deref(), task_id, filter, selected
             ),
             focus: "".into(),
             faults: None,
@@ -80,7 +77,6 @@ impl<'a> AIAgentLoop<'a> {
             filter,
             workflow,
             messages: RefCell::new(AIMessageList::new(data)),
-            rng: RefCell::new(rng),
             dump,
         }
     }
@@ -96,7 +92,6 @@ impl<'a> AIAgentLoop<'a> {
         _task_id: Tasks,
         filter: &'a Pathfilter,
         selected: &'a [PathBuf],
-        _rng: &mut SimpleRng
     ) -> Vec<FileEntry> {
         let proj_str = normalize_path(projdir).display().to_string();
         let build_path = format!("{}/build/", proj_str);
@@ -166,14 +161,18 @@ impl<'a> AIAgentLoop<'a> {
             self.analyze(&mut air, name, result)
         };
 
-        while okcount < 2 {
+
+        let mut totalleft = self.config.max_try_count as isize;
+        while okcount < 2 && totalleft > 0 {
             let br = self.workflow.execute(&mut cb);
             if br.has_error() {
                 okcount = 0;
             }
             else {
                 okcount += 1;
+                totalleft += 1;
             }
+            totalleft -= 1;
         }
     }
 
