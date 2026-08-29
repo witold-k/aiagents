@@ -18,7 +18,7 @@
 - remove crate phf, TOOLS should be generated in build.rs
 - remove crates: globset => use own fsscanner
 - supply chain security:
-    - may be du not use cargo to import crates (at least not all), instead just copy to subdir
+    - may be do not use cargo to import crates (at least not all), instead just copy to subdir
 
 # quality
 
@@ -39,8 +39,6 @@
 ## P0 — Make the agent impossible to hang/crash
 
 1. Remove every LLM-input `unwrap()` / `expect()`.
-2. Make `max_try_count` an actual hard execution limit.
-3. Add a hard LLM-call limit.
 4. Add a wall-clock timeout.
 5. Define explicit terminal states.
 
@@ -54,7 +52,6 @@
 
 ## P1 — Agent Protocol
 
-11. Replace the `"action": "..."` text protocol with structured tool requests.
 12. Give every tool call an ID.
 13. Separate `ToolResult` from wire-format messages.
 14. Make malformed tool requests ordinary errors instead of panics.

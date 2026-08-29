@@ -4,7 +4,6 @@
 use serde_json::{json, Value};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
-use globset::{Glob, GlobSetBuilder};
 use fsscanner::{
     fileentry::FileEntry,
     fsscanner_base::collect_files_all,
@@ -26,7 +25,7 @@ use crate::workflows::{
 use crate::utils:: {
     ast::get_ast_string,
     config::Config,
-    scan_dir::scan_with_globset_and_filter,
+    scan_dir::scan_with_suffix_and_filter,
     stringutils::{strip_code_fences, raw_fence_to_string},
 };
 use crate::generated_tasks::Tasks;
@@ -101,36 +100,36 @@ impl<'a> AIAgentLoop<'a> {
             collect_files_all(sel, &mut selected_paths);
         }
         let mut selected_entries = FileEntry::vec_from_filtered_pathbufvec(None, selected_paths.to_vec());
-        let mut builder = GlobSetBuilder::new();
-
-        for pattern in &config.scanfilter {
-            if let Ok(glob) = Glob::new(pattern) {
-                builder.add(glob);
-            }
-        }
-
-        let scanfilter = builder.build().unwrap();
-
         selected_entries.retain(|entry| {
-            let s = entry.to_string();
-            !s.contains(&build_path) && !s.contains(&target_path) && !scanfilter.is_match(&s)
+            let path = entry.to_string();
+            let Some(filename) = entry.path.file_name().and_then(|f| f.to_str()).map(String::from) else {
+                return false;
+            };
+            let Some(suffix) = entry.path.extension().and_then(|s| s.to_str()).map(String::from) else {
+                return false;
+            };
+
+            !path.contains(&build_path)
+                && !path.contains(&target_path)
+                && config.scanfullfilter.contains(&filename)
+                && config.scanendfilter.contains(&suffix)
         });
 
         match workspacedir {
             Some(ws) => {
                 let mut all_entries = Vec::<FileEntry>::with_capacity(128);
 
-                for path in scan_with_globset_and_filter(
+                for path in scan_with_suffix_and_filter(
                     ws,
-                    &["**/*.md", "**/*.txt"],
+                    &[".md", ".txt"],
                     filter,
                 ) {
                     all_entries.push(FileEntry::from_path(&path));
                 }
 
-                for path in scan_with_globset_and_filter(
+                for path in scan_with_suffix_and_filter(
                     ws,
-                    &["**"],
+                    &[],
                     filter,
                 ) {
                     all_entries.push(FileEntry::from_path(&path));

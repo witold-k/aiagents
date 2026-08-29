@@ -144,13 +144,11 @@ impl Buildsystem {
     }
 
     pub fn setupbuild(&self, projdir: &Path, targetdir: &Path) {
-        let bc: Vec<String> = self.build_cmd(projdir, targetdir).setup;
+        let bc = self.build_cmd(projdir, targetdir).setup;
 
-        if bc.is_empty() {
+        let Some((cmd, args)) = bc.split_first() else {
             return;
-        }
-
-        let (cmd, args) = bc.split_first().unwrap();
+        };
 
         let _ = Command::new(cmd)
             .args(args)
