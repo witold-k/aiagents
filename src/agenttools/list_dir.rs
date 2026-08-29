@@ -47,11 +47,13 @@ impl<'a> ListDir<'a> {
     ) -> Result<ListDir<'a>, ListDirError> {
         match payload.get("path").and_then(|v| v.as_str()).map(PathBuf::from) {
             Some(path) => {
-                let rpath = resolve_relaxed_path(projroot, path);
-                Ok(ListDir {
-                    filter,
-                    path: normalize_path(&rpath.unwrap()),
-                })
+                match resolve_relaxed_path(projroot, &path) {
+                    Some(rpath) => Ok(ListDir {
+                        filter,
+                        path: normalize_path(&rpath),
+                    }),
+                    None => Err(ListDirError::new(ListDirErrorType::NotFound, &path))
+                }
             },
             None => {
                 Err(ListDirError {err_type: ListDirErrorType::DecodeError, err_info: "path".to_string()})

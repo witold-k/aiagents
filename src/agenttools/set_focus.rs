@@ -26,8 +26,10 @@ pub struct SetFocus {
 
 impl SetFocus {
     pub fn from_json(payload: &Value) -> Self {
-        let focus = payload.get("focus").unwrap();
-        SetFocus { data: focus.to_string() }
+        match payload.get("focus") {
+            Some(note) => SetFocus { data: note.to_string() },
+            None       => SetFocus { data: "no note found".to_string() },
+        }
     }
 
     pub fn execute(self) -> Result<SetFocusResult, SetFocusError>  {

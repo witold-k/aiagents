@@ -98,7 +98,8 @@ impl Default for Config {
                         "mmap".into(),
                     ],
                 },
-                AIProvider {
+                AIProvider { // just as an example - this does not work properly, use q5 version
+                             // instead
                     name: "qwen38q4".into(),
                     source: "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/main/Qwen3.8-27B-UD-IQ4_XS.gguf".into(),
                     endpoint: "http://localhost:8080/v1".into(),

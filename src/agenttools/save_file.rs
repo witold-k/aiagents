@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use struct_extractors::extract_accessors;
 use fsscanner::{
     pathfilter::Pathfilter,
-    pathutils::normalize_path,
+    pathutils::{normalize_path, resolve_relaxed_path}
 };
 use crate::utils::jsonutils::get_json_field;
 use crate::agenttools::aitooltype::{ AIToolType, ResultToString, ResultToJson, Validatable };
@@ -55,7 +55,7 @@ pub struct SaveFileResult {
 
 impl<'a> SaveFile<'a> {
     pub fn from_json(
-        _: &'a Path,
+        projroot: &'a Path,
         filter: &'a Pathfilter,
         payload: &'a Value,
     ) -> Result<SaveFile<'a>, SaveFileError> {
@@ -69,6 +69,12 @@ impl<'a> SaveFile<'a> {
                         payload.get("file").unwrap_or(&Value::Null),
                     ),
                 });
+            }
+        };
+        let file = match resolve_relaxed_path(projroot, &file) {
+            Some(file) => file,
+            None => {
+                return Err(SaveFileError::new(SaveFileErrorType::NotFound, &file, ""));
             }
         };
 

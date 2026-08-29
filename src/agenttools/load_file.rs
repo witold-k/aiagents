@@ -47,11 +47,13 @@ impl<'a> LoadFile<'a> {
     ) -> Result<LoadFile<'a>, LoadFileError> {
         match payload.get("file").and_then(|v| v.as_str()).map(PathBuf::from) {
             Some(file) => {
-                let rpath = resolve_relaxed_path(projroot, file);
-                Ok(LoadFile {
-                    filter,
-                    path: normalize_path(&rpath.unwrap()),
-                })
+                match resolve_relaxed_path(projroot, &file) {
+                    Some(rpath) => Ok(LoadFile {
+                        filter,
+                        path: normalize_path(&rpath),
+                    }),
+                    None => Err(LoadFileError::new(LoadFileErrorType::NotFound, &file))
+                }
             },
             None => {
                 Err(LoadFileError {

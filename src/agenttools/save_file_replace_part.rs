@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 use struct_extractors::extract_accessors;
 use fsscanner::{
     pathfilter::Pathfilter,
-    pathutils::normalize_path,
+    pathutils::{normalize_path, resolve_relaxed_path},
 };
 use crate::agenttools::aitooltype::{ ResultToString, ResultToJson, Validatable };
 
@@ -61,30 +61,100 @@ pub struct SaveFilePartResult {
 
 impl<'a> SaveFilePart<'a> {
     pub fn from_json(
-        _: &'a Path,
+        projroot: &'a Path,
         filter: &'a Pathfilter,
-        payload: &'a Value
-    ) -> SaveFilePart<'a> {
-        let file = payload.get("file").and_then(|v| v.as_str()).map(PathBuf::from);
-        let npath = normalize_path(&file.unwrap());
-        // Holt den Index (0-basiert). Falls das LLM "index" oder "occurrence" schickt. Default ist 0.
-        let occurrence_index = payload.get("index")
+        payload: &'a Value,
+    ) -> Result<SaveFilePart<'a>, SaveFilePartError> {
+        let file = match payload.get("file").and_then(|v| v.as_str()).map(PathBuf::from) {
+            Some(file) => file,
+            None => {
+                return Err(SaveFilePartError {
+                    err_type: SaveFilePartErrorType::DecodeError,
+                    err_info: format!(
+                        "invalid file: {}",
+                        payload.get("file").unwrap_or(&Value::Null),
+                    ),
+                });
+            }
+        };
+
+        let rpath = match resolve_relaxed_path(projroot, &file) {
+            Some(rpath) => rpath,
+            None => {
+                return Err(SaveFilePartError {
+                    err_type: SaveFilePartErrorType::DecodeError,
+                    err_info: format!("invalid file path: {}", file.display()),
+                });
+            }
+        };
+
+        let occurrence_index = match payload
+            .get("index")
             .or_else(|| payload.get("occurrence"))
             .and_then(|v| v.as_u64())
-            .unwrap_or(0) as usize;
+        {
+            Some(index) => index as usize,
+            None => {
+                return Err(SaveFilePartError {
+                    err_type: SaveFilePartErrorType::DecodeError,
+                    err_info: format!(
+                        "invalid occurrence index: {}",
+                        payload
+                            .get("index")
+                            .or_else(|| payload.get("occurrence"))
+                            .unwrap_or(&Value::Null),
+                    ),
+                });
+            }
+        };
 
-        let original = payload.get("original").and_then(|v| v.as_str()).unwrap_or("ERROR: can not decode orginal");
-        let content = payload.get("content").and_then(|v| v.as_str()).unwrap_or("ERROR: can not decode content");
-        let note = payload.get("note").and_then(|v| v.as_str()).unwrap_or("ERROR: can not decode note");
+        let original = match payload.get("original").and_then(|v| v.as_str()) {
+            Some(original) => original,
+            None => {
+                return Err(SaveFilePartError {
+                    err_type: SaveFilePartErrorType::DecodeError,
+                    err_info: format!(
+                        "invalid original: {}",
+                        payload.get("original").unwrap_or(&Value::Null),
+                    ),
+                });
+            }
+        };
 
-        SaveFilePart {
+        let content = match payload.get("content").and_then(|v| v.as_str()) {
+            Some(content) => content,
+            None => {
+                return Err(SaveFilePartError {
+                    err_type: SaveFilePartErrorType::DecodeError,
+                    err_info: format!(
+                        "invalid content: {}",
+                        payload.get("content").unwrap_or(&Value::Null),
+                    ),
+                });
+            }
+        };
+
+        let note = match payload.get("note").and_then(|v| v.as_str()) {
+            Some(note) => note,
+            None => {
+                return Err(SaveFilePartError {
+                    err_type: SaveFilePartErrorType::DecodeError,
+                    err_info: format!(
+                        "invalid note: {}",
+                        payload.get("note").unwrap_or(&Value::Null),
+                    ),
+                });
+            }
+        };
+
+        Ok(SaveFilePart {
             filter,
-            path: npath,
+            path: normalize_path(&rpath),
             occurrence_index,
             original: original.to_string(),
             content: content.to_string(),
             note: note.to_string(),
-        }
+        })
     }
 
     pub fn execute(self) -> Result<SaveFilePartResult, SaveFilePartError> {
