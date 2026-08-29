@@ -101,10 +101,15 @@ impl AIMessageList {
             for message in &mut self.messages {
                 if
                     (AIMessageType::Model == message.msgtype) &&
-                    (tooltype == message.tooltype) &&
-                    (*message.data.get("content").unwrap().to_string() == filename)
+                    (tooltype == message.tooltype)
                 {
-                    req_found = true;
+                    let content = match message.data.get("content") {
+                        Some(content) => content,
+                        None          => continue,
+                    };
+                    if *content.to_string() == filename {
+                        req_found = true;
+                    }
                 }
                 else {
                     if req_found {

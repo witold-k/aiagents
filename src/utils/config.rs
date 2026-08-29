@@ -298,9 +298,14 @@ impl Config {
     }
 
     pub fn get_provider(&self, name: &str) -> Option<&AIProvider> {
-        self.providerlist
-            .iter()
-            .find(|entry| entry.name == name)
+        if name == "default" {
+            self.get_selected_provider()
+        }
+        else {
+            self.providerlist
+                .iter()
+                .find(|entry| entry.name == name)
+        }
     }
 
     pub fn get_selected_provider(&self) -> Option<&AIProvider> {

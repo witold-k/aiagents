@@ -37,11 +37,9 @@ pub enum AstErrorType {
 
 impl<'a> Ast<'a> {
     pub fn from_json(filter: &'a Pathfilter, payload: &Value) -> Ast<'a> {
-        let path = payload.get("path").and_then(|v| v.as_str()).map(PathBuf::from);
-
-        Ast {
-            filter,
-            path: path.unwrap(),
+        match payload.get("path").and_then(|v| v.as_str()).map(PathBuf::from) {
+            Some(path) => Ast { filter, path },
+            None       => Ast { filter, path: PathBuf::from("") },
         }
     }
 
@@ -157,4 +155,3 @@ impl Validatable for Result<AstResult, AstError> {
         self.is_ok()
     }
 }
-
