@@ -289,6 +289,7 @@ impl Config {
                     .join("config.json");
             }
 
+        // we really need that => just abort here
         let home = env::var("HOME").expect("HOME not set");
 
         PathBuf::from(home)

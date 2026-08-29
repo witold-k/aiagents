@@ -16,7 +16,6 @@
 ## supplychain security & code size
 
 - remove crate phf, TOOLS should be generated in build.rs
-- remove crates: globset => use own fsscanner
 - supply chain security:
     - may be do not use cargo to import crates (at least not all), instead just copy to subdir
 
@@ -49,12 +48,13 @@
 8. Add absolute-path tests.
 9. Add read/write capability tests.
 10. Centralize path validation.
+11. add proper ctrl-c handling: shutdown properly, do not abort
 
 ## P1 — Agent Protocol
 
-12. Give every tool call an ID.
 13. Separate `ToolResult` from wire-format messages.
 14. Make malformed tool requests ordinary errors instead of panics.
+15. Logging: use shmem with objects as logging buffer and an additional utility to read from it
 
 ## P1 — Evaluation
 

@@ -28,6 +28,7 @@ pub struct SaveFile<'a> {
 
 #[derive(Copy, Clone, Debug)]
 pub enum SaveFileErrorType {
+    DecodeError,
     Forbidden,
     NotFound,
     WriteFailed,
@@ -56,19 +57,50 @@ impl<'a> SaveFile<'a> {
     pub fn from_json(
         _: &'a Path,
         filter: &'a Pathfilter,
-        payload: &'a Value
-    ) -> SaveFile<'a> {
-        let file = payload.get("file").and_then(|v| v.as_str()).map(PathBuf::from);
-        let npath = normalize_path(&file.unwrap());
-        let content = get_json_field(payload, "content").unwrap();
-        let note = payload.get("note").and_then(|v| v.as_str());
+        payload: &'a Value,
+    ) -> Result<SaveFile<'a>, SaveFileError> {
+        let file = match payload.get("file").and_then(|v| v.as_str()).map(PathBuf::from) {
+            Some(file) => file,
+            None => {
+                return Err(SaveFileError {
+                    err_type: SaveFileErrorType::DecodeError,
+                    err_info: format!(
+                        "invalid file: {}",
+                        payload.get("file").unwrap_or(&Value::Null),
+                    ),
+                });
+            }
+        };
 
-        SaveFile {
+        let content = match get_json_field(payload, "content") {
+            Ok(content) => content,
+            Err(err) => {
+                return Err(SaveFileError {
+                    err_type: SaveFileErrorType::DecodeError,
+                    err_info: format!("invalid content: {}", err),
+                });
+            }
+        };
+
+        let note = match payload.get("note").and_then(|v| v.as_str()) {
+            Some(note) => note,
+            None => {
+                return Err(SaveFileError {
+                    err_type: SaveFileErrorType::DecodeError,
+                    err_info: format!(
+                        "invalid note: {}",
+                        payload.get("note").unwrap_or(&Value::Null),
+                    ),
+                });
+            }
+        };
+
+        Ok(SaveFile {
             filter,
-            path: npath,
+            path: normalize_path(&file),
             content,
-            note: note.unwrap()
-        }
+            note,
+        })
     }
 
     pub fn execute(self) -> Result<SaveFileResult, SaveFileError> {
@@ -155,6 +187,9 @@ impl SaveFileError {
 
     pub fn to_json(&'_ self, message_id: &str) -> Value {
         let msg = match self.err_type {
+            SaveFileErrorType::DecodeError =>
+                format!("[save_file] ERROR: decode error: {}", self.err_info),
+
             SaveFileErrorType::Forbidden =>
                 format!("[save_file] ERROR: not allowed to read: {}", self.err_info),
 

@@ -18,6 +18,7 @@ pub struct ListDir<'a> {
 
 #[derive(Copy, Clone, Debug)]
 pub enum ListDirErrorType {
+    DecodeError,
     Forbidden,
     NotFound,
     ReadFailed,
@@ -43,12 +44,18 @@ impl<'a> ListDir<'a> {
         projroot: &'a Path,
         filter: &'a Pathfilter,
         payload: &Value
-    ) -> ListDir<'a> {
-        let path = payload.get("path").and_then(|v| v.as_str()).map(PathBuf::from);
-        let rpath = resolve_relaxed_path(projroot, path.unwrap());
-        ListDir {
-            filter,
-            path: normalize_path(&rpath.unwrap()),
+    ) -> Result<ListDir<'a>, ListDirError> {
+        match payload.get("path").and_then(|v| v.as_str()).map(PathBuf::from) {
+            Some(path) => {
+                let rpath = resolve_relaxed_path(projroot, path);
+                Ok(ListDir {
+                    filter,
+                    path: normalize_path(&rpath.unwrap()),
+                })
+            },
+            None => {
+                Err(ListDirError {err_type: ListDirErrorType::DecodeError, err_info: "path".to_string()})
+            },
         }
     }
 
@@ -126,6 +133,9 @@ impl ListDirError {
 
     pub fn to_json(&self, message_id: &str) -> Value {
         let msg = match self.err_type {
+            ListDirErrorType::DecodeError =>
+                format!("[list_dir] ERROR: decode error: {}", self.err_info),
+
             ListDirErrorType::Forbidden =>
                 format!("[list_dir] ERROR: not allowed to read: {}", self.err_info),
 

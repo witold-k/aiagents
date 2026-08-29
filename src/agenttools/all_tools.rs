@@ -129,10 +129,30 @@ pub fn execute_tool<'a>(
         Some(AIToolType::Ast)      => ToolOutput::Ast(Ast::from_json(filter, payload).execute()),
         Some(AIToolType::Done)     => ToolOutput::Done(Done::default().execute()),
         Some(AIToolType::Failed)   => ToolOutput::Failed(Failed::default().execute()),
-        Some(AIToolType::ListDir)  => ToolOutput::ListDir(ListDir::from_json(projroot, filter, payload).execute()),
-        Some(AIToolType::LoadFile) => ToolOutput::LoadFile(LoadFile::from_json(projroot, filter, payload).execute()),
-        Some(AIToolType::LoadFilePart) => ToolOutput::LoadFilePart(LoadFilePart::from_json(projroot, filter, payload).execute()),
-        Some(AIToolType::SaveFile) => ToolOutput::SaveFile(SaveFile::from_json(projroot, filter, payload).execute()),
+        Some(AIToolType::ListDir)  => {
+            match ListDir::from_json(projroot, filter, payload) {
+                Ok(obj)  => ToolOutput::ListDir(obj.execute()),
+                Err(err) => ToolOutput::Failed(Failed::from_string(format!("{}", err)).execute())
+            }
+        },
+        Some(AIToolType::LoadFile)  => {
+            match LoadFile::from_json(projroot, filter, payload) {
+                Ok(obj)  => ToolOutput::LoadFile(obj.execute()),
+                Err(err) => ToolOutput::Failed(Failed::from_string(format!("{}", err)).execute())
+            }
+        },
+        Some(AIToolType::LoadFilePart)  => {
+            match LoadFilePart::from_json(projroot, filter, payload) {
+                Ok(obj)  => ToolOutput::LoadFilePart(obj.execute()),
+                Err(err) => ToolOutput::Failed(Failed::from_string(format!("{}", err)).execute())
+            }
+        },
+        Some(AIToolType::SaveFile)  => {
+            match SaveFile::from_json(projroot, filter, payload) {
+                Ok(obj)  => ToolOutput::SaveFile(obj.execute()),
+                Err(err) => ToolOutput::Failed(Failed::from_string(format!("{}", err)).execute())
+            }
+        },
         Some(AIToolType::SaveFilePart) => ToolOutput::SaveFilePart(SaveFilePart::from_json(projroot, filter, payload).execute()),
         Some(AIToolType::ScanDir)  => ToolOutput::ScanDir(ScanDir::from_json(projroot, filter, payload).execute()),
         Some(AIToolType::SetFocus) => ToolOutput::SetFocus(SetFocus::from_json(payload).execute()),

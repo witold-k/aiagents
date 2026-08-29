@@ -18,6 +18,7 @@ pub struct LoadFile<'a> {
 
 #[derive(Copy, Clone, Debug)]
 pub enum LoadFileErrorType {
+    DecodeError,
     Forbidden,
     NotFound,
     ReadFailed,
@@ -42,13 +43,22 @@ impl<'a> LoadFile<'a> {
     pub fn from_json(
         projroot: &'a Path,
         filter: &'a Pathfilter,
-        payload: &Value
-    ) -> LoadFile<'a> {
-        let file = payload.get("file").and_then(|v| v.as_str()).map(PathBuf::from);
-        let rpath = resolve_relaxed_path(projroot, file.unwrap());
-        LoadFile {
-            filter,
-            path: normalize_path(&rpath.unwrap()),
+        payload: &Value,
+    ) -> Result<LoadFile<'a>, LoadFileError> {
+        match payload.get("file").and_then(|v| v.as_str()).map(PathBuf::from) {
+            Some(file) => {
+                let rpath = resolve_relaxed_path(projroot, file);
+                Ok(LoadFile {
+                    filter,
+                    path: normalize_path(&rpath.unwrap()),
+                })
+            },
+            None => {
+                Err(LoadFileError {
+                    err_type: LoadFileErrorType::DecodeError,
+                    err_info: "file".to_string(),
+                })
+            },
         }
     }
 
@@ -112,6 +122,9 @@ impl LoadFileError {
 
     pub fn to_json(&self, message_id: &str) -> Value {
         let msg = match self.err_type {
+            LoadFileErrorType::DecodeError =>
+                format!("[load_file] ERROR: decode error: {}", self.err_info),
+
             LoadFileErrorType::Forbidden =>
                 format!("[load_file] ERROR: not allowed to read: {}", self.err_info),
 

@@ -29,6 +29,7 @@ pub struct SaveFilePart<'a> {
 
 #[derive(Copy, Clone, Debug)]
 pub enum SaveFilePartErrorType {
+    DecodeError,
     Forbidden,
     NotFound,
     ReadFailed,
@@ -72,17 +73,17 @@ impl<'a> SaveFilePart<'a> {
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as usize;
 
-        let original = payload.get("original").and_then(|v| v.as_str()).unwrap_or("");
-        let content = payload.get("content").and_then(|v| v.as_str());
-        let note = payload.get("note").and_then(|v| v.as_str());
+        let original = payload.get("original").and_then(|v| v.as_str()).unwrap_or("ERROR: can not decode orginal");
+        let content = payload.get("content").and_then(|v| v.as_str()).unwrap_or("ERROR: can not decode content");
+        let note = payload.get("note").and_then(|v| v.as_str()).unwrap_or("ERROR: can not decode note");
 
         SaveFilePart {
             filter,
             path: npath,
             occurrence_index,
             original: original.to_string(),
-            content: content.unwrap().to_string(),
-            note: note.unwrap().to_string(),
+            content: content.to_string(),
+            note: note.to_string(),
         }
     }
 
@@ -103,7 +104,6 @@ impl<'a> SaveFilePart<'a> {
             Err(_) => return Err(SaveFilePartError::new(SaveFilePartErrorType::ReadFailed, &path, "")),
         };
 
-        // --- IDIOTEN- & DUPLIKATSCHUTZ VIA INDEX-MATCHING ---
         // Normalisiere Zeilenumbrüche für einen robusten String-Match
         let clean_file = file_content.replace("\r\n", "\n");
         let clean_original = self.original.replace("\r\n", "\n");
@@ -207,7 +207,10 @@ impl SaveFilePartError {
 
     pub fn to_json(&self, message_id: &str) -> Value {
         let msg = match self.err_type {
-            SaveFilePartErrorType::Forbidden =>
+            SaveFilePartErrorType::DecodeError =>
+                format!("[save_file] ERROR: decode error: {}", self.err_info),
+
+             SaveFilePartErrorType::Forbidden =>
                 format!("[save_file] ERROR: not allowed to read: {}", self.err_info),
 
             SaveFilePartErrorType::NotFound =>

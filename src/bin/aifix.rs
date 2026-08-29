@@ -48,17 +48,31 @@ pub fn run_service(config: &Config, name: &Option<String>) {
 
     let child_handler = Arc::clone(&child);
 
-    ctrlc::set_handler(move || {
-        if let Some(mut child) = child_handler.lock().unwrap().take() {
-            let _ = child.kill();
-            let _ = child.wait();
+    if let Err(err) = ctrlc::set_handler(move || {
+        match child_handler.lock() {
+            Ok(mut guard) => {
+                if let Some(mut child) = guard.take() {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+            }
+            Err(err) => {
+                eprintln!("warning: failed to lock child process: {err}");
+            }
         }
-        std::process::exit(0);
-    })
-    .unwrap();
+    }) {
+        eprintln!("warning: failed to install Ctrl-C handler: {err}");
+    }
 
-    if let Some(child) = child.lock().unwrap().as_mut() {
-        let _ = child.wait();
+    match child.lock() {
+        Ok(mut guard) => {
+            if let Some(child) = guard.as_mut() {
+                let _ = child.wait();
+            }
+        }
+        Err(err) => {
+            eprintln!("warning: failed to lock child process: {err}");
+        }
     }
 }
 
@@ -74,7 +88,16 @@ pub fn main() {
     }
 
     let is_workspace = args.is_workspace();
-    let config = Config::load_or_create(args.config).expect("FAIL");
+    let config = match Config::load_or_create(args.config.clone()) {
+        Ok(config) => config,
+        Err(err) => {
+            eprintln!(
+                "cannot load {:?}, check path, may be version conflict. Move or save/delete in this case: {:?}",
+                args.config, err
+            );
+            std::process::exit(1);
+        }
+    };
 
     if args.start_service.is_some() {
         run_service(&config, &args.start_service);

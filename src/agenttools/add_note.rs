@@ -26,7 +26,6 @@ pub struct AddNote {
 
 impl AddNote {
     pub fn from_json(payload: &Value) -> Self {
-
         match payload.get("note") {
             Some(note) => AddNote { data: note.to_string() },
             None       => AddNote { data: "no note found".to_string() },
