@@ -1,117 +1,276 @@
-# features
+# TODO
 
-- ast: use sym crate for rust
+## P0 — Stability and Correctness
 
-# optimazation
+These items should be addressed before adding significant new functionality.
 
-## refrag
-
-- identify reusable components and make own project:
-   - repostate
-   - doprocess (necessary at all?)
-   - stringutis
-   - save, save_part => fsscanner (partly)
-- in general review dependency/supply chain
-
-## supplychain security & code size
-
-- remove crate phf, TOOLS should be generated in build.rs
-- supply chain security:
-    - may be do not use cargo to import crates (at least not all), instead just copy to subdir
-
-# quality
-
-- add unit tests
-    - first at least all in utils
-    - than next all in agenttools
-    - later on repostate? => in the moment very simple
-
-# security
-
-- docker integration: provide simple docker based start defined in config file
-    aifix (used as docker/podman starter) => starts docker with aifix again that runs in docker/podman
-
-# next todos:
-
-# AI Agents — Priority List
-
-## P0 — Make the agent impossible to hang/crash
-
-1. Remove every LLM-input `unwrap()` / `expect()`.
-4. Add a wall-clock timeout.
-5. Define explicit terminal states.
+- Remove every LLM-input `unwrap()` / `expect()`.
+- Add a wall-clock timeout for agent execution.
+- Define explicit terminal states for agent/workflow execution.
+- Add proper Ctrl-C handling so shutdown is clean and does not abort abruptly.
 
 ## P1 — Security
 
-6. Add comprehensive path-traversal tests.
-7. Add symlink tests.
-8. Add absolute-path tests.
-9. Add read/write capability tests.
-10. Centralize path validation.
-11. add proper ctrl-c handling: shutdown properly, do not abort
+- Add comprehensive path-traversal tests.
+- Add symlink tests.
+- Add absolute-path tests.
+- Add read/write capability tests.
+- Centralize path validation.
+- Review the complete tool capability boundary.
 
 ## P1 — Agent Protocol
 
-13. Separate `ToolResult` from wire-format messages.
-14. Make malformed tool requests ordinary errors instead of panics.
-15. Logging: use shmem with objects as logging buffer and an additional utility to read from it
+- Separate `ToolResult` from wire-format messages.
+- Make malformed tool requests ordinary errors instead of panics.
+- Review the protocol boundary between the LLM, agent loop, tools, and workflows.
 
 ## P1 — Evaluation
 
-15. Build a small deterministic benchmark suite.
+Build a small deterministic benchmark suite to measure whether changes actually
+improve the runtime.
 
-Example:
+Initial target:
 
-* 10 Rust bugs
-* 10 C++ bugs
-* 10 Java bugs
+- 10 Rust bugs
+- 10 C++ bugs
+- 10 Java bugs
 
 Measure:
 
-* Task success
-* Number of iterations
-* Number of LLM calls
-* Token usage
-* Execution time
-* Compiler failures
-* Incorrect edits
+- task success
+- number of iterations
+- number of LLM calls
+- token usage
+- execution time
+- compiler failures
+- incorrect edits
 
-## P2 — Context
+### Major Milestone
 
-16. Add symbol-level indexing.
-17. Add AST-aware retrieval.
-18. Add relevance scoring.
-19. Only then experiment with embeddings.
+Run **20 representative coding tasks unattended** and record exactly why each
+task succeeded or failed.
 
-## Major Milestone
+---
 
-Run **20 representative coding tasks unattended** and record exactly why each task succeeded or failed.
+# Architecture and Refactoring
 
-# future plans / ideas
+## Workflows
 
-## some topics
+The workflow architecture needs further investigation before introducing
+additional abstractions.
 
-- llm based indexing in textblock => keywords
-    - will be extended to human + llm search
-- may be search via embeddings => SVD singular value decomposition
-    - different SVD: normalized sliding window over word group (), ...
-- may be store also SVD
-    - problem (e.g. error message) => solution
-    - may be problem can be decomposized in several steps?
-- ast: use rust crate for this, do not use external binary
+Currently only a simple linear workflow is supported:
 
-## workflows
+    step
+      |
+      v
+    step
+      |
+      +-- error
+      |
+      +-- done
 
-- need more idea for workflows
-current only very simple workflow type supported: linear execution with error or done as result.
-need later on complex workflow with multi tool call, depend on current running internal task.
-=> most probably more or several statemachine(s) needed here
+The intended direction is to support more complex workflows where the workflow
+can decide what happens next, potentially involving:
 
-## Interactive Mode
+- multiple agents
+- different LLM configurations
+- multiple tool calls
+- dependent tasks
+- conditional transitions
+- recovery and retry
 
-An interactive mode is planned to allow users to work with the agent conversationally during a development session.
+This may eventually require one or more state machines, but the abstraction
+should only be introduced once actual workflow use cases require it.
 
-The goal is to support an iterative workflow where the user can:
+## AIAgentLoop
+
+Review the architecture and responsibility of `AIAgentLoop` in relation to
+workflows.
+
+The goal is to keep `AIAgentLoop` focused on executing an individual
+LLM-driven agent while leaving higher-level orchestration to workflows.
+
+Do not over-generalize before the workflow use cases are clear.
+
+## BLT
+
+Keep `build_lint_test.rs` simple and reliable.
+
+Before adding further agent functionality, the BLT workflow should be
+well-tested and polished.
+
+It should provide deterministic verification and return useful results to
+the workflow without taking responsibility for agent orchestration.
+
+---
+
+# Dependency and Codebase Simplification
+
+## Reusable Components
+
+Identify components that are sufficiently independent to become their own
+small projects or crates:
+
+- `repostate`
+- `doprocess` — first determine whether this abstraction is actually necessary
+- `stringutils`
+- `save` / `save_part` — investigate whether this functionality partly
+  belongs in `fsscanner`
+
+The goal is not to split the project unnecessarily, but to identify code
+that has a clear independent purpose and can be reused without pulling in
+the complete agent runtime.
+
+## Dependency Review
+
+Review the dependency tree and simplify it wherever possible.
+
+In particular:
+
+- remove unnecessary dependencies
+- prefer existing standard-library functionality where practical
+- review transitive dependencies
+- review dependency size and maintenance status
+- review the complete supply chain
+
+---
+
+# Supply-Chain Security and Code Size
+
+## Generated Tool Definitions
+
+Remove the `phf` dependency if possible.
+
+`TOOLS` should be generated by `build.rs` rather than requiring a runtime
+dependency solely for static tool definitions.
+
+## Crate Supply Chain
+
+Investigate whether all dependencies need to be imported through Cargo.
+
+One possible direction is to vendor selected small dependencies directly
+into a project subdirectory rather than depending on them externally.
+
+This should be evaluated carefully rather than applied universally.
+
+The goal is a smaller and more auditable supply chain, not simply fewer
+Cargo dependencies.
+
+---
+
+# Quality
+
+## Unit Tests
+
+Increase unit-test coverage incrementally.
+
+Priority:
+
+1. `utils`
+2. `agenttools`
+3. `repostate`
+4. other core components
+
+`repostate` is currently simple, so extensive testing can wait until its
+stateful recovery functionality grows.
+
+---
+
+# Context and Source Analysis
+
+## AST
+
+For Rust source analysis, use a Rust crate rather than an external AST
+binary.
+
+- Investigate `syn` as the Rust AST implementation.
+- Replace the current external AST approach where appropriate.
+- Keep the AST functionality focused on what the agent actually needs.
+
+## Symbol-Level Context
+
+Later, improve source-code context from file-level access toward
+symbol-level access:
+
+- symbol-level indexing
+- AST-aware retrieval
+- relevance scoring
+
+Only after these mechanisms are useful should embeddings be investigated.
+
+---
+
+# Docker / Sandboxing
+
+Add simple Docker/Podman integration.
+
+The intended model is:
+
+    aifix
+      |
+      v
+    Docker / Podman
+      |
+      v
+    aifix inside container
+
+The container startup should be configurable.
+
+The host-side `aifix` acts as a simple Docker/Podman starter, while the
+actual agent runtime can execute inside the container.
+
+The configuration should define the relevant container/runtime settings.
+
+---
+
+# Future Ideas
+
+These are deliberately exploratory and should not drive the current
+architecture yet.
+
+## LLM-Assisted Indexing
+
+Explore LLM-based indexing of text blocks using keywords.
+
+The longer-term goal could support both:
+
+- human-oriented search
+- LLM-oriented search
+
+## Embeddings and SVD
+
+Investigate semantic retrieval techniques such as embeddings and
+singular-value decomposition (SVD).
+
+Possible experiments include:
+
+- normalized sliding windows over groups of words
+- storing reduced representations
+- retrieving similar problems and solutions
+- decomposing a problem into several steps
+
+For example:
+
+    problem / error
+          |
+          v
+    relevant context
+          |
+          v
+    possible solution
+
+These are research experiments rather than current architectural
+requirements.
+
+---
+
+# Interactive Mode
+
+An interactive mode is planned to allow users to work with the agent
+conversationally during a development session.
+
+The intended workflow is:
 
 - give the agent a task
 - inspect what the agent is doing
@@ -121,6 +280,50 @@ The goal is to support an iterative workflow where the user can:
 - continue the task interactively
 - inspect build and test feedback
 
-Implementation will be done via markdown documents - so no addition tooling is needed.
-Just an editor that is may be aware of fileupdates. And on save actions should be detected
-by other tool and forward text to agent, if user request is complete (may be keyword at and of markdown)
+The initial implementation should use Markdown documents rather than
+introducing another dedicated UI or protocol.
+
+A Markdown document can act as the interaction surface:
+
+    User/editor
+        |
+        v
+    Markdown document
+        |
+        v
+    file change detected
+        |
+        v
+    agent receives new text
+        |
+        v
+    agent continues
+
+The editor only needs to support normal file editing and saving.
+
+An external watcher/tool can detect changes and forward the updated text
+to the agent.
+
+A simple convention, such as a keyword at the end of the Markdown document,
+can indicate that the user's request is complete and should be processed.
+
+This keeps interactive mode consistent with the project's goal of using
+simple existing mechanisms rather than adding another tooling layer.
+
+---
+
+# Current Focus
+
+The immediate priority is to make the existing runtime small, reliable and
+well understood before expanding its functionality.
+
+In particular:
+
+1. Make `build_lint_test.rs` reliable and well tested.
+2. Clarify the boundary between workflows and `AIAgentLoop`.
+3. Remove unnecessary dependencies and simplify the codebase.
+4. Improve stability and error handling.
+5. Strengthen path and capability security.
+6. Add deterministic evaluation tasks.
+
+
