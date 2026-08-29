@@ -12,6 +12,7 @@ use std::{
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct AIProvider {
     pub name: String,
+    pub source: String,
     pub endpoint: String,
     pub model: String,
     pub api_key: String,
@@ -62,6 +63,7 @@ impl Default for Config {
             providerlist: vec![
                 AIProvider {
                     name: "qwen25".into(),
+                    source: "https://huggingface.co/apto-as/Qwen2.5-Coder-14B-Instruct-Q5_K_M-GGUF/resolve/main/qwen2.5-coder-14b-instruct-q5_k_m.gguf".into(),
                     endpoint: "http://localhost:8080/v1".into(),
                     model: "qwen2.5-coder-14b-instruct-q5_k_m.gguf".into(),
                     api_key: String::new(),
@@ -98,6 +100,7 @@ impl Default for Config {
                 },
                 AIProvider {
                     name: "qwen38".into(),
+                    source: "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/main/Qwen3.8-27B-UD-IQ4_XS.gguf".into(),
                     endpoint: "http://localhost:8080/v1".into(),
                     model: "Qwen3.8-27B-UD-IQ3_S.gguf".into(),
                     api_key: String::new(),
@@ -134,6 +137,7 @@ impl Default for Config {
                 },
                 AIProvider {
                     name: "devs".into(),
+                    source: "https://huggingface.co/unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF/resolve/main/Devstral-Small-2-24B-Instruct-2512-UD-Q4_K_XL.gguf".into(),
                     endpoint: "http://localhost:8080/v1".into(),
                     model: "Devstral-Small-2-24B-Instruct-2512-UD-Q4_K_XL.gguf".into(),
                     api_key: String::new(),
