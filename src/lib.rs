@@ -16,6 +16,8 @@ pub mod generated_workspaces {
 }
 
 pub mod agenttools;
+pub mod cli;
+pub mod config;
 pub mod repostate;
 pub mod utils;
 pub mod workflows;

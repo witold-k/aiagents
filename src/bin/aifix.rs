@@ -11,8 +11,8 @@ use fsscanner::{
 };
 use aiagents::{
     aiagentloop::AIAgentLoop,
-    utils::commandline::{parse_args, help},
-    utils::config::Config,
+    cli::commandline::{parse_args, help},
+    config::Config,
     workflows::{
         buildsystem::Buildsystem,
         select_workflow::WorkflowSelector,

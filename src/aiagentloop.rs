@@ -24,10 +24,10 @@ use crate::workflows::{
 };
 use crate::utils:: {
     ast::get_ast_string,
-    config::Config,
     scan_dir::scan_with_suffix_and_filter,
     stringutils::{strip_code_fences, raw_fence_to_string},
 };
+use crate::config::Config;
 use crate::generated_tasks::Tasks;
 
 #[expect(dead_code)]
