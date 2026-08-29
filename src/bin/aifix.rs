@@ -28,6 +28,10 @@ pub fn run_service(config: &Config, name: &Option<String>) {
     };
 
     let Some(provider) = config.get_provider(name) else {
+        eprintln!("Provider '{}' not found, available provider:", name);
+        for provider in &config.providerlist {
+            eprintln!("{}", provider.name);
+        }
         return;
     };
 
