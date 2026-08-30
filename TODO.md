@@ -272,6 +272,11 @@ For example:
 These are research experiments rather than current architectural
 requirements.
 
+## Web access
+
+- use lightpanda for weblookup
+[lightpanda](https://lightpanda.io/)
+
 ---
 
 # Interactive Mode

@@ -12,6 +12,7 @@ use std::{
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct AIProvider {
     pub name: String,
+    pub comment: String,
     pub source: String,
     pub endpoint: String,
     pub model: String,
@@ -63,6 +64,7 @@ impl Default for Config {
             providerlist: vec![
                 AIProvider {
                     name: "qwen25".into(),
+                    comment: "works, but is not very useful".into(),
                     source: "https://huggingface.co/apto-as/Qwen2.5-Coder-14B-Instruct-Q5_K_M-GGUF/resolve/main/qwen2.5-coder-14b-instruct-q5_k_m.gguf".into(),
                     endpoint: "http://localhost:8080/v1".into(),
                     model: "qwen2.5-coder-14b-instruct-q5_k_m.gguf".into(),
@@ -99,7 +101,47 @@ impl Default for Config {
                     ],
                 },
                 AIProvider { // just as an example - this does not work properly
+                    name: "qwen38q3".into(),
+                    comment: "does not work yet. produces garbage. may be llama problem".into(),
+                    source: "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/blob/main/Qwen3.8-27B-UD-Q3_K_XL.gguf".into(),
+                    endpoint: "http://localhost:8080/v1".into(),
+                    model: "Qwen3.8-27B-UD-Q3_K_XL.gguf".into(),
+                    api_key: String::new(),
+                    llmbin: "llama-server".into(),
+                    llmmodeldir: PathBuf::from("/data/ai/llm/"),
+                    llmparam: vec![
+                        "--ctx-size".into(),
+                        "80000".into(),
+                        "--n-gpu-layers".into(),
+                        "999".into(),
+                        "--parallel".into(),
+                        "1".into(),
+                        "--port".into(),
+                        "8080".into(),
+                        "--host".into(),
+                        "127.0.0.1".into(),
+                        "--timeout".into(),
+                        "600".into(),
+                        "--flash-attn".into(),
+                        "on".into(),
+                        "--batch-size".into(),
+                        "2048".into(),
+                        "--ubatch-size".into(),
+                        "1024".into(),
+                        "--cache-type-k".into(),
+                        "q8_0".into(),
+                        "--cache-type-v".into(),
+                        "q8_0".into(),
+                        "--predict".into(),
+                        "8192".into(),
+                        "--reasoning-preserve".into(),
+                        "--load-mode".into(),
+                        "mmap".into(),
+                    ],
+                },
+                AIProvider { // just as an example - this does not work properly
                     name: "qwen38q4".into(),
+                    comment: "does not work yet. produces garbage. may be llama problem".into(),
                     source: "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/main/Qwen3.8-27B-UD-IQ4_XS.gguf".into(),
                     endpoint: "http://localhost:8080/v1".into(),
                     model: "Qwen3.8-27B-UD-IQ4_XS.gguf".into(),
@@ -131,6 +173,7 @@ impl Default for Config {
                         "q8_0".into(),
                         "--predict".into(),
                         "8192".into(),
+                        "--reasoning-preserve".into(),
                         "--load-mode".into(),
                         "mmap".into(),
                     ],
@@ -138,6 +181,7 @@ impl Default for Config {
                 AIProvider { // just as an example - is very slow with 16GB VRAM
                              // => CPU offloading
                     name: "qwen38q5".into(),
+                    comment: "not useful, ca 2tok/s needs CPU offloading".into(),
                     source: "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/main/Qwen3.8-27B-UD-Q5_K_M.gguf".into(),
                     endpoint: "http://localhost:8080/v1".into(),
                     model: "Qwen3.8-27B-UD-Q5_K_M.gguf".into(),
@@ -179,6 +223,7 @@ impl Default for Config {
 
                 AIProvider {
                     name: "devs".into(),
+                    comment: "works, but small conext. not tested with complex problems".into(),
                     source: "https://huggingface.co/unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF/resolve/main/Devstral-Small-2-24B-Instruct-2512-UD-Q4_K_XL.gguf".into(),
                     endpoint: "http://localhost:8080/v1".into(),
                     model: "Devstral-Small-2-24B-Instruct-2512-UD-Q4_K_XL.gguf".into(),
