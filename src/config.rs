@@ -98,8 +98,7 @@ impl Default for Config {
                         "mmap".into(),
                     ],
                 },
-                AIProvider { // just as an example - this does not work properly, use q5 version
-                             // instead
+                AIProvider { // just as an example - this does not work properly
                     name: "qwen38q4".into(),
                     source: "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/main/Qwen3.8-27B-UD-IQ4_XS.gguf".into(),
                     endpoint: "http://localhost:8080/v1".into(),
@@ -136,7 +135,8 @@ impl Default for Config {
                         "mmap".into(),
                     ],
                 },
-                AIProvider {
+                AIProvider { // just as an example - is very slow with 16GB VRAM
+                             // => CPU offloading
                     name: "qwen38q5".into(),
                     source: "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/main/Qwen3.8-27B-UD-Q5_K_M.gguf".into(),
                     endpoint: "http://localhost:8080/v1".into(),
@@ -146,7 +146,7 @@ impl Default for Config {
                     llmmodeldir: PathBuf::from("/data/ai/llm/"),
                     llmparam: vec![
                         "--ctx-size".into(),
-                        "49152".into(),
+                        "100000".into(),
                         "--n-gpu-layers".into(),
                         "30".into(),
                         "--parallel".into(),
@@ -169,6 +169,10 @@ impl Default for Config {
                         "q8_0".into(),
                         "--predict".into(),
                         "8192".into(),
+                        "--spec-type".into(),
+                        "draft-mtp".into(),
+                        "--spec-draft-n-max".into(),
+                        "2".into(),
                         // here CPU offloading is necessary
                     ],
                 },
@@ -183,7 +187,7 @@ impl Default for Config {
                     llmmodeldir: PathBuf::from("/data/ai/llm/"),
                     llmparam: vec![
                         "--ctx-size".into(),
-                        "49152".into(),
+                        "28000".into(),
                         "--n-gpu-layers".into(),
                         "999".into(),
                         "--parallel".into(),
@@ -201,9 +205,9 @@ impl Default for Config {
                         "--ubatch-size".into(),
                         "1024".into(),
                         "--cache-type-k".into(),
-                        "q8_0".into(),
+                        "q4_0".into(),
                         "--cache-type-v".into(),
-                        "q8_0".into(),
+                        "q4_0".into(),
                         "--predict".into(),
                         "8192".into(),
                         "--load-mode".into(),
@@ -214,7 +218,7 @@ impl Default for Config {
 
             taskproviderlist: Vec::new(),
 
-            max_try_count: 10,
+            max_try_count: 20,
             queue_length_max: 14,
             queue_length_save: 1,
 

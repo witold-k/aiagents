@@ -43,10 +43,8 @@ between LLMs and software projects.
 * Build, lint and test feedback
 * Repository state and recovery
 * Configurable LLM providers
-* OpenAI-compatible chat completion API
 * Workspace and path-based access restrictions
 * Rust implementation
-* GitHub Actions CI
 
 ## Architecture
 

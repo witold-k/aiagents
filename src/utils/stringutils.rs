@@ -61,48 +61,66 @@ pub fn strip_code_fences(input: &str) -> String {
     input.trim().to_string()
 }
 
+/// this is unfortunately necessary since some models does not
+/// convert (escape) code correctly into json.
 pub fn raw_fence_to_string(encoded: &str) -> String {
     const START_MARKER: &str = "RAW_TEXT_BEGIN>>\n";
     const CORE_END_MARKER: &str = "RAW_TEXT_END";
 
-    // Wir arbeiten auf einer veränderbaren Kopie des Strings
     let mut current_string = encoded.to_string();
 
-    // Schleife läuft so lange, wie noch unkonvertierte START_MARKER existieren
-    while let Some(start_pos) = current_string.find(START_MARKER) {
-        let content_start = start_pos + START_MARKER.len();
+    while let Some(found_start_pos) = current_string.find(START_MARKER) {
+        // Optional '"' directly before RAW_TEXT_BEGIN>>\n
+        let start_pos = if found_start_pos > 0
+            && current_string.as_bytes()[found_start_pos - 1] == b'"'
+        {
+            found_start_pos - 1
+        } else {
+            found_start_pos
+        };
 
-        // Suche nach dem Kernwort des End-Markers im restlichen Text
+        let content_start = found_start_pos + START_MARKER.len();
+
+        // Suche nach RAW_TEXT_END im restlichen Text
         let slice_after_start = &current_string[content_start..];
         let Some(core_end_offset) = slice_after_start.find(CORE_END_MARKER) else {
-            // Falls kein End-Marker existiert, abbrechen um Endlosschleife zu verhindern
             break;
         };
 
-        // Absolute Position des Kernworts im Gesamtstring
         let core_end_pos = content_start + core_end_offset;
 
-        // Rückwärts gehen, um optionale Zeichen wie '<' oder '/' vor dem Marker zu finden
+        // Falls der End-Marker als <<RAW_TEXT_END vorkommt,
+        // gehört das << nicht zum eigentlichen Inhalt.
         let mut actual_end_pos = core_end_pos;
+
         while actual_end_pos > content_start {
             let prev_char = current_string.as_bytes()[actual_end_pos - 1];
-            if prev_char == b'<' || prev_char == b'/' || prev_char == b' ' {
+
+            if prev_char == b'<' {
                 actual_end_pos -= 1;
             } else {
                 break;
             }
         }
 
-        // Inhalt extrahieren (endet genau vor den optionalen Klammern/Slashes des End-Markers)
+        // Inhalt extrahieren
         let raw_content = &current_string[content_start..actual_end_pos];
         let conv = serde_json::to_string(raw_content).unwrap_or_default();
 
-        // Vorwärts gehen, um das Ende des gesamten End-Markers inklusive anhängendem Müll zu finden
+        // Ende des Markers bestimmen.
+        // RAW_TEXT_END oder <<RAW_TEXT_END
         let mut tail_pos = core_end_pos + CORE_END_MARKER.len();
+
         while tail_pos < current_string.len() {
             let next_char = current_string.as_bytes()[tail_pos];
-            // Überspringe verbleibende Klammern, Newlines oder Leerzeichen direkt nach dem Marker
-            if next_char == b'>' || next_char == b'\n' || next_char == b'\r' || next_char == b' ' {
+
+            // Bestehendes Verhalten beibehalten:
+            // >, Newline, Carriage Return und Leerzeichen überspringen.
+            if next_char == b'>'
+                || next_char == b'\n'
+                || next_char == b'\r'
+                || next_char == b' '
+            {
                 tail_pos += 1;
             } else {
                 break;
@@ -111,15 +129,20 @@ pub fn raw_fence_to_string(encoded: &str) -> String {
 
         let tail = &current_string[tail_pos..];
 
-        // Neuen Teilstring für den aktuellen Schleifendurchlauf zusammenbauen
-        if tail.starts_with(',') {
-            current_string = format!("{}{}{}", &current_string[..start_pos], conv, tail);
+        if tail.starts_with(',') || tail.starts_with('}') {
+            current_string = format!(
+                "{}{}{}",
+                &current_string[..start_pos],
+                conv,
+                tail
+            );
         } else {
-            if tail.starts_with('}') {
-                current_string = format!("{}{}{}", &current_string[..start_pos], conv, tail);
-            } else {
-                current_string = format!("{}{},{}", &current_string[..start_pos], conv, tail);
-            }
+            current_string = format!(
+                "{}{},{}",
+                &current_string[..start_pos],
+                conv,
+                tail
+            );
         }
     }
 

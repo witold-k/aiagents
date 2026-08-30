@@ -132,24 +132,20 @@ impl AIMessageList {
         use serde_json::{json, Value};
 
         let mut arr = Vec::<Value>::new();
+        let mut content = String::with_capacity(10 * 1024);
 
-        // Helper to push a simple {role, content} message
-        let mut push_msg = |role: &str, content: &str| {
-            arr.push(json!({
-                "role": role,
-                "content": content
-            }));
-        };
-
-        push_msg("user", &self.task_description);
+        content.push_str(&self.task_description);
+        content.push('\n');
 
         for entry in &self.subtask {
-            push_msg("user", entry);
+            content.push_str(entry);
+            content.push('\n');
         }
 
         if !self.structureinfo.is_empty() {
             let fdata = format!("=== INFO/AST ===\n{}", self.structureinfo);
-            push_msg("user", &fdata);
+            content.push_str(&fdata);
+            content.push('\n');
         }
 
         if !self.files.is_empty() {
@@ -171,23 +167,32 @@ impl AIMessageList {
                     .collect::<Vec<_>>()
                     .join("\n")
             );
-            push_msg("user", &fdata);
+            content.push_str(&fdata);
+            content.push('\n');
         }
 
         if let Some(ref faults) = self.faults {
-            push_msg("user", faults);
+            content.push_str(faults);
+            content.push('\n');
         }
 
         if !self.note.is_empty() {
             let fdata = format!("=== NOTE ===\n{}", self.note);
             println!("{}", fdata);
-            push_msg("user", &fdata);
+            content.push_str(&fdata);
+            content.push('\n');
         }
 
         if !self.focus.is_empty() {
             let fdata = format!("=== FOCUS ===\n{}", self.focus);
-            push_msg("user", &fdata);
+            content.push_str(&fdata);
+            content.push('\n');
         }
+
+        arr.push(json!({
+            "role": "user",
+            "content": content
+        }));
 
         // Messages already contain JSON objects → push them directly
         for entry in &self.messages {

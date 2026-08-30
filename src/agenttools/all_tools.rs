@@ -159,7 +159,12 @@ pub fn execute_tool<'a>(
                 Err(err) => ToolOutput::Failed(Failed::from_string(format!("{}", err)).execute())
             }
         },
-        Some(AIToolType::ScanDir)  => ToolOutput::ScanDir(ScanDir::from_json(projroot, filter, payload).execute()),
+        Some(AIToolType::ScanDir)  => {
+            match ScanDir::from_json(projroot, filter, payload) {
+                Ok(obj)  => ToolOutput::ScanDir(obj.execute()),
+                Err(err) => ToolOutput::Failed(Failed::from_string(format!("{}", err)).execute())
+            }
+        },
         Some(AIToolType::SetFocus) => ToolOutput::SetFocus(SetFocus::from_json(payload).execute()),
         Some(AIToolType::Valid)    => ToolOutput::Valid(Valid::default().execute()),
         None => ToolOutput::Failed(Failed::from_string(format!("key not found: {}", payload)).execute())

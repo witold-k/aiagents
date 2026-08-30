@@ -193,7 +193,7 @@ pub fn main() {
         });
         subtask_vec.push(data);
     };
-    let loop_ = AIAgentLoop::new(
+    let ailoop = AIAgentLoop::new(
         config,
         src_path,
         args.workspace,
@@ -206,5 +206,5 @@ pub fn main() {
         args.debug,
     );
 
-    loop_.run();
+    ailoop.run();
 }

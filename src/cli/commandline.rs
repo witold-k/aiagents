@@ -27,24 +27,24 @@ pub struct Args {
 
 pub fn help() {
     println!(r#"aifix [option]+
--l --lang [required, invalid with -w switch]: select task: one of: {}
-        or provide path to taskdesciption
--t --task [required, multiple possible invalid with -w switch]:
-    - first -t selects task: one of: {}
-    - following are paths to subtasks that enhance the task description
--s --select [optional, multiple possible]: one or more files or dirs,
-    - if task needs a file to operate and none is given a random file will be choosen
--c --config [optional]: load config from path
-    - default config will be generated in path if no config availabe
-    - default config path is ~/.config/aifix/config.json
--f --pathfilter [multiple, required at least once]: directory list
--b --builddir [default = target(rust) or build(other)]: set builddir
--w --workspace [optional]: running in workspace (mode): path to workspace
-    - llm does not load files, all files are loaded at once from current workspace,
-    - also task descripton is here and may be named like e.g.: `task.md`
--d --debug [default = false]: dump debug
--r --run [optional providername in config] run server; if set other settings will be ignored
--h --help [default = false]: dump help
+    -l --lang [required, invalid with -w switch]: select task: one of: {}
+            or provide path to taskdesciption
+    -t --task [required, multiple possible invalid with -w switch]:
+        - first -t selects task: one of: {}
+        - following are paths to subtasks that enhance the task description
+    -s --select [optional, multiple possible]: one or more files or dirs,
+        - if task needs a file to operate and none is given a random file will be choosen
+    -c --config [optional]: load config from path
+        - default config will be generated in path if no config availabe
+        - default config path is ~/.config/aifix/config.json
+    -f --pathfilter [multiple, required at least once]: directory list
+    -b --builddir [default = target(rust) or build(other)]: set builddir
+    -w --workspace [optional]: running in workspace (mode): path to workspace
+        - llm does not load files, all files are loaded at once from current workspace,
+        - also task descripton is here and may be named like e.g.: `task.md`
+    -d --debug [default = false]: dump debug
+    -r --run [optional providername in config] run server; if set other settings will be ignored
+    -h --help [default = false]: dump help
 "#
         , Languages::to_vec_str().join(", ")
         , Tasks::to_vec_str().join(", ")

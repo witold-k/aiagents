@@ -169,7 +169,6 @@ impl<'a> AIAgentLoop<'a> {
             }
             else {
                 okcount += 1;
-                totalleft += 1;
             }
             totalleft -= 1;
         }
@@ -204,9 +203,9 @@ impl<'a> AIAgentLoop<'a> {
             let response = {
                 let messages = self.messages.borrow();
                 if self.dump {
-                    println!("###### SEND");
-                    println!("[process_tool_chain] {}", serde_json::to_string_pretty(&messages.to_json()).unwrap());
-                    println!("###### END");
+                    println!("### SEND");
+                    println!("[process_tool_chain] {}", serde_json::to_string_pretty(&messages.to_json()).unwrap_or("failed to decode json".to_string()));
+                    println!("### END");
                 }
 
                 match air.request(&messages.to_json().to_string()) {
@@ -218,8 +217,8 @@ impl<'a> AIAgentLoop<'a> {
             };
 
             if self.dump {
-                println!("###### RESPONSE");
-                println!("{}", serde_json::to_string_pretty(&response).unwrap());
+                println!("### RESPONSE");
+                println!("{}", serde_json::to_string_pretty(&response).unwrap_or("failed to decode json".to_string()));
             }
 
             let choices = response.get("choices").and_then(|v| v.get(0));

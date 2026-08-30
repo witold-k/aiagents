@@ -23,6 +23,7 @@ pub struct ScanDir<'a> {
 
 #[derive(Copy, Clone, Debug)]
 pub enum ScanDirErrorType {
+    DecodeError,
     Forbidden,
     NotFound,
     ReadFailed,
@@ -48,12 +49,20 @@ impl<'a> ScanDir<'a> {
         projroot: &'a Path,
         filter: &'a Pathfilter,
         payload: &Value
-    ) -> ScanDir<'a> {
-        let path = payload.get("path").and_then(|v| v.as_str()).map(PathBuf::from);
-        let rpath = resolve_relaxed_path(projroot, path.unwrap());
-        ScanDir {
-            filter,
-            path: normalize_path(&rpath.unwrap()),
+    ) -> Result<ScanDir<'a>, ScanDirError> {
+        match payload.get("path").and_then(|v| v.as_str()).map(PathBuf::from) {
+            Some(path) => {
+                match resolve_relaxed_path(projroot, &path) {
+                    Some(rpath) => Ok(ScanDir {
+                        filter,
+                        path: normalize_path(&rpath),
+                    }),
+                    None => Err(ScanDirError::new(ScanDirErrorType::NotFound, &path))
+                }
+            },
+            None => {
+                Err(ScanDirError {err_type: ScanDirErrorType::DecodeError, err_info: "path".to_string()})
+            },
         }
     }
 
@@ -131,14 +140,17 @@ impl ScanDirError {
 
     pub fn to_json(&self, message_id: &str) -> Value {
         let msg = match self.err_type {
+            ScanDirErrorType::DecodeError =>
+                format!("[scan_dir] ERROR: decode error: {}", self.err_info),
+
             ScanDirErrorType::Forbidden =>
-                format!("[list_dir] ERROR: not allowed to read: {}", self.err_info),
+                format!("[scan_dir] ERROR: not allowed to read: {}", self.err_info),
 
             ScanDirErrorType::NotFound =>
-                format!("[list_dir] ERROR: file not found: {}", self.err_info),
+                format!("[scan_dir] ERROR: file not found: {}", self.err_info),
 
             ScanDirErrorType::ReadFailed =>
-                format!("[list_dir] ERROR: read failed: {}", self.err_info),
+                format!("[scan_dir] ERROR: read failed: {}", self.err_info),
         };
 
         json!({

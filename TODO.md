@@ -24,6 +24,15 @@ These items should be addressed before adding significant new functionality.
 - Make malformed tool requests ordinary errors instead of panics.
 - Review the protocol boundary between the LLM, agent loop, tools, and workflows.
 
+
+## P1 - new feature: search
+
+- add new files search in files for a given property
+  given in additional user defined file.
+  -> may be: "seach for unwrap that will cause panics", or "find documentation of"
+  -> needs: guided search in all files in readspace or workspace (algo defines which files to visit)
+  -> maybe new tools: llm_answer.rs => just saves results in database or textfile
+
 ## P1 — Evaluation
 
 Build a small deterministic benchmark suite to measure whether changes actually
