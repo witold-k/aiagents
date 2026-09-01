@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Witold Kaminski
 
-use serde_json::{json, Value};
+use serde_json::{Value};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use fsscanner::{
@@ -11,12 +11,12 @@ use fsscanner::{
     pathutils::normalize_path,
 };
 use crate::agenttools::{
-    all_tools::*,
+    all_tools::{execute_tool, ToolOutput},
     aitooltype::AIToolType,
     done::*,
     failed::*,
 };
-use crate::aimessage::{AIMessageList, AIMessageType, AIMessageListData};
+use crate::aimessage::{AIMessageId, AIMessageList, AIMessageType, AIMessageListData};
 use crate::airequest::AIRequest;
 use crate::workflows::{
     runbuild::RunBuild,
@@ -24,6 +24,7 @@ use crate::workflows::{
 };
 use crate::utils:: {
     ast::get_ast_string,
+    jsonutils::get_json_field,
     scan_dir::scan_with_suffix_and_filter,
     stringutils::{strip_code_fences, raw_fence_to_string},
 };
@@ -57,7 +58,7 @@ impl<'a> AIAgentLoop<'a> {
     ) -> Self {
         let data = AIMessageListData {
             messages: Vec::new(),
-            message_id: 1,
+            message_id: AIMessageId {val: 1},
             depth: config.queue_length_max,
             task_id,
             task_description,
@@ -157,9 +158,14 @@ impl<'a> AIAgentLoop<'a> {
         );
         let mut okcount = 1;
         let mut cb = |name: &str, _p1: &Path, _p2: &Path, result: &Buildresult| {
-            self.analyze(&mut air, name, result)
-        };
+            let res: ToolOutput = self.analyze(&mut air, name, result);
 
+            if res.is_failed() {
+                eprintln!("Tool Error occurred: {:?} => {:?}", air, res);
+            }
+
+            res
+        };
 
         let mut totalleft = self.config.max_try_count as isize;
         while okcount < 2 && totalleft > 0 {
@@ -211,7 +217,9 @@ impl<'a> AIAgentLoop<'a> {
                 match air.request(&messages.to_json().to_string()) {
                     Ok(v) => v,
                     Err(_) => {
-                        return ToolOutput::Failed(Failed::default().execute());
+                        return ToolOutput::Failed(
+                            Failed::from_string(messages.to_json().to_string()).execute()
+                        );
                     }
                 }
             };
@@ -289,7 +297,7 @@ impl<'a> AIAgentLoop<'a> {
 */
     pub fn handle_text_action(&self, content: &str) -> ToolOutput {
         let mut messages = self.messages.borrow_mut();
-        let fake_id = format!("call_{}", messages.inc_messageid());
+        let fake_id = messages.inc_messageid();
         // must not panic, just skip an d retry
         let cleancode = strip_code_fences(&raw_fence_to_string(content));
         let json_result: Result<Value, serde_json::Error> = serde_json::from_str(&cleancode);
@@ -299,11 +307,10 @@ impl<'a> AIAgentLoop<'a> {
             Err(e) => {
                 // your error processing logic
                 eprintln!("[handle_text_action] JSON parse error: {}\n>>>>CODE:\n{}\n<<<<", e, cleancode);
-                messages.append(&fake_id, AIMessageType::Tool, AIToolType::Failed, json!({
-                    "role": "tool",
-                    "tool_call_id": fake_id,
-                    "content": format!("Error occurred: JSON parse error, this should contain a valid JSON block: {}\n>>>>CODE:\n{}\n<<<<", e, cleancode)
-                }));
+                messages.append(
+                    fake_id, AIMessageType::Tool, AIToolType::Failed,
+                    &format!("Error occurred: JSON parse error, this should contain a valid JSON block: {}\n>>>>CODE:\n{}\n<<<<", e, cleancode)
+                );
                 return ToolOutput::Failed(Failed::from_string(
                     format!("Error occurred: JSON parse error, this should contain a valid JSON block: {}\n>>>>CODE:\n{}\n<<<<", e, cleancode)
                 ).execute());
@@ -316,27 +323,30 @@ impl<'a> AIAgentLoop<'a> {
         }
         let result = execute_tool(&json.clone(), &self.projdir, self.filter);
 
-        messages.append(&fake_id, AIMessageType::Model, result.to_base(), json);
+        let content = match get_json_field(&json, "content") {
+            Ok(content) => content,
+            Err(_)      => "".to_string(),
+        };
+        messages.append(fake_id, AIMessageType::Model, result.to_base(), &content);
 
         if result.is_valid() {
             if result.to_base().is_save() || result.to_base().is_done() {
-                println!("TOOL: {:?}", result.to_string(&fake_id));
+                println!("TOOL: {:?}", result.to_string(fake_id));
                 messages.clear();
             }
             else {
                 if result.to_base().is_failed() {
-                    println!("TOOL: {:?}", result.to_string(&fake_id));
+                    println!("TOOL: {:?}", result.to_string(fake_id));
                 }
-                messages.append(&fake_id, AIMessageType::Tool, result.to_base(), result.to_json(&fake_id));
+                messages.append(fake_id, AIMessageType::Tool, result.to_base(), &fake_id.to_string());
             }
         }
         else {
             println!("[aiagentloop] ERROR: {:?}", result);
-            messages.append(&fake_id, AIMessageType::Tool, result.to_base(), json!({
-                "role": "tool",
-                "tool_call_id": fake_id,
-                "content": format!("Error occurred: {}", result.to_json(&fake_id))
-            }));
+            messages.append(
+                fake_id, AIMessageType::Tool, result.to_base(),
+                &format!("Error occurred: {}", result.to_json(fake_id))
+            );
         }
 
         result

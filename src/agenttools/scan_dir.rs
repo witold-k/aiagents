@@ -14,6 +14,7 @@ use fsscanner::{
     pathutils::{normalize_path, resolve_relaxed_path},
 };
 use crate::agenttools::aitooltype::{ ResultToString, ResultToJson, Validatable };
+use crate::aimessage::AIMessageId;
 
 #[derive(Debug)]
 pub struct ScanDir<'a> {
@@ -105,7 +106,7 @@ impl<'a> ScanDir<'a> {
 // ---------------------------------------------------------------------------
 
 impl ScanDirResult {
-    pub fn to_json(&self, message_id: &str) -> Value {
+    pub fn to_json(&self, message_id: AIMessageId) -> Value {
         json!({
             "role": "tool",
             "tool_call_id": message_id,
@@ -113,7 +114,7 @@ impl ScanDirResult {
         })
     }
 
-    pub fn to_string(&self, message_id: &str) -> String {
+    pub fn to_string(&self, message_id: AIMessageId) -> String {
         format!("{}: {:?}", message_id, self.data)
     }
 }
@@ -138,7 +139,7 @@ impl ScanDirError {
         }
     }
 
-    pub fn to_json(&self, message_id: &str) -> Value {
+    pub fn to_json(&self, message_id: AIMessageId) -> Value {
         let msg = match self.err_type {
             ScanDirErrorType::DecodeError =>
                 format!("[scan_dir] ERROR: decode error: {}", self.err_info),
@@ -166,7 +167,7 @@ impl ScanDirError {
 // ---------------------------------------------------------------------------
 
 impl ResultToJson for Result<ScanDirResult, ScanDirError> {
-    fn to_json(&self, msg_id: &str) -> Value {
+    fn to_json(&self, msg_id: AIMessageId) -> Value {
         match self {
             Ok(ok) => ok.to_json(msg_id),
             Err(err) => err.to_json(msg_id),
@@ -175,7 +176,7 @@ impl ResultToJson for Result<ScanDirResult, ScanDirError> {
 }
 
 impl ResultToString for Result<ScanDirResult, ScanDirError> {
-    fn to_string(&self, msg_id: &str) -> String {
+    fn to_string(&self, msg_id: AIMessageId) -> String {
         match self {
             Ok(ok) => ok.to_string(msg_id),
             Err(err) => err.to_string(),

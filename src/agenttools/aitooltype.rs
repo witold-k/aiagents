@@ -5,6 +5,7 @@ use serde::{Serialize, Deserialize};
 use serde_json::Value;
 use phf::phf_map;
 use struct_extractors::base_entries;
+use crate::aimessage::AIMessageId;
 
 #[base_entries(AIToolType)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -24,11 +25,11 @@ pub enum AIToolType {
 }
 
 pub trait ResultToJson {
-    fn to_json(&self, msg_id: &str) -> Value;
+    fn to_json(&self, msg_id: AIMessageId) -> Value;
 }
 
 pub trait ResultToString {
-    fn to_string(&self, msg_id: &str) -> String;
+    fn to_string(&self, msg_id: AIMessageId) -> String;
 }
 
 pub trait Validatable {

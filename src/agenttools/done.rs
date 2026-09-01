@@ -4,6 +4,7 @@
 use std::fmt;
 use serde_json::{json, Value};
 use crate::agenttools::aitooltype::{ AIToolType, ResultToString, ResultToJson, Validatable };
+use crate::aimessage::AIMessageId;
 
 #[derive(Debug)]
 pub struct DoneResult {
@@ -43,7 +44,7 @@ impl Done {
 // ---------------------------------------------------------------------------
 
 impl DoneResult {
-    pub fn to_json(&self, message_id: &str) -> Value {
+    pub fn to_json(&self, message_id: AIMessageId) -> Value {
         json!({
             "role": "tool",
             "tool_call_id": message_id,
@@ -51,7 +52,7 @@ impl DoneResult {
         })
     }
 
-    pub fn to_string(&self, message_id: &str) -> String {
+    pub fn to_string(&self, message_id: AIMessageId) -> String {
         format!("{:?} {}: {}", AIToolType::Done, message_id, self.data)
     }
 }
@@ -69,7 +70,7 @@ impl fmt::Display for DoneError {
 impl std::error::Error for DoneError {}
 
 impl DoneError {
-    pub fn to_json(&self, message_id: &str) -> Value {
+    pub fn to_json(&self, message_id: AIMessageId) -> Value {
         json!({
             "role": "tool",
             "tool_call_id": message_id,
@@ -83,7 +84,7 @@ impl DoneError {
 // ---------------------------------------------------------------------------
 
 impl ResultToJson for Result<DoneResult, DoneError> {
-    fn to_json(&self, msg_id: &str) -> Value {
+    fn to_json(&self, msg_id: AIMessageId) -> Value {
         match self {
             Ok(ok) => ok.to_json(msg_id),
             Err(err) => err.to_json(msg_id),
@@ -92,7 +93,7 @@ impl ResultToJson for Result<DoneResult, DoneError> {
 }
 
 impl ResultToString for Result<DoneResult, DoneError> {
-    fn to_string(&self, msg_id: &str) -> String {
+    fn to_string(&self, msg_id: AIMessageId) -> String {
         match self {
             Ok(ok) => ok.to_string(msg_id),
             Err(err) => err.to_string(),

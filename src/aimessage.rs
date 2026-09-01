@@ -2,8 +2,9 @@
 // Copyright (c) 2026 Witold Kaminski
 
 use serde::{Serialize, Deserialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use fsscanner::fileentry::FileEntry;
+use std::fmt::{Display, Formatter};
 use crate::agenttools::aitooltype::AIToolType;
 use crate::generated_tasks::Tasks;
 
@@ -16,11 +17,17 @@ pub enum AIMessageType {
     Model,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AIMessageId {
+    pub val: usize,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AIMessage {
-    pub msgtype:  AIMessageType,
-    pub tooltype: AIToolType, // in case AIMessageType::Tool
-    pub data:     Value,
+    pub message_id: AIMessageId,
+    pub msgtype:    AIMessageType,
+    pub tooltype:   AIToolType, // in case AIMessageType::Tool
+    pub data:       String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,7 +38,7 @@ pub struct AIFileinfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AIMessageList {
     pub messages: Vec<AIMessage>,
-    pub message_id: usize,
+    pub message_id: AIMessageId,
     pub depth:      usize,
     pub task_id:    Tasks,
     pub task_description: String,
@@ -46,7 +53,7 @@ pub struct AIMessageList {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AIMessageListData {
     pub messages:   Vec<AIMessage>,
-    pub message_id: usize,
+    pub message_id: AIMessageId,
     pub depth:      usize,
     pub task_id:    Tasks,
     pub task_description: String,
@@ -61,9 +68,48 @@ pub struct AIMessageListData {
 // ---------------------------------------------------------------------------
 //
 
+impl AIMessageType {
+    #[inline(always)]
+    pub fn to_str(&self) -> &str {
+        match self {
+            AIMessageType::System => "system",
+            AIMessageType::User   => "user",
+            AIMessageType::Build  => "build",
+            AIMessageType::Tool   => "tool",
+            AIMessageType::Model  => "assistant",
+        }
+    }
+}
+
+impl Display for AIMessageId {
+    #[inline(always)]
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "call_{}", self.val)
+    }
+}
+
 impl AIMessage {
-    pub fn new(msgtype: AIMessageType, tooltype: AIToolType, data: Value) -> Self {
-        Self { msgtype, tooltype, data }
+    #[inline(always)]
+    pub fn new(
+        message_id: AIMessageId,
+        msgtype:    AIMessageType,
+        tooltype:   AIToolType,
+        data:       String
+    ) -> Self {
+        Self { message_id, msgtype, tooltype, data }
+    }
+
+    #[inline(always)]
+    pub fn is_user(&self) -> bool {
+        AIMessageType::User == self.msgtype
+    }
+
+    pub fn to_json(&self) -> Value {
+        json!({
+            "role":         self.msgtype.to_str(),
+            "tool_call_id": &self.message_id.to_string(),
+            "content":      &self.data
+        })
     }
 }
 
@@ -72,50 +118,47 @@ impl AIMessageList {
         Self {
             messages:   data.messages,
             message_id: data.message_id,
-            depth:   data.depth,
-            task_id: data.task_id,
+            depth:      data.depth,
+            task_id:    data.task_id,
             task_description: data.task_description,
             subtask:       data.subtask,
             structureinfo: data.structureinfo,
             files:         data.files,
-            note: "".into(),
-            focus:  data.focus,
-            faults: data.faults,
+            note:       "".into(),
+            focus:      data.focus,
+            faults:     data.faults,
         }
     }
 
-    pub fn inc_messageid(&mut self) -> usize {
-        self.message_id += 1;
+    pub fn inc_messageid(&mut self) -> AIMessageId {
+        self.message_id.val += 1;
         self.message_id
     }
 
-    pub fn append(&mut self, message_id: &str, msgtype: AIMessageType, tooltype: AIToolType, mut data: Value) {
-        data["tool_call_id"] = message_id.into();
-        self.messages.push(AIMessage::new(msgtype, tooltype, data.clone()));
+    pub fn append(
+        &mut self,
+        message_id: AIMessageId,
+        msgtype: AIMessageType,
+        tooltype: AIToolType,
+        data: &str
+    ) {
+        self.messages.push(AIMessage::new(message_id, msgtype, tooltype, data.to_string()));
         if (AIToolType::LoadFile == tooltype) || (AIToolType::Ast == tooltype) {
-            let filename = match data.get("content") {
-                Some(filename) => filename.to_string(),
-                None => return,
-            };
+            let filename      = data;
             let mut req_found = false;
             for message in &mut self.messages {
                 if
                     (AIMessageType::Model == message.msgtype) &&
                     (tooltype == message.tooltype)
                 {
-                    let content = match message.data.get("content") {
-                        Some(content) => content,
-                        None          => continue,
-                    };
-                    if *content.to_string() == filename {
+                    let content = &message.data;
+                    if content == filename {
                         req_found = true;
                     }
                 }
                 else {
                     if req_found {
-                        message.data["content"] = serde_json::Value::String(
-                            ["REF: ", message_id].concat()
-                        );
+                        message.data = ["REF: ", &message_id.to_string()].concat();
                         req_found = false;
                     }
                 }
@@ -189,14 +232,19 @@ impl AIMessageList {
             content.push('\n');
         }
 
-        arr.push(json!({
-            "role": "user",
-            "content": content
-        }));
-
-        // Messages already contain JSON objects → push them directly
+        let prepend_user = self.messages.first().is_some_and(|m| m.is_user());
+        if prepend_user {
+            let first = &self.messages[0];
+            content.push_str(&first.data);
+        }
+        else {
+            arr.push(json!({
+                "role": "user",
+                "content": content
+            }));
+        }
         for entry in &self.messages {
-            arr.push(entry.data.clone());
+            arr.push(entry.to_json());
         }
 
         Value::Array(arr)
@@ -211,13 +259,6 @@ impl AIMessageList {
 
     pub fn remove_type(&mut self, t: AIMessageType) {
         self.messages.retain(|m| m.msgtype != t);
-    }
-
-    pub fn set_last_callid(&mut self, message_id: &str) {
-        let l = self.messages.len();
-        if l != 0 {
-            self.messages[l - 1].data["tool_call_id"] = serde_json::json!(message_id);
-        }
     }
 }
 

@@ -20,6 +20,7 @@ use crate::agenttools::{
     set_focus::*,
     valid::*,
 };
+use crate::aimessage::AIMessageId;
 //use crate::agenttools::aitooltype::__BASE_ENTRIES_AIToolType;
 
 #[derive(Debug)]
@@ -58,6 +59,10 @@ impl ToolOutput {
         }
     }
 
+    pub fn is_failed(&self) -> bool {
+        matches!(self, ToolOutput::Failed(_))
+    }
+
     pub fn is_done(&self) -> bool {
         matches!(self, ToolOutput::Done(_))
     }
@@ -79,7 +84,7 @@ impl ToolOutput {
         }
     }
 
-    pub fn to_json(&self, message_id: &str) -> Value {
+    pub fn to_json(&self, message_id: AIMessageId) -> Value {
         match self {
             ToolOutput::AddNote(r)  => r.to_json(message_id),
             ToolOutput::Ast(r)      => r.to_json(message_id),
@@ -96,7 +101,7 @@ impl ToolOutput {
         }
     }
 
-    pub fn to_string(&self, message_id: &str) -> String {
+    pub fn to_string(&self, message_id: AIMessageId) -> String {
         match self {
             ToolOutput::AddNote(r)  => r.to_string(message_id),
             ToolOutput::Ast(r)      => r.to_string(message_id),

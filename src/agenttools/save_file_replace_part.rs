@@ -12,6 +12,7 @@ use fsscanner::{
     pathutils::{normalize_path, resolve_relaxed_path},
 };
 use crate::agenttools::aitooltype::{ ResultToString, ResultToJson, Validatable };
+use crate::aimessage::AIMessageId;
 
 #[extract_accessors]
 #[derive(Debug)]
@@ -244,7 +245,7 @@ impl<'a> SaveFilePart<'a> {
 // ---------------------------------------------------------------------------
 
 impl SaveFilePartResult {
-    pub fn to_json(&self, message_id: &str) -> Value {
+    pub fn to_json(&self, message_id: AIMessageId) -> Value {
         json!({
             "role": "tool",
             "tool_call_id": message_id,
@@ -252,7 +253,7 @@ impl SaveFilePartResult {
         })
     }
 
-    pub fn to_string(&self, message_id: &str) -> String {
+    pub fn to_string(&self, message_id: AIMessageId) -> String {
         format!("{}: {}", message_id, self.content)
     }
 }
@@ -275,7 +276,7 @@ impl SaveFilePartError {
         Self { err_type, err_info }
     }
 
-    pub fn to_json(&self, message_id: &str) -> Value {
+    pub fn to_json(&self, message_id: AIMessageId) -> Value {
         let msg = match self.err_type {
             SaveFilePartErrorType::DecodeError =>
                 format!("[save_file] ERROR: decode error: {}", self.err_info),
@@ -309,7 +310,7 @@ impl SaveFilePartError {
 // ---------------------------------------------------------------------------
 
 impl ResultToJson for Result<SaveFilePartResult, SaveFilePartError> {
-    fn to_json(&self, msg_id: &str) -> Value {
+    fn to_json(&self, msg_id: AIMessageId) -> Value {
         match self {
             Ok(ok) => ok.to_json(msg_id),
             Err(err) => err.to_json(msg_id),
@@ -318,7 +319,7 @@ impl ResultToJson for Result<SaveFilePartResult, SaveFilePartError> {
 }
 
 impl ResultToString for Result<SaveFilePartResult, SaveFilePartError> {
-    fn to_string(&self, msg_id: &str) -> String {
+    fn to_string(&self, msg_id: AIMessageId) -> String {
         match self {
             Ok(ok) => ok.to_string(msg_id),
             Err(err) => err.to_string(),

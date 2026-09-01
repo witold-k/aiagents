@@ -13,6 +13,7 @@ use fsscanner::{
 };
 use crate::utils::jsonutils::get_json_field;
 use crate::agenttools::aitooltype::{ AIToolType, ResultToString, ResultToJson, Validatable };
+use crate::aimessage::AIMessageId;
 
 #[extract_accessors]
 #[derive(Clone, Debug)]
@@ -156,7 +157,7 @@ impl<'a> SaveFile<'a> {
 // ---------------------------------------------------------------------------
 
 impl SaveFileResult {
-    pub fn to_json(&self, message_id: &str) -> Value {
+    pub fn to_json(&self, message_id: AIMessageId) -> Value {
         json!({
             "role": "tool",
             "tool_call_id": message_id,
@@ -164,7 +165,7 @@ impl SaveFileResult {
         })
     }
 
-    pub fn to_string(&self, message_id: &str) -> String {
+    pub fn to_string(&self, message_id: AIMessageId) -> String {
         format!("{:?} {}: {:?}", AIToolType::SaveFile, message_id, self.path)
     }
 }
@@ -191,7 +192,7 @@ impl SaveFileError {
         }
     }
 
-    pub fn to_json(&'_ self, message_id: &str) -> Value {
+    pub fn to_json(&'_ self, message_id: AIMessageId) -> Value {
         let msg = match self.err_type {
             SaveFileErrorType::DecodeError =>
                 format!("[save_file] ERROR: decode error: {}", self.err_info),
@@ -223,7 +224,7 @@ impl SaveFileError {
 // ---------------------------------------------------------------------------
 
 impl ResultToJson for Result<SaveFileResult, SaveFileError> {
-    fn to_json(&self, msg_id: &str) -> Value {
+    fn to_json(&self, msg_id: AIMessageId) -> Value {
         match self {
             Ok(ok) => ok.to_json(msg_id),
             Err(err) => err.to_json(msg_id),
@@ -232,7 +233,7 @@ impl ResultToJson for Result<SaveFileResult, SaveFileError> {
 }
 
 impl ResultToString for Result<SaveFileResult, SaveFileError> {
-    fn to_string(&self, msg_id: &str) -> String {
+    fn to_string(&self, msg_id: AIMessageId) -> String {
         match self {
             Ok(ok) => ok.to_string(msg_id),
             Err(err) => err.to_string(),

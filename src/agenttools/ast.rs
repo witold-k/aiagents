@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{json, Value};
 use fsscanner::pathfilter::Pathfilter;
 use crate::agenttools::aitooltype::{ ResultToString, ResultToJson, Validatable };
+use crate::aimessage::AIMessageId;
 
 #[derive(Clone, Debug)]
 pub struct AstError {
@@ -74,7 +75,7 @@ impl<'a> Ast<'a> {
 // ---------------------------------------------------------------------------
 
 impl AstResult {
-    pub fn to_json(&self, message_id: &str) -> Value {
+    pub fn to_json(&self, message_id: AIMessageId) -> Value {
         json!({
             "role": "tool",
             "tool_call_id": message_id,
@@ -82,7 +83,7 @@ impl AstResult {
         })
     }
 
-    pub fn to_string(&self, message_id: &str) -> String {
+    pub fn to_string(&self, message_id: AIMessageId) -> String {
         format!("{}: {}", message_id, self.data)
     }
 }
@@ -107,7 +108,7 @@ impl AstError {
         }
     }
 
-    pub fn to_json(&self, message_id: &str) -> Value {
+    pub fn to_json(&self, message_id: AIMessageId) -> Value {
         let msg = match self.err_type {
             AstErrorType::Forbidden =>
                 format!("[ast] ERROR: not allowed to read: {}", self.err_info),
@@ -132,7 +133,7 @@ impl AstError {
 // ---------------------------------------------------------------------------
 
 impl ResultToJson for Result<AstResult, AstError> {
-    fn to_json(&self, msg_id: &str) -> Value {
+    fn to_json(&self, msg_id: AIMessageId) -> Value {
         match self {
             Ok(ok) => ok.to_json(msg_id),
             Err(err) => err.to_json(msg_id),
@@ -141,7 +142,7 @@ impl ResultToJson for Result<AstResult, AstError> {
 }
 
 impl ResultToString for Result<AstResult, AstError> {
-    fn to_string(&self, msg_id: &str) -> String {
+    fn to_string(&self, msg_id: AIMessageId) -> String {
         match self {
             Ok(ok) => ok.to_string(msg_id),
             Err(err) => err.to_string(),
