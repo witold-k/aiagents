@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Witold Kaminski
 
+use std::fmt;
 use std::path::Path;
 use serde_json::Value;
 //use struct_extractors::same_entries;
@@ -103,18 +104,40 @@ impl ToolOutput {
 
     pub fn to_string(&self, message_id: AIMessageId) -> String {
         match self {
-            ToolOutput::AddNote(r)  => r.to_string(message_id),
-            ToolOutput::Ast(r)      => r.to_string(message_id),
-            ToolOutput::Done(r)     => r.to_string(message_id),
-            ToolOutput::Failed(r)   => r.to_string(message_id),
-            ToolOutput::ListDir(r)  => r.to_string(message_id),
-            ToolOutput::LoadFile(r) => r.to_string(message_id),
-            ToolOutput::LoadFilePart(r) => r.to_string(message_id),
-            ToolOutput::SaveFile(r) => r.to_string(message_id),
-            ToolOutput::SaveFilePart(r) => r.to_string(message_id),
-            ToolOutput::ScanDir(r)  => r.to_string(message_id),
-            ToolOutput::SetFocus(r) => r.to_string(message_id),
-            ToolOutput::Valid(r)    => r.to_string(message_id),
+            ToolOutput::AddNote(r)  => r.to_msg_string(message_id),
+            ToolOutput::Ast(r)      => r.to_msg_string(message_id),
+            ToolOutput::Done(r)     => r.to_msg_string(message_id),
+            ToolOutput::Failed(r)   => r.to_msg_string(message_id),
+            ToolOutput::ListDir(r)  => r.to_msg_string(message_id),
+            ToolOutput::LoadFile(r) => r.to_msg_string(message_id),
+            ToolOutput::LoadFilePart(r) => r.to_msg_string(message_id),
+            ToolOutput::SaveFile(r) => r.to_msg_string(message_id),
+            ToolOutput::SaveFilePart(r) => r.to_msg_string(message_id),
+            ToolOutput::ScanDir(r)  => r.to_msg_string(message_id),
+            ToolOutput::SetFocus(r) => r.to_msg_string(message_id),
+            ToolOutput::Valid(r)    => r.to_msg_string(message_id),
+        }
+    }
+}
+
+impl fmt::Display for ToolOutput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ToolOutput::AddNote(r) => fmt::Debug::fmt(r, f),
+            ToolOutput::Ast(r) => fmt::Debug::fmt(r, f),
+            ToolOutput::Done(r) => fmt::Debug::fmt(r, f),
+            ToolOutput::Failed(r) => match r {
+                Ok(result) => fmt::Display::fmt(result, f),
+                Err(error) => fmt::Display::fmt(error, f),
+            },
+            ToolOutput::ListDir(r) => fmt::Debug::fmt(r, f),
+            ToolOutput::LoadFile(r) => fmt::Debug::fmt(r, f),
+            ToolOutput::LoadFilePart(r) => fmt::Debug::fmt(r, f),
+            ToolOutput::SaveFile(r) => fmt::Debug::fmt(r, f),
+            ToolOutput::SaveFilePart(r) => fmt::Debug::fmt(r, f),
+            ToolOutput::ScanDir(r) => fmt::Debug::fmt(r, f),
+            ToolOutput::SetFocus(r) => fmt::Debug::fmt(r, f),
+            ToolOutput::Valid(r) => fmt::Debug::fmt(r, f),
         }
     }
 }

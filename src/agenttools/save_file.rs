@@ -165,7 +165,7 @@ impl SaveFileResult {
         })
     }
 
-    pub fn to_string(&self, message_id: AIMessageId) -> String {
+    pub fn to_msg_string(&self, message_id: AIMessageId) -> String {
         format!("{:?} {}: {:?}", AIToolType::SaveFile, message_id, self.path)
     }
 }
@@ -233,9 +233,9 @@ impl ResultToJson for Result<SaveFileResult, SaveFileError> {
 }
 
 impl ResultToString for Result<SaveFileResult, SaveFileError> {
-    fn to_string(&self, msg_id: AIMessageId) -> String {
+    fn to_msg_string(&self, msg_id: AIMessageId) -> String {
         match self {
-            Ok(ok) => ok.to_string(msg_id),
+            Ok(ok) => ok.to_msg_string(msg_id),
             Err(err) => err.to_string(),
         }
     }

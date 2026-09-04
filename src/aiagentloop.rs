@@ -161,7 +161,7 @@ impl<'a> AIAgentLoop<'a> {
             let res: ToolOutput = self.analyze(&mut air, name, result);
 
             if res.is_failed() {
-                eprintln!("Tool Error occurred: {:?} => {:?}", air, res);
+                eprintln!("Tool Error occurred: {:?} =>\n{}", air, res);
             }
 
             res
@@ -217,8 +217,13 @@ impl<'a> AIAgentLoop<'a> {
                 match air.request(&messages.to_json().to_string()) {
                     Ok(v) => v,
                     Err(_) => {
+                        let errtxt = format!(
+                            "===================================================== >>>\n{}\n==========================================================\n{}\n<<< =====================================================\n",
+                            messages.to_short_string(),
+                            messages.to_json()
+                        );
                         return ToolOutput::Failed(
-                            Failed::from_string(messages.to_json().to_string()).execute()
+                            Failed::from_string(errtxt).execute()
                         );
                     }
                 }
@@ -331,18 +336,18 @@ impl<'a> AIAgentLoop<'a> {
 
         if result.is_valid() {
             if result.to_base().is_save() || result.to_base().is_done() {
-                println!("TOOL: {:?}", result.to_string(fake_id));
+                println!("TOOL: {}", result.to_string(fake_id));
                 messages.clear();
             }
             else {
                 if result.to_base().is_failed() {
-                    println!("TOOL: {:?}", result.to_string(fake_id));
+                    println!("TOOL: {}", result.to_string(fake_id));
                 }
                 messages.append(fake_id, AIMessageType::Tool, result.to_base(), &fake_id.to_string());
             }
         }
         else {
-            println!("[aiagentloop] ERROR: {:?}", result);
+            println!("[aiagentloop] ERROR: {}", result);
             messages.append(
                 fake_id, AIMessageType::Tool, result.to_base(),
                 &format!("Error occurred: {}", result.to_json(fake_id))

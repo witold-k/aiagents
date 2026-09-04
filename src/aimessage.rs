@@ -105,11 +105,42 @@ impl AIMessage {
     }
 
     pub fn to_json(&self) -> Value {
-        json!({
-            "role":         self.msgtype.to_str(),
-            "tool_call_id": &self.message_id.to_string(),
-            "content":      &self.data
-        })
+        match self.msgtype {
+            AIMessageType::Tool => json!({
+                "role": "user", // "tool",
+                "tool_call_id": self.message_id.to_string(),
+                "content": &self.data
+            }),
+
+            AIMessageType::Model => json!({
+                "role": "assistant",
+                "content": &self.data
+            }),
+
+            AIMessageType::System => json!({
+                "role": "system",
+                "content": &self.data
+            }),
+
+            AIMessageType::User => json!({
+                "role": "user",
+                "content": &self.data
+            }),
+
+            AIMessageType::Build => json!({
+                "role": "user",
+                "content": &self.data
+            }),
+        }
+    }
+
+    pub fn to_short_string(&self) -> String {
+        format!("id: {}, role: {}, tooltype: {:?}, content: {}",
+            self.message_id,
+            self.msgtype.to_str(),
+            self.tooltype,
+            self.data // .chars().take(64).collect::<String>()
+        )
     }
 }
 
@@ -234,20 +265,100 @@ impl AIMessageList {
 
         let prepend_user = self.messages.first().is_some_and(|m| m.is_user());
         if prepend_user {
-            let first = &self.messages[0];
+            let mut first = self.messages[0].clone();
             content.push_str(&first.data);
+            first.data = content;
+            arr.push(first.to_json());
+            for entry in self.messages.iter().skip(1) {
+                arr.push(entry.to_json());
+            }
         }
         else {
             arr.push(json!({
                 "role": "user",
                 "content": content
             }));
-        }
-        for entry in &self.messages {
-            arr.push(entry.to_json());
+            for entry in &self.messages {
+                arr.push(entry.to_json());
+            }
         }
 
         Value::Array(arr)
+    }
+
+    // create string without task description and ast
+    pub fn to_short_string(&self) -> String {
+        let mut content = String::with_capacity(10 * 1024);
+
+        for entry in &self.subtask {
+            content.push_str(entry);
+            content.push('\n');
+        }
+
+        if !self.files.is_empty() {
+            let fdata = format!(
+                "=== FILES ===\n{}",
+                self.files
+                    .iter()
+                    .map(|f| f.path.to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            );
+            println!("{}", fdata);
+
+            let fdata = format!(
+                "=== FILES ===\n{}",
+                self.files
+                    .iter()
+                    .map(|f| f.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            );
+            content.push_str(&fdata);
+            content.push('\n');
+        }
+
+        if let Some(ref faults) = self.faults {
+            content.push_str(faults);
+            content.push('\n');
+        }
+
+        if !self.note.is_empty() {
+            let fdata = format!("=== NOTE ===\n{}", self.note);
+            println!("{}", fdata);
+            content.push_str(&fdata);
+            content.push('\n');
+        }
+
+        if !self.focus.is_empty() {
+            let fdata = format!("=== FOCUS ===\n{}", self.focus);
+            content.push_str(&fdata);
+            content.push('\n');
+        }
+
+        let prepend_user = self.messages.first().is_some_and(|m| m.is_user());
+        if prepend_user {
+            let mut first = self.messages[0].clone();
+            content.push_str(&first.data);
+            first.data = content;
+            content = "==1= ".to_string();
+            content.push_str(&first.to_short_string());
+            content.push('\n');
+            for entry in self.messages.iter().skip(1) {
+                content.push_str("==1= ");
+                content.push_str(&entry.to_short_string());
+                content.push('\n');
+            }
+        }
+        else {
+            for entry in &self.messages {
+                content.push_str("==2= ");
+                content.push_str(&entry.to_short_string());
+                content.push('\n');
+            }
+        }
+
+        content
     }
 
     pub fn cut_to_depth(&mut self) {

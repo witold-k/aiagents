@@ -83,7 +83,7 @@ impl AstResult {
         })
     }
 
-    pub fn to_string(&self, message_id: AIMessageId) -> String {
+    pub fn to_msg_string(&self, message_id: AIMessageId) -> String {
         format!("{}: {}", message_id, self.data)
     }
 }
@@ -142,9 +142,9 @@ impl ResultToJson for Result<AstResult, AstError> {
 }
 
 impl ResultToString for Result<AstResult, AstError> {
-    fn to_string(&self, msg_id: AIMessageId) -> String {
+    fn to_msg_string(&self, msg_id: AIMessageId) -> String {
         match self {
-            Ok(ok) => ok.to_string(msg_id),
+            Ok(ok) => ok.to_msg_string(msg_id),
             Err(err) => err.to_string(),
         }
     }

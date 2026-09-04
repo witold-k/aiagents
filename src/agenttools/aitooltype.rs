@@ -29,7 +29,7 @@ pub trait ResultToJson {
 }
 
 pub trait ResultToString {
-    fn to_string(&self, msg_id: AIMessageId) -> String;
+    fn to_msg_string(&self, msg_id: AIMessageId) -> String;
 }
 
 pub trait Validatable {
