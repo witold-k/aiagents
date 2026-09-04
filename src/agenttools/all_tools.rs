@@ -102,7 +102,7 @@ impl ToolOutput {
         }
     }
 
-    pub fn to_string(&self, message_id: AIMessageId) -> String {
+    pub fn to_msg_string(&self, message_id: AIMessageId) -> String {
         match self {
             ToolOutput::AddNote(r)  => r.to_msg_string(message_id),
             ToolOutput::Ast(r)      => r.to_msg_string(message_id),

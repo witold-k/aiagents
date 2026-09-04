@@ -263,7 +263,7 @@ impl Default for Config {
 
             taskproviderlist: Vec::new(),
 
-            max_try_count: 20,
+            max_try_count: 100,
             queue_length_max: 14,
             queue_length_save: 1,
 

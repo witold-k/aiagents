@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Witold Kaminski
 
-use serde_json::{Value};
+use serde_json::Value;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use fsscanner::{
@@ -24,7 +24,6 @@ use crate::workflows::{
 };
 use crate::utils:: {
     ast::get_ast_string,
-    jsonutils::get_json_field,
     scan_dir::scan_with_suffix_and_filter,
     stringutils::{strip_code_fences, raw_fence_to_string},
 };
@@ -205,7 +204,7 @@ impl<'a> AIAgentLoop<'a> {
     }
 
     pub fn process_tool_chain(&self, air: &mut AIRequest) -> ToolOutput {
-        for _ in 0..10 {
+        for _ in 0..self.config.max_try_count {
             let response = {
                 let messages = self.messages.borrow();
                 if self.dump {
@@ -253,6 +252,10 @@ impl<'a> AIAgentLoop<'a> {
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .trim();
+                if self.dump {
+                    println!("### CONTENT: {}", content);
+                }
+
                 if content.contains("action") {
                     let result = self.handle_text_action(content);
                     if result.is_valid() {
@@ -303,7 +306,7 @@ impl<'a> AIAgentLoop<'a> {
     pub fn handle_text_action(&self, content: &str) -> ToolOutput {
         let mut messages = self.messages.borrow_mut();
         let fake_id = messages.inc_messageid();
-        // must not panic, just skip an d retry
+        // must not panic, just skip and retry
         let cleancode = strip_code_fences(&raw_fence_to_string(content));
         let json_result: Result<Value, serde_json::Error> = serde_json::from_str(&cleancode);
 
@@ -323,27 +326,23 @@ impl<'a> AIAgentLoop<'a> {
         };
 
         json["role"] = "assistant".into();
-        if json.get("content").is_none() {
-            json["content"] = Value::Null;
+        if self.dump {
+            println!("### CONTENT FOR TOOL: {}", cleancode);
         }
-        let result = execute_tool(&json.clone(), &self.projdir, self.filter);
+        let result = execute_tool(&json, &self.projdir, self.filter);
 
-        let content = match get_json_field(&json, "content") {
-            Ok(content) => content,
-            Err(_)      => "".to_string(),
-        };
-        messages.append(fake_id, AIMessageType::Model, result.to_base(), &content);
+        messages.append(fake_id, AIMessageType::Model, result.to_base(), &cleancode);
 
         if result.is_valid() {
             if result.to_base().is_save() || result.to_base().is_done() {
-                println!("TOOL: {}", result.to_string(fake_id));
+                println!("TOOL: {}", result.to_msg_string(fake_id));
                 messages.clear();
             }
             else {
                 if result.to_base().is_failed() {
-                    println!("TOOL: {}", result.to_string(fake_id));
+                    println!("TOOL: {}", result.to_msg_string(fake_id));
                 }
-                messages.append(fake_id, AIMessageType::Tool, result.to_base(), &fake_id.to_string());
+                messages.append(fake_id, AIMessageType::Tool, result.to_base(), &result.to_msg_string(fake_id));
             }
         }
         else {

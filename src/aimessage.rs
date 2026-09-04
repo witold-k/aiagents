@@ -107,13 +107,14 @@ impl AIMessage {
     pub fn to_json(&self) -> Value {
         match self.msgtype {
             AIMessageType::Tool => json!({
-                "role": "user", // "tool",
+                "role": "user", // "tool", -- changed to user, since we have own generic protocol
                 "tool_call_id": self.message_id.to_string(),
                 "content": &self.data
             }),
 
             AIMessageType::Model => json!({
                 "role": "assistant",
+                "assistant_call_id": self.message_id.to_string(),
                 "content": &self.data
             }),
 
