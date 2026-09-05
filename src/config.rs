@@ -69,7 +69,7 @@ impl Default for Config {
 
             providerlist: vec![
                 AIProvider {
-                    name: "qwen25".into(),
+                    name: "devs".into(),
                     comment: "works, but is not very useful".into(),
                     source: "https://huggingface.co/apto-as/Qwen2.5-Coder-14B-Instruct-Q5_K_M-GGUF/resolve/main/qwen2.5-coder-14b-instruct-q5_k_m.gguf".into(),
                     endpoint: "http://localhost:8080/v1".into(),
