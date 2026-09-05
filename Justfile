@@ -14,6 +14,19 @@ build:
 build-jvm:
     RUSTFLAGS="-C panic=unwind" cargo jvm build
 
+cover-setup:
+    cargo install cargo-llvm-cov
+    rustup component add llvm-tools-preview
+
+cover:
+	cargo llvm-cov --all-features --workspace --html
+
+cover-lcov:
+	cargo llvm-cov --all-features --workspace --lcov --output-path {{target_dir}}/coverage/lcov.info
+
+cover-text:
+	cargo llvm-cov --all-features --workspace
+
 install:
 	cargo build --release
 	cp {{target_dir}}/release/aifix ~/bin
@@ -51,8 +64,4 @@ targetlist:
 rpi:
     cargo build --target aarch64-unknown-linux-gnu
 
-cover:
-	CARGO_INCREMENTAL=0 RUSTFLAGS='-Cinstrument-coverage' LLVM_PROFILE_FILE='{{target_dir}}/coverage/cargo-test-%p-%m.profraw' cargo test
-	grcov . --binary-path {{target_dir}}/debug/deps/ -s . -t html --branch --ignore-not-existing --ignore '../*' --ignore "/*" -o target/coverage/html
-	firefox target/coverage/html/index.html
 
