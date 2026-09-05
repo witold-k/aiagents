@@ -35,6 +35,12 @@ pub struct DockerSettings {
     pub arguments: Vec<String>,
 }
 
+#[derive(Clone, Default, Serialize, Deserialize)]
+pub struct Boundaries {
+    pub max_workflow_fail: usize,
+    pub max_tool_call_fail: usize,
+}
+
 /// Specifies which provider and temperature to use for a given task.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -42,7 +48,7 @@ pub struct Config {
     pub provider: String,
     pub providerlist: Vec<AIProvider>,
     pub taskproviderlist: Vec<AITaskProvider>,
-    pub max_try_count: usize,
+    pub max_try_count: Boundaries,
     pub queue_length_max: usize,
     pub queue_length_save: usize,
     pub scanendfilter: Vec<String>,
@@ -263,7 +269,10 @@ impl Default for Config {
 
             taskproviderlist: Vec::new(),
 
-            max_try_count: 100,
+            max_try_count: Boundaries {
+                max_workflow_fail: 100,
+                max_tool_call_fail: 100,
+            },
             queue_length_max: 14,
             queue_length_save: 1,
 

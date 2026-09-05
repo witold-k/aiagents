@@ -1,10 +1,20 @@
 # TODO
 
+## NEXT REDESIGN LLM calls/Buildsystem:
+
+current there is a ugly callback call between aiagentloop and workflow
+
+- these two should be also be handled as a tool and be
+  stored in agenttools
+- agenttools may re renamed to workflowtools
+- a workflow just defines a workflow over these tools.
+- llm call should be separated out of aigentloop (=> go to workflowtools), aigentloop just becaome the main runtime
+- use repostate to detect changes and swap a llm model if one did not succeeded after certain amounts of retries
+
 ## P0 — Stability and Correctness
 
 These items should be addressed before adding significant new functionality.
 
-- Remove every LLM-input `unwrap()` / `expect()`.
 - Add a wall-clock timeout for agent execution.
 - Define explicit terminal states for agent/workflow execution.
 - Add proper Ctrl-C handling so shutdown is clean and does not abort abruptly.

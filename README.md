@@ -1,4 +1,4 @@
-# AI Agents - An experimental agent runtime for AI-assisted software engineering
+# AI Agents - A small, auditable execution runtime for autonomous software-engineering workflows.
 
 - **ATTENTION:** this repository is under active development.
 - **ATTENTION:** use at your own risk; test coverage is currently low.

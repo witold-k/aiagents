@@ -166,7 +166,7 @@ impl<'a> AIAgentLoop<'a> {
             res
         };
 
-        let mut totalleft = self.config.max_try_count as isize;
+        let mut totalleft = self.config.max_try_count.max_workflow_fail as isize;
         while okcount < 2 && totalleft > 0 {
             let br = self.workflow.execute(&mut cb);
             if br.has_error() {
@@ -204,7 +204,7 @@ impl<'a> AIAgentLoop<'a> {
     }
 
     pub fn process_tool_chain(&self, air: &mut AIRequest) -> ToolOutput {
-        for _ in 0..self.config.max_try_count {
+        for _ in 0..self.config.max_try_count.max_tool_call_fail {
             let response = {
                 let messages = self.messages.borrow();
                 if self.dump {
