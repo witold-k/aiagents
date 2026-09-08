@@ -1,316 +1,296 @@
-# AI Agents - A small, auditable execution runtime for autonomous software-engineering workflows.
+# Ai readme
 
-- **ATTENTION:** this repository is under active development.
-- **ATTENTION:** use at your own risk; test coverage is currently low.
-- **BUT:** it is already experimentally usable; see [Examples / Howto](#examples--howto).
+# **WARNING** README does not represent current state
 
-An experimental Rust-based agent runtime for integrating LLMs into software
-engineering workflows.
+aifix — Software Engineering Runtime
 
-The project explores how LLM-based agents can inspect and modify software
-projects using controlled tools, verification steps, and iterative feedback.
+A small, auditable Rust runtime for AI-assisted software engineering.
 
-The basic idea is:
+# Quickstart
 
-```
-    Workflow
-      |
-      v
-    LLM Agent
-      |
-      +-- inspect
-      +-- analyze
-      +-- modify
-      |
-      v
-    Build / Lint / Test
-      |
-      +-- success --> next workflow step
-      |
-      +-- failure --> agent feedback
-```
+Please follow instructions in:
+[Quickstart](QUICKSTART.md)
 
-The runtime is implemented in Rust and provides a controlled interface
-between LLMs and software projects.
+# What is it
 
-## Features
+«Generated code is untrusted code.»
 
-* LLM-driven software engineering workflows
-* Multiple-agent workflow support
-* Iterative build / analyze / modify / test loops
-* Source tree, file and AST inspection
-* Controlled file modification
-* Build, lint and test feedback
-* Repository state and recovery
-* Configurable LLM providers
-* Workspace and path-based access restrictions
-* Rust implementation
+"aifix" connects LLMs with software-engineering workflows such as code generation, repair, testing, documentation, review and transpilation.
 
-## Architecture
+The runtime is deliberately small. It does not give an LLM unrestricted access to the host system. Instead, it provides controlled tools and executes builds and tests in isolated, disposable environments.
 
-The project separates **workflow orchestration** from the execution of an
-individual LLM agent.
+«Status: experimental and under active development. Use at your own risk.»
 
-A workflow defines the larger task and decides what happens next. It may
-coordinate several agents, verification steps, or repository recovery.
+The idea
 
-For example:
+"aifix" is not intended to be another interactive shell for an AI.
+
+The basic workflow is:
 
 ```
-    Codify
-      |
-      v
-    Build / Lint / Test
-      |
-      v
-    Review
-      |
-      v
-    Change
-      |
-      v
-    Build / Lint / Test
-      |
-      v
-    Documentation
-      |
-      v
-    Done
+             Workflow
+                 |
+                 v
+             LLM Agent
+                 |
+        +--------+--------+
+        |        |        |
+      inspect  analyze   modify
+                 |
+                 v
+          Build / Lint / Test
+                 |
+          +------+------+
+          |             |
+       success        failure
+          |             |
+          v             v
+     next step       feedback
 ```
 
-`AIAgentLoop` provides the runtime for an individual LLM-driven agent. It
-handles the interaction between the model, its context, and the available
-agent tools.
+The important distinction is that the LLM decides what should be done, but the runtime decides what the agent is allowed to do and where generated code executes.
 
-The workflow is more abstract than an individual agent loop. It defines
-how agents and other operations are combined to accomplish a larger task
-and decides what should happen next.
+What it can do
 
-The architecture is intentionally kept simple and is expected to evolve as
-different workflow patterns are explored.
+- code generation and modification
+- code repair
+- build and test workflows
+- test generation
+- code review
+- documentation generation
+- source-code and AST inspection
+- transpilation
+- iterative build / analyze / modify / test loops
+- multiple-agent workflows
+- repository state and recovery
+- configurable LLM providers
+- local LLMs through OpenAI-compatible endpoints
 
-## Agent Tools
+The same runtime can be used for interactive development as well as automated software-maintenance workflows.
 
-Agents interact with the project through explicit tools for operations such
-as:
+## Security model
 
-* directory and file inspection
-* partial file loading
-* file modification
-* AST inspection
-* notes and focus management
-* workflow completion and failure handling
+"aifix" assumes that LLM-generated code may be actively malicious.
+
+This matters because restricting the tools available to an agent is not enough.
+An agent can generate a test containing arbitrary native code, and the test runner will execute it.
+
+Therefore the security boundary is the execution environment, not the LLM prompt.
+
+### Execution sandbox
+
+Builds and tests are executed in a fresh, rootless Podman container.
+
+```
+aifix
+  |
+  v
+LLM Agent
+  |
+  | generates / modifies code
+  v
+rootless Podman container
+  |
+  +-- workspace       RW
+  +-- .git            inaccessible
+  +-- network         disabled
+  +-- host filesystem inaccessible
+  +-- host credentials unavailable
+  +-- no elevated capabilities
+  |
+  +-- build
+  +-- test
+  +-- generated code
+  |
+  v
+result / diagnostics
+  |
+  v
+container destroyed
+```
+
+A new execution environment is created for each build/test execution.
+The environment is disposable: processes, temporary files and other state do not survive the execution.
+
+The baseline execution model is intentionally simple:
+
+- rootless Podman
+- fresh container per execution
+- no network by default
+- no host credentials
+- no privileged execution
+- restricted mounts
+- resource and execution limits
+- container destroyed after execution
+
+Stronger isolation, such as dedicated VMs or microVMs, can be provided by the deployment environment when required.
+
+### Repository access
+
+The normal workspace is mounted read/write because modifying the project is the purpose of the agent.
+
+However, the Git repository metadata is not an agent capability.
+
+If a repository is mounted as:
+
+/repository
+
+then ".git" is automatically hidden from the execution environment.
+
+```
+/repository          RW
+/repository/src      RW
+/repository/tests    RW
+/repository/.git     inaccessible
+```
+
+Git operations are therefore exposed only through controlled runtime functionality rather than by giving generated code direct access to ".git".
+
+This prevents generated code from directly modifying Git metadata, hooks, refs or objects.
+
+Why the sandbox matters
+
+Consider a generated test such as:
+
+```
+std::process::Command::new(...);
+```
+
+The relevant question is not whether the agent was given a "shell" tool.
+
+The test itself is executable code.
+
+Therefore "aifix" follows a simple rule:
+
+«Do not trust the model. Do not trust generated code. Isolate execution instead.»
+
+This keeps the security-critical part of the runtime small and auditable.
+
+Architecture
+
+The architecture separates workflow orchestration from an individual LLM agent.
+
+```
+Workflow
+   |
+   +-- Agent
+   |     |
+   |     +-- inspect
+   |     +-- analyze
+   |     +-- modify
+   |
+   +-- Build / Test
+   |       |
+   |       +-- isolated execution
+   |
+   +-- Review
+   |
+   +-- Recovery
+   |
+   v
+ Done
+```
+
+"AIAgentLoop" provides the runtime for an individual LLM-driven agent.
+
+A workflow defines the larger task and decides what happens next. It can coordinate multiple agents, verification steps and repository recovery.
+
+The architecture is intentionally kept small. New abstractions should only be introduced when required by actual use cases.
+
+Agent tools
+
+Agents interact with projects through explicit operations such as:
+
+- directory and file inspection
+- partial file loading
+- file modification
+- AST inspection
+- notes and focus management
+- workflow completion and failure handling
 
 The tool layer separates model-generated decisions from actual operations.
 
-## Repository State
+The agent does not receive an unrestricted host shell.
 
-`RepoState` is responsible for repository recovery.
+Repository state
 
-It is an independent domain concept and has no dependency on the LLM or
-source-code inspection.
+"RepoState" is responsible for repository recovery.
 
-Its purpose is to maintain and restore repository state when a coding task
-needs to be recovered from a broken or unwanted change.
+It is independent of the LLM and source-code inspection.
 
-The current implementation provides a simple recovery mechanism. The
-intention is to support stateful recovery as workflows become more capable.
+Its purpose is to maintain and restore repository state when a coding task needs to be recovered from a broken or unwanted change.
 
-## Workflows
+LLM providers
 
-Workflows provide the higher-level orchestration for software-engineering
-tasks.
+The provider interface uses an OpenAI-compatible chat-completion endpoint.
 
-A workflow can coordinate multiple agents, verification steps, repository
-recovery, and other operations. It can use different agents or LLM
-configurations for different steps and can choose the next state based on
-the outcome of previous steps.
-
-For example, a workflow might perform:
-
-```
-    Codify
-      |
-      v
-    Build / Lint / Test
-      |
-      +-- failure --> Fix
-      |
-      +-- success
-            |
-            v
-          Review
-            |
-            v
-        Documentation
-            |
-            v
-           Done
-```
-
-Build/lint/test is deliberately kept simple. It verifies the current
-project state and reports the result to the workflow.
-
-New workflow abstractions should only be introduced when required by actual
-use cases.
-
-## Task Descriptions
-
-Task descriptions are stored separately from the Rust implementation.
-
-During the build, they are converted into generated Rust code containing:
-
-* task identifiers
-* task names
-* task prompts
-* task iteration helpers
-
-This keeps task definitions separate from the agent implementation while
-providing compile-time task metadata.
-
-## LLM Providers
-
-The provider configuration is generic and uses an OpenAI-compatible chat
-completion endpoint, allowing local or remote model servers to be used.
+This makes it possible to use either local or remote model servers.
 
 Example:
+```json
+{
+  "name": "default",
+  "endpoint": "http://localhost:8080/v1",
+  "model": "your-model",
+  "api_key": ""
+}
+```
 
-    {
-      "name": "default",
-      "endpoint": "http://localhost:8080/v1",
-      "model": "your-model",
-      "api_key": ""
-    }
+"aifix" is particularly suited to experimenting with locally hosted coding models.
 
-The project is particularly suited to experimenting with locally hosted
-coding models.
+No particular cloud provider is required by the runtime.
 
-## Security Model
+## Tasks
 
-The agent operates through restricted capabilities rather than unrestricted
-host access.
+The current task system includes operations such as:
 
-The tool layer is designed to prevent the agent from:
+- "analyze"
+- "build"
+- "fix_code"
+- "gen_code"
+- "write_test_code"
+- "review_code"
+- "review_doc"
+- "transpile_code"
+- "write_item_doc"
+- "write_module_doc"
+- "write_block_doc"
+- "setup_build"
 
-* accessing files outside configured paths
-* modifying files outside the project
-* directly interacting with version control systems
-* escalating privileges
-* invoking arbitrary tools outside the defined interface
+Task descriptions are kept separate from the Rust implementation and are converted into generated Rust metadata during the build.
 
-## Build
+Build
 
-The project requires a recent stable Rust toolchain.
+Requires a recent stable Rust toolchain.
 
-```bash
-    cargo build
-    cargo test
-    cargo clippy -- -D warnings
+```
+cargo build
+cargo test
+cargo clippy -- -D warnings
 ```
 
 GitHub Actions also performs build, test, Clippy and coverage checks.
 
-## Command Line
+Command line
 
-The main executable is `aifix`.
+The main executable is:
 
-```bash
-    aifix [option]+
-    -l --lang [required, invalid with -w switch]: select task: one of: generic, verilog, java, cpp, rust
-            or provide path to taskdesciption
-    -t --task [required, multiple possible invalid with -w switch]:
-        - first -t selects task: one of: write_item_doc, write_module_doc, review_code, analyze, setup_build, build, fix_code, review_doc, write_block_doc, gen_code, transpile_code, write_test_code
-        - following are paths to subtasks that enhance the task description
-    -s --select [optional, multiple possible]: one or more files or dirs,
-        - if task needs a file to operate and none is given a random file will be choosen
-    -c --config [optional]: load config from path
-        - default config will be generated in path if no config availabe
-        - default config path is ~/.config/aifix/config.json
-    -f --pathfilter [multiple, required at least once]: directory list
-    -b --builddir [default = target(rust) or build(other)]: set builddir
-    -w --workspace [optional]: running in workspace (mode): path to workspace
-        - llm does not load files, all files are loaded at once from current workspace,
-        - also task descripton is here and may be named like e.g.: `task.md`
-    -d --debug [default = false]: dump debug
-    -r --run [optional providername in config] run server; if set other settings will be ignored
-    -h --help [default = false]: dump help
-```
+`aifix`
 
-For the complete list:
+The current CLI is task-oriented and experimental. The user-facing interface is expected to remain simple while the underlying workflow engine evolves.
 
-```bash
-    aifix --help
-```
+Design principles
 
-## Project Status
+"aifix" is built around a few deliberately simple principles:
 
-This is an experimental and evolving project. The goal is not to provide
-another general-purpose chatbot or agent framework, but to investigate
-practical AI-assisted software engineering.
+- 1. Generated code is untrusted.
+- 2. The execution boundary enforces security.
+- 3. Git metadata is not an agent capability.
+- 4. Execution environments are disposable.
+- 5. The runtime should remain small.
+- 6. Local execution and local models are first-class use cases.
+- 7. Complexity should only be introduced when a real workflow requires it.
 
-Current development focuses on:
+The goal is not to build the largest agent framework.
 
-* reliable agent/tool interaction
-* workflow design and orchestration
-* controlled source-code modification
-* build and test feedback
-* repository recovery
-* local LLM integration
-* keeping the runtime and its dependencies simple
-
-The architecture is expected to evolve as these experiments continue.
-
-## Design Goals
-
-The project explores:
-
-1. How reliably can LLM-based agents perform software engineering tasks?
-2. How should source-code context be provided efficiently?
-3. How can file access and modification be safely constrained?
-4. How should verification failures be fed back into an agent?
-5. How can different agents and LLM configurations participate in one workflow?
-6. How can the runtime remain small and understandable?
-
-## Examples / Howto
-
-The `runtests/**` directory contains code that needs to be fixed.
-
-First build the project and put the `aifix` binary somewhere in your path.
-`~/bin` should be sufficient.
-
-Start the service:
-
-```bash
-    aifix -r default
-```
-
-If the configuration does not exist, a default file will be created at:
-
-```bash
-    ~/.config/aifix/config.json
-```
-
-Modify it with your settings and start the service again:
-
-```bash
-    aifix -r default
-```
-
-Then change to:
-
-```bash
-    runtests/cargo/aitestloop_simple
-```
-
-and run:
-
-```bash
-    just fix
-```
-
-Similar examples are available for C++ and Java.
-
-## License
-
-Apache License 2.0
-
+The goal is to build a small, auditable runtime that can safely automate real software-engineering work.
