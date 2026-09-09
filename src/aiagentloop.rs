@@ -147,7 +147,7 @@ impl<'a> AIAgentLoop<'a> {
             None           => return,
         };
 
-        let endpoint = format!("{}/chat/completions", provider.endpoint);
+        let endpoint = provider.endpoint.to_string();
         let mut air = AIRequest::new(
             &provider.model,
             endpoint,
