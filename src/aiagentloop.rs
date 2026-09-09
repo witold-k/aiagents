@@ -336,6 +336,8 @@ impl<'a> AIAgentLoop<'a> {
             if result.to_base().is_save() || result.to_base().is_done() {
                 println!("TOOL: {}", result.to_msg_string(fake_id));
                 messages.clear();
+                // TODO FIXME update only saved file
+                messages.update();
             }
             else {
                 if result.to_base().is_failed() {

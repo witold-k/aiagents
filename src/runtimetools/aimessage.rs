@@ -192,6 +192,12 @@ impl AIMessageList {
         self.messages.clear();
     }
 
+    pub fn update(&mut self) {
+        for file in self.files.iter_mut() {
+            file.load();
+        }
+    }
+
     pub fn to_json(&self) -> serde_json::Value {
         use serde_json::{json, Value};
 
