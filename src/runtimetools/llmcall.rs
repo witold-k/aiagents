@@ -17,10 +17,12 @@ use crate::agenttools::{
     failed::*,
 };
 use crate::aimessageid::AIMessageId;
+use crate::config::AIProvider;
 use crate::runtimetools::aimessage::{AIMessageList, AIMessageType, AIMessageListData};
 use crate::runtimetools::airequest::AIRequest;
-use crate::runtimetools::buildresult::Buildresult;
-use crate::workflows::runbuild::RunBuild;
+use crate::workflows::{
+    runbuild::RunBuild,
+};
 use crate::utils:: {
     ast::get_ast_string,
     scan_dir::scan_with_suffix_and_filter,
@@ -30,8 +32,9 @@ use crate::config::Config;
 use crate::generated_tasks::Tasks;
 
 #[expect(dead_code)]
-pub struct AIAgentLoop<'a> {
-    config: Config,
+pub struct LlmCall<'a> {
+    config: &'a Config,
+    provider: &'a AIProvider,
     projdir: PathBuf,
     workspacedir: Option<PathBuf>,
     filter: &'a Pathfilter,
@@ -40,10 +43,11 @@ pub struct AIAgentLoop<'a> {
     dump: bool,
 }
 
-impl<'a> AIAgentLoop<'a> {
+impl<'a> LlmCall<'a> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        config: Config,
+        config: &'a Config,
+        provider: &'a AIProvider,
         projdir: PathBuf,
         workspacedir: Option<PathBuf>,
         task_id: Tasks,
@@ -63,13 +67,14 @@ impl<'a> AIAgentLoop<'a> {
             subtask,
             structureinfo: Self::create_structure_info(),
             files: Self::create_files_info(
-                &config, &projdir, workspacedir.as_deref(), task_id, filter, selected
+                config, &projdir, workspacedir.as_deref(), task_id, filter, selected
             ),
             focus: "".into(),
             faults: None,
         };
         Self {
             config,
+            provider,
             projdir: normalize_path(&projdir),
             workspacedir,
             filter,
@@ -79,10 +84,12 @@ impl<'a> AIAgentLoop<'a> {
         }
     }
 
+    // FIXME should be moved to utils and used in workflow (eg. BLT)
     pub fn create_structure_info() -> String {
         get_ast_string("src")
     }
 
+    // FIXME should be moved to utils and used in workflow (eg. BLT)
     pub fn create_files_info(
         config: &Config,
         projdir: &Path,
@@ -140,69 +147,53 @@ impl<'a> AIAgentLoop<'a> {
         }
     }
 
-    pub fn run(&self) {
-        let provider = match self.config.get_selected_provider() {
-            Some(provider) => provider,
-            None           => return,
-        };
+    pub fn run(&self, request: &str) -> ToolOutput {
+        const OK_CONFIRM_COUNT: usize = 2;
 
-        let endpoint = provider.endpoint.to_string();
+        let endpoint = self.provider.endpoint.to_string();
         let mut air = AIRequest::new(
-            &provider.model,
+            &self.provider.model,
             endpoint,
-            &provider.api_key,
+            &self.provider.api_key,
             30000,
             0.6,
         );
-        let mut okcount = 1;
-        let mut cb = |name: &str, _p1: &Path, _p2: &Path, result: &Buildresult| {
-            let res: ToolOutput = self.analyze(&mut air, name, result);
 
+        let max_attempts = self.config.max_try_count.max_workflow_fail;
+        let mut ok_count = 0;
+        let mut res = self.analyze(&mut air, request);
+
+        for attempt in 1..max_attempts {
             if res.is_failed() {
-                eprintln!("Tool Error occurred: {:?} =>\n{}", air, res);
+                ok_count = 0;
+            } else {
+                ok_count += 1;
+                if ok_count >= OK_CONFIRM_COUNT {
+                    break;
+                }
             }
 
-            res
-        };
+            res = self.analyze(&mut air, request);
 
-        let mut totalleft = self.config.max_try_count.max_workflow_fail as isize;
-        while okcount < 2 && totalleft > 0 {
-            let br = self.workflow.execute(&mut cb);
-            if br.has_error() {
-                okcount = 0;
+            if attempt + 1 == max_attempts {
+                break;
             }
-            else {
-                okcount += 1;
-            }
-            totalleft -= 1;
         }
+
+        res
     }
 
     // called by self.workflow => see workflows
     pub fn analyze(
         &self,
         air: &mut AIRequest,
-        name: &str,
-        result: &Buildresult
+        request: &str,
     ) -> ToolOutput {
         {
            let mut messages = self.messages.borrow_mut();
            messages.cut_to_depth();
-
-           let build_result = result.limit_lines(100);
-
-           if !build_result.has_error() {
-               return ToolOutput::Done(Done::default().execute());
-           }
-
-           if !build_result.is_dummy() {
-               messages.faults = Some(format!("=== {} OUTPUT ===\n{}", name, build_result));
-           }
+           messages.faults = Some(format!("=== PROBLEM ===\n{}", request));
         }
-        self.process_tool_chain(air)
-    }
-
-    pub fn process_tool_chain(&self, air: &mut AIRequest) -> ToolOutput {
         for _ in 0..self.config.max_try_count.max_tool_call_fail {
             let response = {
                 let messages = self.messages.borrow();

@@ -5,7 +5,7 @@ use serde::{Serialize, Deserialize};
 use serde_json::Value;
 use phf::phf_map;
 use struct_extractors::base_entries;
-use crate::aimessage::AIMessageId;
+use crate::aimessageid::AIMessageId;
 
 #[base_entries(AIToolType)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

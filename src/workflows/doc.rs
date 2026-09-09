@@ -4,17 +4,14 @@
 // This file contains functions for building, linting, and testing a project.
 
 use std::path::Path;
+use crate::repostate::{ RepoState, gitstate::GitState };
 use crate::agenttools::all_tools::ToolOutput;
-use crate::repostate::{
-    RepoState,
-    gitstate::GitState,
-};
-use crate::workflows::{
-    runbuild::RunBuild,
-    buildresult::Buildresult,
+use crate::runtimetools::{
     buildsystem::{Buildsystem, Buildcommand},
+    buildresult::Buildresult,
     generic_work_step::run_cmd,
 };
+use crate::workflows::runbuild::RunBuild;
 
 pub struct DocWorkflow<'a> {
     bc: Buildcommand,

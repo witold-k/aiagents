@@ -13,7 +13,7 @@ use fsscanner::{
 };
 use crate::utils::jsonutils::get_json_field;
 use crate::agenttools::aitooltype::{ AIToolType, ResultToString, ResultToJson, Validatable };
-use crate::aimessage::AIMessageId;
+use crate::aimessageid::AIMessageId;
 
 #[extract_accessors]
 #[derive(Clone, Debug)]

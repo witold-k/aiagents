@@ -9,7 +9,7 @@ use fsscanner::{
     pathutils::{normalize_path, resolve_relaxed_path},
 };
 use crate::agenttools::aitooltype::{ ResultToString, ResultToJson, Validatable };
-use crate::aimessage::AIMessageId;
+use crate::aimessageid::AIMessageId;
 
 #[derive(Debug)]
 pub struct LoadFilePart<'a> {

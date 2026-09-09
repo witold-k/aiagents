@@ -4,7 +4,7 @@
 use std::fmt;
 use serde_json::{json, Value};
 use crate::agenttools::aitooltype::{ ResultToJson, ResultToString, Validatable };
-use crate::aimessage::AIMessageId;
+use crate::aimessageid::AIMessageId;
 
 #[derive(Clone, Debug)]
 pub struct ValidResult {

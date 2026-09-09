@@ -5,11 +5,11 @@
 
 use std::path::Path;
 use crate::agenttools::all_tools::ToolOutput;
-use crate::workflows::{
-    runbuild::RunBuild,
-    buildsystem::Buildsystem,
+use crate::runtimetools::{
+    buildsystem::{Buildsystem},
     buildresult::Buildresult,
 };
+use crate::workflows::runbuild::RunBuild;
 
 pub struct SetupBuildWorkflow<'a> {
     bs: &'a Buildsystem,

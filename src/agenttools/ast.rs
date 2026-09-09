@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{json, Value};
 use fsscanner::pathfilter::Pathfilter;
 use crate::agenttools::aitooltype::{ ResultToString, ResultToJson, Validatable };
-use crate::aimessage::AIMessageId;
+use crate::aimessageid::AIMessageId;
 
 #[derive(Clone, Debug)]
 pub struct AstError {

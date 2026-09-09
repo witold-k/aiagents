@@ -4,7 +4,7 @@
 use std::path::Path;
 
 use crate::{
-    workflows::buildresult::Buildresult,
+    runtimetools::buildresult::Buildresult,
     utils::doprocess::DoProcess,
 };
 

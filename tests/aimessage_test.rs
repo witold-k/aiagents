@@ -1,9 +1,9 @@
 #[cfg(test)]
 mod tests {
     use serde_json::json;
-    use aiagents::aimessage::{
+    use aiagents::aimessageid::AIMessageId;
+    use aiagents::runtimetools::aimessage::{
         AIMessage,
-        AIMessageId,
         AIMessageList,
         AIMessageListData,
         AIMessageType,

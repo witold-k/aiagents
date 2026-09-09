@@ -4,7 +4,8 @@
 use serde::{Serialize, Deserialize};
 use serde_json::{json, Value};
 use fsscanner::fileentry::FileEntry;
-use std::fmt::{Display, Formatter};
+//use std::fmt::{Display, Formatter};
+use crate::aimessageid::AIMessageId;
 use crate::agenttools::aitooltype::AIToolType;
 use crate::generated_tasks::Tasks;
 
@@ -15,11 +16,6 @@ pub enum AIMessageType {
     Build,
     Tool,
     Model,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AIMessageId {
-    pub val: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,13 +74,6 @@ impl AIMessageType {
             AIMessageType::Tool   => "tool",
             AIMessageType::Model  => "assistant",
         }
-    }
-}
-
-impl Display for AIMessageId {
-    #[inline(always)]
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "call_{}", self.val)
     }
 }
 

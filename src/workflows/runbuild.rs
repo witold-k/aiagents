@@ -2,9 +2,9 @@
 // Copyright (c) 2026 Witold Kaminski
 
 use std::path::Path;
-use crate:: {
-    agenttools::all_tools::ToolOutput,
-    workflows::buildresult::Buildresult,
+use crate::agenttools::all_tools::ToolOutput;
+use crate::runtimetools::{
+    buildresult::Buildresult,
 };
 
 pub trait RunBuild {
