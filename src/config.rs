@@ -30,12 +30,6 @@ pub struct AITaskProvider {
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]
-pub struct DockerSettings {
-    pub image_name: String,
-    pub arguments: Vec<String>,
-}
-
-#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct Boundaries {
     pub max_workflow_fail: usize,
     pub max_tool_call_fail: usize,
@@ -44,7 +38,6 @@ pub struct Boundaries {
 /// Specifies which provider and temperature to use for a given task.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Config {
-    pub docker_settings: DockerSettings,
     pub provider: String,
     pub providerlist: Vec<AIProvider>,
     pub taskproviderlist: Vec<AITaskProvider>,
@@ -60,11 +53,6 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            docker_settings: DockerSettings {
-                image_name: String::new(),
-                arguments: Vec::new(),
-            },
-
             provider: "devs".into(),
 
             providerlist: vec![

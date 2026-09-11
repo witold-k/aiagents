@@ -24,6 +24,20 @@ pub enum AIToolType {
     Valid,
 }
 
+// for later ... to do
+// trait Tool {
+//     type Args: DeserializeOwned;
+//     type Output: Serialize;
+//
+//     fn name(&self) -> &'static str;
+//
+//     fn execute(
+//         &self,
+//         args: Self::Args,
+//         ctx: &mut ToolContext,
+//     ) -> Result<Self::Output, ToolError>;
+// }
+
 pub trait ResultToJson {
     fn to_json(&self, msg_id: AIMessageId) -> Value;
 }
