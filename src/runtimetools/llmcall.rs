@@ -155,6 +155,7 @@ impl<'a> LlmCall<'a> {
             &self.provider.model,
             endpoint,
             &self.provider.api_key,
+            self.provider.insecure,
             30000,
             0.6,
         );

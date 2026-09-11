@@ -3,13 +3,17 @@
 
 use serde::{Serialize, Deserialize};
 use serde_json::Value;
-use ureq::Agent;
+use ureq::{
+    Agent,
+    tls::TlsConfig,
+};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AIRequest {
     url: String,
     model: String,
     api_key: String,
+    insecure: bool,
     max_tokens: u32,
     temperature: f32,
 }
@@ -19,6 +23,7 @@ impl AIRequest {
         model: impl Into<String>,
         url: impl Into<String>,
         api_key: impl Into<String>,
+        insecure: bool,
         max_tokens: u32,
         temperature: f32,
     ) -> Self {
@@ -26,14 +31,21 @@ impl AIRequest {
             url: url.into(),
             model: model.into(),
             api_key: api_key.into(),
+            insecure,
             max_tokens,
             temperature,
         }
     }
 
     fn create_agent(&self) -> Agent {
-        let config = Agent::config_builder().build();
-        config.into()
+        let tls_config = TlsConfig::builder()
+            .disable_verification(self.insecure)
+            .build();
+
+        Agent::config_builder()
+            .tls_config(tls_config)
+            .build()
+            .into()
     }
 
     pub fn request(&self, messages: &str) -> Result<Value, String> {

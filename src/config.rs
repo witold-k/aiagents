@@ -17,6 +17,7 @@ pub struct AIProvider {
     pub endpoint: String,
     pub model: String,
     pub api_key: String,
+    pub insecure: bool,
     pub llmbin: String,
     pub llmmodeldir: PathBuf,
     pub llmparam: Vec<String>,
@@ -63,6 +64,7 @@ impl Default for Config {
                     endpoint: "http://localhost:8080/v1/chat/completions".into(),
                     model: "qwen2.5-coder-14b-instruct-q5_k_m.gguf".into(),
                     api_key: String::new(),
+                    insecure: false,
                     llmbin: "llama-server".into(),
                     llmmodeldir: PathBuf::from("/data/ai/llm/"),
                     llmparam: vec![
@@ -101,6 +103,7 @@ impl Default for Config {
                     endpoint: "http://localhost:8080/v1/chat/completions".into(),
                     model: "Qwen3.8-27B-UD-Q3_K_XL.gguf".into(),
                     api_key: String::new(),
+                    insecure: false,
                     llmbin: "llama-server".into(),
                     llmmodeldir: PathBuf::from("/data/ai/llm/"),
                     llmparam: vec![
@@ -140,6 +143,7 @@ impl Default for Config {
                     endpoint: "http://localhost:8080/v1/chat/completions".into(),
                     model: "Qwen3.8-27B-UD-IQ4_XS.gguf".into(),
                     api_key: String::new(),
+                    insecure: false,
                     llmbin: "llama-server".into(),
                     llmmodeldir: PathBuf::from("/data/ai/llm/"),
                     llmparam: vec![
@@ -180,6 +184,7 @@ impl Default for Config {
                     endpoint: "http://localhost:8080/v1/chat/completions".into(),
                     model: "Qwen3.8-27B-UD-Q5_K_M.gguf".into(),
                     api_key: String::new(),
+                    insecure: false,
                     llmbin: "llama-server".into(),
                     llmmodeldir: PathBuf::from("/data/ai/llm/"),
                     llmparam: vec![
@@ -222,6 +227,7 @@ impl Default for Config {
                     endpoint: "http://localhost:8080/v1/chat/completions".into(),
                     model: "Devstral-Small-2-24B-Instruct-2512-UD-Q4_K_XL.gguf".into(),
                     api_key: String::new(),
+                    insecure: false,
                     llmbin: "llama-server".into(),
                     llmmodeldir: PathBuf::from("/data/ai/llm/"),
                     llmparam: vec![

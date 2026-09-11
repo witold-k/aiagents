@@ -94,20 +94,3 @@ can indicate that the user's request is complete and should be processed.
 This keeps interactive mode consistent with the project's goal of using
 simple existing mechanisms rather than adding another tooling layer.
 
----
-
-# Current Focus
-
-The immediate priority is to make the existing runtime small, reliable and
-well understood before expanding its functionality.
-
-In particular:
-
-1. Make `build_lint_test.rs` reliable and well tested.
-2. Clarify the boundary between workflows and `AIAgentLoop`.
-3. Remove unnecessary dependencies and simplify the codebase.
-4. Improve stability and error handling.
-5. Strengthen path and capability security.
-6. Add deterministic evaluation tasks.
-
-

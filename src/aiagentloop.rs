@@ -151,6 +151,7 @@ impl<'a> AIAgentLoop<'a> {
             &provider.model,
             endpoint,
             &provider.api_key,
+            provider.insecure,
             30000,
             0.6,
         );
