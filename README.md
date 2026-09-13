@@ -9,10 +9,26 @@
 
 A small, rust runtime for AI-assisted software engineering ... or other tasks (may be) ...
 
+## License
+
+Apache-2.0 (C) Witold Kaminski 2026
+
 ## Quickstart
 
 Please follow instructions in:
 [Quickstart](QUICKSTART.md)
+
+## Notes
+
+stalled (does not mean no dev at all, but repriorized) for short time,
+first underyling reposotiries, like:
+- [struct_extractors](https://github.com/witold-k/struct_extractors)
+- [fsscanner](https://github.com/witold-k/fsscanner)
+
+und future underyling:
+- [TokenDB](https://github.com/witold-k/token_db)
+
+should be get int better shape direction production ready.
 
 ## What is it
 
