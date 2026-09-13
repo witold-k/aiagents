@@ -6,7 +6,7 @@ This todo list is ment top be a hint what to do and is addressed only to me.
 
 ## NEXT REDESIGN LLM calls/Buildsystem:
 
-- workflow redesign
+- workflow redesign, ongoing: RunBuildResult needs info about fail
 
 ---
 

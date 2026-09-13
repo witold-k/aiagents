@@ -4,16 +4,25 @@
 // This file contains functions for building, linting, and testing a project.
 
 use std::path::Path;
+use crate::config::Config;
 use crate::repostate::{ RepoState, gitstate::GitState };
-use crate::agenttools::all_tools::ToolOutput;
 use crate::runtimetools::{
+    llmcall::LlmCall,
     buildsystem::{Buildsystem, Buildcommand},
-    buildresult::Buildresult,
     generic_work_step::run_cmd,
 };
-use crate::workflows::runbuild::RunBuild;
+use crate::agenttools::{
+    all_tools::ToolOutput,
+};
+use crate::workflows::{
+    runbuild::RunBuild,
+    runbuild::RunBuildResult,
+};
 
+#[expect(dead_code)]
 pub struct DocWorkflow<'a> {
+    config: &'a Config,
+    llm_call: LlmCall<'a>,
     bc: Buildcommand,
     projdir: &'a Path,
     targetdir: &'a Path,
@@ -21,12 +30,15 @@ pub struct DocWorkflow<'a> {
 }
 
 impl<'a> DocWorkflow<'a> {
-    pub fn from_buildsystem(
-        bs: &Buildsystem,
+    pub fn new(
+        config: &'a Config,
+        llm_call: LlmCall<'a>,
+        bs: Buildsystem,
         projdir: &'a Path,
         targetdir: &'a Path,
     ) -> Self {
         DocWorkflow {
+            config, llm_call,
             bc: bs.build_cmd(projdir, targetdir),
             projdir, targetdir,
             state: GitState::from_path(projdir)
@@ -35,11 +47,9 @@ impl<'a> DocWorkflow<'a> {
 }
 
 impl<'a> RunBuild for DocWorkflow<'a> {
-
     fn execute(
         &self,
-        cb: &mut dyn FnMut(&str, &Path, &Path, &Buildresult) -> ToolOutput,
-    ) -> Buildresult {
+    ) -> RunBuildResult {
         // first check: is it building at all
         let br = run_cmd(self.projdir, &self.bc.build);
         if br.has_error() {
@@ -53,9 +63,11 @@ impl<'a> RunBuild for DocWorkflow<'a> {
         // no errors occured => commit current state
         self.state.commit();
 
-        let br = Buildresult::new_need_build();
-        let res = cb("doc", self.projdir, self.targetdir, &br);
-        if res.is_done() { Buildresult::new_no_build() } else { br }
+        let res: ToolOutput = self.llm_call.run("");
+        if res.is_done() {
+            RunBuildResult::Ok
+        } else {
+            RunBuildResult::Failed
+        }
     }
-
 }

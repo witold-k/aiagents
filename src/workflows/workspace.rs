@@ -4,16 +4,22 @@
 // This file contains functions for building, linting, and testing a project.
 
 use std::path::Path;
-use crate::agenttools::all_tools::ToolOutput;
+use crate::config::Config;
 use crate::runtimetools::{
-    buildsystem::{Buildsystem, Buildcommand},
+    llmcall::LlmCall,
     buildresult::Buildresult,
+    buildsystem::{Buildsystem, Buildcommand},
     generic_work_step::run_cmd,
 };
-use crate::workflows::runbuild::RunBuild;
+use crate::workflows::{
+    runbuild::RunBuild,
+    runbuild::RunBuildResult,
+};
 
 #[expect(dead_code)]
 pub struct WorkspaceWorkflow<'a> {
+    config: &'a Config,
+    llm_call: LlmCall<'a>,
     bc: Buildcommand,
     projdir: &'a Path,
     workspacedir: &'a Path,
@@ -22,39 +28,42 @@ pub struct WorkspaceWorkflow<'a> {
 
 impl<'a> WorkspaceWorkflow<'a> {
     pub fn new (
-        bs: &Buildsystem,
+        config: &'a Config,
+        llm_call: LlmCall<'a>,
+        bs: Buildsystem,
         projdir: &'a Path,
         workspacedir: &'a Path,
         targetdir: &'a Path,
     ) -> Self {
-        WorkspaceWorkflow { bc: bs.build_cmd(workspacedir, targetdir), projdir, workspacedir, targetdir  }
+        WorkspaceWorkflow { config, llm_call, bc: bs.build_cmd(workspacedir, targetdir), projdir, workspacedir, targetdir  }
+    }
+
+    /// returns build error, if any
+    pub fn build(&self) -> Buildresult {
+        println!("## BUILD");
+        let br = run_cmd(self.projdir, &self.bc.build);
+        if br.has_error() {
+            return br;
+        }
+        println!("## LINT");
+        let br = run_cmd(self.projdir, &self.bc.lint);
+        if br.has_error() {
+            return br;
+        }
+        println!("## TEST");
+        let br = run_cmd(self.projdir, &self.bc.test);
+        if br.has_error() {
+            return br;
+        }
+
+        br
     }
 }
 
 impl<'a> RunBuild for WorkspaceWorkflow<'a> {
-
     fn execute(
         &self,
-        cb: &mut dyn FnMut(&str, &Path, &Path, &Buildresult) -> ToolOutput,
-    ) -> Buildresult {
-        println!("## BUILD");
-        let br = run_cmd(self.workspacedir, &self.bc.build);
-        if br.has_error() {
-            _ = cb("build", self.workspacedir, self.targetdir, &br);
-            return br;
-        }
-        println!("## LINT");
-        let br = run_cmd(self.workspacedir, &self.bc.lint);
-        if br. has_error() {
-            _ = cb("lint", self.workspacedir, self.targetdir, &br);
-            return br;
-        }
-        println!("## TEST");
-        let br = run_cmd(self.workspacedir, &self.bc.test);
-        if br. has_error() {
-            _ = cb("test", self.workspacedir, self.targetdir, &br);
-        }
-        br
+    ) -> RunBuildResult {
+        self.execute_build_llm(&self.build(), &self.llm_call)
     }
-
 }

@@ -84,14 +84,18 @@ Task descriptions are kept separate from the Rust implementation and are convert
 
 ## Identified goals
 
-since pure code fixing does not work well with small models (and this runtime is ment to be run with small models at home) following
-goals are targeted:
+since pure code fixing does not work well with small models
+(and this runtime is ment to be run with small models at home),
+following goals are targeted:
 
 - simple reviewer => should create review files parallel to a reviewed source file.
 - docmentation generation, may be several steps:
     - 1. pure agent predocument (existing `write_item_doc`, `write_module_doc`, `write_block_doc`)
     - 2. manual corrections, annotations.
-    - 3. post documentation: llm based docuentation, but with interactive Q/A with developer - but no direct interaction - only static in textfile.
+    - 3. post documentation: llm based documentation,
+         but with interactive Q/A with developer - but no direct interaction -
+         only static in textfile.
+    - 4. automatic summary of git history summary
 - automatic tests - or at least stub like early forms of test
 
 Independent to that ofcourse automatic code fix runs can be done, this is supported, but it is not main objective.

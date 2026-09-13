@@ -2,35 +2,46 @@
 // Copyright (c) 2026 Witold Kaminski
 
 use std::path::Path;
-use crate::agenttools::all_tools::ToolOutput;
+use crate::config::Config;
 use crate::runtimetools::{
-    buildresult::Buildresult,
+    llmcall::LlmCall,
 };
-use crate::workflows::runbuild::RunBuild;
+use crate::agenttools::{
+    all_tools::ToolOutput,
+};
+use crate::workflows::{
+    runbuild::RunBuild,
+    runbuild::RunBuildResult,
+};
 
+#[expect(dead_code)]
 pub struct EndlessWorkflow<'a> {
+    config: &'a Config,
+    llm_call: LlmCall<'a>,
     projdir: &'a Path,
     targetdir: &'a Path,
 }
 
 impl<'a> EndlessWorkflow<'a> {
     pub fn new(
+        config: &'a Config,
+        llm_call: LlmCall<'a>,
         projdir: &'a Path,
         targetdir: &'a Path,
     ) -> Self {
-        EndlessWorkflow { projdir, targetdir  }
+        EndlessWorkflow { config, llm_call, projdir, targetdir  }
     }
 }
 
 impl<'a> RunBuild for EndlessWorkflow<'a> {
-
     fn execute(
         &self,
-        cb: &mut dyn FnMut(&str, &Path, &Path, &Buildresult) -> ToolOutput,
-    ) -> Buildresult {
-        let br = Buildresult::new_need_build();
-        _ = cb("generic", self.projdir, self.targetdir, &br);
-        br
+    ) -> RunBuildResult {
+        let res: ToolOutput = self.llm_call.run("");
+        if res.is_done() {
+            RunBuildResult::Ok
+        } else {
+            RunBuildResult::Failed
+        }
     }
-
 }

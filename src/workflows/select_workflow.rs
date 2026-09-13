@@ -5,7 +5,9 @@
 //! to easy select the workflow that is associated to a task
 
 use std::path::Path;
+use crate::config::Config;
 use crate::runtimetools::{
+    llmcall::LlmCall,
     buildsystem::Buildsystem,
 };
 use crate::workflows::{
@@ -30,22 +32,25 @@ pub struct WorkflowSelector<'a> {
     ws: WorkspaceWorkflow<'a>,
 }
 
+// FIXME should be named WorkflowBuilder and behave so
 impl<'a> WorkflowSelector<'a> {
 
     pub fn new(
-        bs: &'a Buildsystem,
+        config: &'a Config,
+        llm_call: &'a LlmCall<'a>,
+        bs: Buildsystem,
         src_path: &'a Path,
         workspace_path: &'a Path,
         target_path: &'a Path,
     ) -> Self {
         Self {
-            build: BuildWorkflow::new(bs, src_path, target_path),
-            bt: BLTWorkflow::from_buildsystem(bs, src_path, target_path),
-            gt: EndlessWorkflow::new(src_path, target_path),
-            dt: DocWorkflow::from_buildsystem(bs, src_path, target_path),
-            tt: EndlessWorkflow::new(src_path, target_path),
-            sb: SetupBuildWorkflow::new(bs, src_path, target_path),
-            ws: WorkspaceWorkflow::new(bs, src_path, workspace_path, target_path),
+            build: BuildWorkflow::new(config, llm_call.clone(), bs, src_path, target_path),
+            bt: BLTWorkflow::new(config, llm_call.clone(), bs, src_path, target_path),
+            gt: EndlessWorkflow::new(config, llm_call.clone(), src_path, target_path),
+            dt: DocWorkflow::new(config, llm_call.clone(), bs, src_path, target_path),
+            tt: EndlessWorkflow::new(config, llm_call.clone(), src_path, target_path),
+            sb: SetupBuildWorkflow::new(config, llm_call.clone(), bs, src_path, target_path),
+            ws: WorkspaceWorkflow::new(config, llm_call.clone(), bs, src_path, workspace_path, target_path),
         }
     }
 

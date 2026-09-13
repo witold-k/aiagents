@@ -14,6 +14,7 @@ use aiagents::{
     cli::commandline::{parse_args, help},
     config::Config,
     runtimetools::buildsystem::Buildsystem,
+    runtimetools::llmcall::LlmCall,
     workflows::select_workflow::WorkflowSelector,
     generated_languages::Languages,
     generated_tasks::Tasks,
@@ -179,9 +180,10 @@ pub fn main() {
         }
     };
 
-    let src_path2 = src_path.clone();
-    let ws = WorkflowSelector::new(&bs, &src_path2, &ws_path, &target_path);
-    let wf = ws.select(task);
+    let provider = match config.get_selected_provider() {
+        Some(provider) => provider,
+        None           => return,
+    };
 
     let mut subtask_vec = Vec::<String>::with_capacity(args.subtask.len());
     for subtask in args.subtask {
@@ -191,16 +193,30 @@ pub fn main() {
         });
         subtask_vec.push(data);
     };
-    let ailoop = AIAgentLoop::new(
-        config,
-        src_path,
-        args.workspace,
+
+    let llm_call = LlmCall::new(
+        &config,
+        provider,
+        src_path.clone(),
+        args.workspace.clone(),
         task,
         combined_task,
         subtask_vec,
         &filter,
         &args.select,
-        wf,
+        args.debug,
+    );
+
+    let src_path2 = src_path.clone();
+    let ws = WorkflowSelector::new(&config, &llm_call, bs, &src_path2, &ws_path, &target_path);
+    let workflow = ws.select(task);
+
+    let ailoop = AIAgentLoop::new(
+        config.clone(),
+        src_path,
+        args.workspace,
+        &filter,
+        workflow,
         args.debug,
     );
 

@@ -20,9 +20,6 @@ use crate::aimessageid::AIMessageId;
 use crate::config::AIProvider;
 use crate::runtimetools::aimessage::{AIMessageList, AIMessageType, AIMessageListData};
 use crate::runtimetools::airequest::AIRequest;
-use crate::workflows::{
-    runbuild::RunBuild,
-};
 use crate::utils:: {
     ast::get_ast_string,
     scan_dir::scan_with_suffix_and_filter,
@@ -32,13 +29,13 @@ use crate::config::Config;
 use crate::generated_tasks::Tasks;
 
 #[expect(dead_code)]
+#[derive(Clone)]
 pub struct LlmCall<'a> {
     config: &'a Config,
     provider: &'a AIProvider,
     projdir: PathBuf,
     workspacedir: Option<PathBuf>,
     filter: &'a Pathfilter,
-    workflow: &'a dyn RunBuild,
     messages: RefCell<AIMessageList>,
     dump: bool,
 }
@@ -55,7 +52,6 @@ impl<'a> LlmCall<'a> {
         subtask: Vec<String>,
         filter: &'a Pathfilter,
         selected: &'a [PathBuf],
-        workflow: &'a dyn RunBuild,
         dump: bool,
     ) -> Self {
         let data = AIMessageListData {
@@ -78,7 +74,6 @@ impl<'a> LlmCall<'a> {
             projdir: normalize_path(&projdir),
             workspacedir,
             filter,
-            workflow,
             messages: RefCell::new(AIMessageList::new(data)),
             dump,
         }

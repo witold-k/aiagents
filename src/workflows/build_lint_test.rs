@@ -4,54 +4,65 @@
 // This file contains functions for building, linting, and testing a project.
 
 use std::path::Path;
-use crate::agenttools::all_tools::ToolOutput;
+use crate::config::Config;
 use crate::runtimetools::{
-    buildsystem::{Buildsystem, Buildcommand},
+    llmcall::LlmCall,
     buildresult::Buildresult,
+    buildsystem::{Buildsystem, Buildcommand},
     generic_work_step::run_cmd,
 };
-use crate::workflows::runbuild::RunBuild;
+use crate::workflows::{
+    runbuild::RunBuild,
+    runbuild::RunBuildResult,
+};
 
+#[expect(dead_code)]
 pub struct BLTWorkflow<'a> {
+    config: &'a Config,
+    llm_call: LlmCall<'a>,
     bc: Buildcommand,
     projdir: &'a Path,
     targetdir: &'a Path,
 }
 
 impl<'a> BLTWorkflow<'a> {
-    pub fn from_buildsystem(
-        bs: &Buildsystem,
+    pub fn new(
+        config: &'a Config,
+        llm_call: LlmCall<'a>,
+        bs: Buildsystem,
         projdir: &'a Path,
         targetdir: &'a Path,
     ) -> Self {
-        BLTWorkflow { bc: bs.build_cmd(projdir, targetdir), projdir, targetdir  }
+        BLTWorkflow { config, llm_call, bc: bs.build_cmd(projdir, targetdir), projdir, targetdir }
     }
-}
 
-impl<'a> RunBuild for BLTWorkflow<'a> {
-
-    fn execute(
-        &self,
-        cb: &mut dyn FnMut(&str, &Path, &Path, &Buildresult) -> ToolOutput,
-    ) -> Buildresult {
+    /// returns build error, if any
+    pub fn build(&self) -> Buildresult {
         println!("## BUILD");
         let br = run_cmd(self.projdir, &self.bc.build);
         if br.has_error() {
-            _ = cb("build", self.projdir, self.targetdir, &br);
             return br;
         }
         println!("## LINT");
         let br = run_cmd(self.projdir, &self.bc.lint);
         if br.has_error() {
-            _ = cb("lint", self.projdir, self.targetdir, &br);
             return br;
         }
         println!("## TEST");
         let br = run_cmd(self.projdir, &self.bc.test);
         if br.has_error() {
-            _ = cb("test", self.projdir, self.targetdir, &br);
+            return br;
         }
+
         br
     }
-
 }
+
+impl<'a> RunBuild for BLTWorkflow<'a> {
+    fn execute(
+        &self,
+    ) -> RunBuildResult {
+        self.execute_build_llm(&self.build(), &self.llm_call)
+    }
+}
+
