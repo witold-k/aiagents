@@ -6,7 +6,7 @@ use fsscanner::{
     pathfilter::Pathfilter,
     pathutils::normalize_path,
 };
-use crate::workflows::workflow::Workflow;
+use crate::workflows::workflow::{Workflow, WorkflowResult};
 use crate::config::Config;
 
 #[expect(dead_code)]
@@ -43,8 +43,8 @@ impl<'a> AIAgentLoop<'a> {
         let mut okcount = 1;
         let mut totalleft = self.config.max_try_count.max_workflow_fail as isize;
         while okcount < 2 && totalleft > 0 {
-            let br = self.workflow.execute();
-            if !br.success() {
+            let wr: WorkflowResult = self.workflow.execute();
+            if !wr.success() {
                 okcount = 0;
             }
             else {
