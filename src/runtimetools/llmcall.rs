@@ -40,6 +40,21 @@ pub struct LlmCall<'a> {
     dump: bool,
 }
 
+pub enum LlmCallResult {
+    Ok,
+    Done,
+    RetryFailed,
+    ToolResult(ToolOutput),
+    RequestError(AIRequest),
+    ToolError(ToolOutput)
+}
+
+impl LlmCallResult {
+    pub is_valid(&self) {
+        self == Ok || self == Done
+    }
+}
+
 impl<'a> LlmCall<'a> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -142,7 +157,7 @@ impl<'a> LlmCall<'a> {
         }
     }
 
-    pub fn run(&self, request: &str) -> ToolOutput {
+    pub fn run(&self, request: &str) -> LlmCallResult {
         const OK_CONFIRM_COUNT: usize = 2;
 
         let endpoint = self.provider.endpoint.to_string();
@@ -160,7 +175,7 @@ impl<'a> LlmCall<'a> {
         let mut res = self.analyze(&mut air, request);
 
         for attempt in 1..max_attempts {
-            if res.is_failed() {
+            if !res.is_valid() {
                 ok_count = 0;
             } else {
                 ok_count += 1;
@@ -184,7 +199,7 @@ impl<'a> LlmCall<'a> {
         &self,
         air: &mut AIRequest,
         request: &str,
-    ) -> ToolOutput {
+    ) -> LlmCallResult {
         {
            let mut messages = self.messages.borrow_mut();
            messages.cut_to_depth();
@@ -201,16 +216,7 @@ impl<'a> LlmCall<'a> {
 
                 match air.request(&messages.to_json().to_string()) {
                     Ok(v) => v,
-                    Err(_) => {
-                        let errtxt = format!(
-                            "===================================================== >>>\n{}\n==========================================================\n{}\n<<< =====================================================\n",
-                            messages.to_short_string(),
-                            messages.to_json()
-                        );
-                        return ToolOutput::Failed(
-                            Failed::from_string(errtxt).execute()
-                        );
-                    }
+                    Err(_) => return LlmCallResult::RequestError(air.clone()),
                 }
             };
 
@@ -245,15 +251,15 @@ impl<'a> LlmCall<'a> {
                 if content.contains("action") {
                     let result = self.handle_text_action(content);
                     if result.is_valid() {
-                        return result;
+                        return LlmCallResult::ToolResult(result);
                     }
                     continue;
                 }
             }
 
-            return ToolOutput::Done(Done::default().execute());
+            return LlmCallResult::Done;
         }
-        ToolOutput::Failed(Failed::default().execute())
+        LlmCallResult::RetryFailed
     }
 /*
     pub fn handle_native_tool_calls(&self, tool_calls: &Value) -> ToolBridgeResult {
