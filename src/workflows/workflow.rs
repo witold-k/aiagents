@@ -3,7 +3,7 @@
 
 use crate::runtimetools::{
     buildresult::Buildresult,
-    llmcall::LlmCall,
+    llmcall::{LlmCall, LlmCallResult},
 };
 use crate::agenttools::{
     all_tools::ToolOutput,
@@ -13,7 +13,7 @@ use crate::agenttools::{
 
 pub enum WorkflowResult {
     Ok,
-    LlmCallFailed(ToolOutput),
+    LlmCallResult,
 }
 
 impl WorkflowResult {
@@ -33,7 +33,7 @@ pub trait Workflow {
         llm_call: &LlmCall
     ) -> WorkflowResult {
         if buildresult.has_error() {
-            let res: ToolOutput = llm_call.run(&buildresult.to_string());
+            let res: LlmCallResult = llm_call.run(&buildresult.to_string());
             WorkflowResult::LlmCallFailed(res)
         }
         else {

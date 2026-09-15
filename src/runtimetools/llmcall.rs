@@ -13,7 +13,6 @@ use fsscanner::{
 use crate::agenttools::{
     all_tools::{execute_tool, ToolOutput},
     aitooltype::AIToolType,
-    done::*,
     failed::*,
 };
 use crate::aimessageid::AIMessageId;

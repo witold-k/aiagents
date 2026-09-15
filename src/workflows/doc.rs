@@ -64,7 +64,7 @@ impl<'a> Workflow for DocWorkflow<'a> {
         self.state.commit();
 
         let res: ToolOutput = self.llm_call.run("");
-        if res.is_done() {
+        if res.is_valid() {
             WorkflowResult::Ok
         } else {
             WorkflowResult::LlmCallFailed(res)
