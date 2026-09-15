@@ -15,8 +15,8 @@ use crate::agenttools::{
     all_tools::ToolOutput,
 };
 use crate::workflows::{
-    runbuild::RunBuild,
-    runbuild::RunBuildResult,
+    workflow::Workflow,
+    workflow::WorkflowResult,
 };
 
 #[expect(dead_code)]
@@ -46,10 +46,10 @@ impl<'a> DocWorkflow<'a> {
     }
 }
 
-impl<'a> RunBuild for DocWorkflow<'a> {
+impl<'a> Workflow for DocWorkflow<'a> {
     fn execute(
         &self,
-    ) -> RunBuildResult {
+    ) -> WorkflowResult {
         // first check: is it building at all
         let br = run_cmd(self.projdir, &self.bc.build);
         if br.has_error() {
@@ -65,9 +65,9 @@ impl<'a> RunBuild for DocWorkflow<'a> {
 
         let res: ToolOutput = self.llm_call.run("");
         if res.is_done() {
-            RunBuildResult::Ok
+            WorkflowResult::Ok
         } else {
-            RunBuildResult::Failed
+            WorkflowResult::LlmCallFailed(res)
         }
     }
 }

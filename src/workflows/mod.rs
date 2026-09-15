@@ -29,7 +29,7 @@ pub mod build;
 pub mod build_lint_test;
 pub mod doc;
 pub mod endless;
-pub mod runbuild;
+pub mod workflow;
 pub mod select_workflow;
 pub mod setupbuild;
 pub mod workspace;

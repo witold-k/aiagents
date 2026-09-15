@@ -18,17 +18,6 @@ Apache-2.0 (C) Witold Kaminski 2026
 Please follow instructions in:
 [Quickstart](QUICKSTART.md)
 
-## Notes
-
-stalled (does not mean no dev at all, but repriorized) for short time,
-first underyling reposotiries, like:
-- [struct_extractors](https://github.com/witold-k/struct_extractors)
-- [fsscanner](https://github.com/witold-k/fsscanner)
-
-und future underyling:
-- [TokenDB](https://github.com/witold-k/token_db)
-
-should be get int better shape direction production ready.
 
 ## What is it
 
@@ -115,3 +104,12 @@ following goals are targeted:
 - automatic tests - or at least stub like early forms of test
 
 Independent to that ofcourse automatic code fix runs can be done, this is supported, but it is not main objective.
+
+## Dependencies
+
+- [struct_extractors](https://github.com/witold-k/struct_extractors)
+- [fsscanner](https://github.com/witold-k/fsscanner)
+
+und future underyling:
+- [TokenDB](https://github.com/witold-k/token_db)
+

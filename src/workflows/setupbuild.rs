@@ -10,8 +10,8 @@ use crate::runtimetools::{
     buildsystem::Buildsystem,
 };
 use crate::workflows::{
-    runbuild::RunBuild,
-    runbuild::RunBuildResult,
+    workflow::Workflow,
+    workflow::WorkflowResult,
 };
 
 #[expect(dead_code)]
@@ -41,11 +41,11 @@ impl<'a> SetupBuildWorkflow<'a> {
     }
 }
 
-impl<'a> RunBuild for SetupBuildWorkflow<'a> {
+impl<'a> Workflow for SetupBuildWorkflow<'a> {
     fn execute(
         &self,
-    ) -> RunBuildResult {
+    ) -> WorkflowResult {
         self.bs.setupbuild(self.projdir, self.targetdir);
-        RunBuildResult::Ok
+        WorkflowResult::Ok
     }
 }

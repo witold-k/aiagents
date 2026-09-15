@@ -17,7 +17,7 @@ use crate::workflows::{
     endless::EndlessWorkflow,
     setupbuild::SetupBuildWorkflow,
     workspace::WorkspaceWorkflow,
-    runbuild::RunBuild,
+    workflow::Workflow,
 };
 use crate::generated_tasks::Tasks;
 
@@ -54,7 +54,7 @@ impl<'a> WorkflowSelector<'a> {
         }
     }
 
-    pub fn select(&self, aitask: Tasks) -> &dyn RunBuild {
+    pub fn select(&self, aitask: Tasks) -> &dyn Workflow {
         match aitask {
             Tasks::Analyze        => &self.dt,
             Tasks::Build          => &self.build,

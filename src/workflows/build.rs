@@ -13,8 +13,8 @@ use crate::runtimetools::{
     generic_work_step::run_cmd,
 };
 use crate::workflows::{
-    runbuild::RunBuild,
-    runbuild::RunBuildResult,
+    workflow::Workflow,
+    workflow::WorkflowResult,
 };
 
 #[expect(dead_code)]
@@ -48,10 +48,10 @@ impl<'a> BuildWorkflow<'a> {
     }
 }
 
-impl<'a> RunBuild for BuildWorkflow<'a> {
+impl<'a> Workflow for BuildWorkflow<'a> {
     fn execute(
         &self,
-    ) -> RunBuildResult {
+    ) -> WorkflowResult {
         self.execute_build_llm(&self.build(), &self.llm_call)
     }
 }

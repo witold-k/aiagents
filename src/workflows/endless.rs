@@ -10,8 +10,8 @@ use crate::agenttools::{
     all_tools::ToolOutput,
 };
 use crate::workflows::{
-    runbuild::RunBuild,
-    runbuild::RunBuildResult,
+    workflow::Workflow,
+    workflow::WorkflowResult,
 };
 
 #[expect(dead_code)]
@@ -33,15 +33,15 @@ impl<'a> EndlessWorkflow<'a> {
     }
 }
 
-impl<'a> RunBuild for EndlessWorkflow<'a> {
+impl<'a> Workflow for EndlessWorkflow<'a> {
     fn execute(
         &self,
-    ) -> RunBuildResult {
+    ) -> WorkflowResult {
         let res: ToolOutput = self.llm_call.run("");
         if res.is_done() {
-            RunBuildResult::Ok
+            WorkflowResult::Ok
         } else {
-            RunBuildResult::Failed
+            WorkflowResult::LlmCallFailed(res)
         }
     }
 }

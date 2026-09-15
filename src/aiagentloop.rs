@@ -6,7 +6,7 @@ use fsscanner::{
     pathfilter::Pathfilter,
     pathutils::normalize_path,
 };
-use crate::workflows::runbuild::RunBuild;
+use crate::workflows::workflow::Workflow;
 use crate::config::Config;
 
 #[expect(dead_code)]
@@ -15,7 +15,7 @@ pub struct AIAgentLoop<'a> {
     projdir: PathBuf,
     workspacedir: Option<PathBuf>,
     filter: &'a Pathfilter,
-    workflow: &'a dyn RunBuild,
+    workflow: &'a dyn Workflow,
     dump: bool,
 }
 
@@ -26,7 +26,7 @@ impl<'a> AIAgentLoop<'a> {
         projdir: PathBuf,
         workspacedir: Option<PathBuf>,
         filter: &'a Pathfilter,
-        workflow: &'a dyn RunBuild,
+        workflow: &'a dyn Workflow,
         dump: bool,
     ) -> Self {
         Self {
