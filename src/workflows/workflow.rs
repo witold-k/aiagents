@@ -5,20 +5,20 @@ use crate::runtimetools::{
     buildresult::Buildresult,
     llmcall::{LlmCall, LlmCallResult},
 };
-use crate::agenttools::{
-    all_tools::ToolOutput,
-};
 
 // FIXME general: Workflow should be renamed to WorkflowResult
 
 pub enum WorkflowResult {
     Ok,
-    LlmCallResult,
+    LlmCallResult(LlmCallResult),
 }
 
 impl WorkflowResult {
     pub fn success(&self) -> bool {
-        matches!(self, WorkflowResult::Ok)
+        match self {
+            Self::Ok => true,
+            Self::LlmCallResult(result) => result.is_valid(),
+        }
     }
 }
 
@@ -34,7 +34,7 @@ pub trait Workflow {
     ) -> WorkflowResult {
         if buildresult.has_error() {
             let res: LlmCallResult = llm_call.run(&buildresult.to_string());
-            WorkflowResult::LlmCallFailed(res)
+            WorkflowResult::LlmCallResult(res)
         }
         else {
             WorkflowResult::Ok
