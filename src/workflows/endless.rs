@@ -4,10 +4,7 @@
 use std::path::Path;
 use crate::config::Config;
 use crate::runtimetools::{
-    llmcall::LlmCall,
-};
-use crate::agenttools::{
-    all_tools::ToolOutput,
+    llmcall::{LlmCall, LlmCallResult},
 };
 use crate::workflows::{
     workflow::Workflow,
@@ -37,11 +34,11 @@ impl<'a> Workflow for EndlessWorkflow<'a> {
     fn execute(
         &self,
     ) -> WorkflowResult {
-        let res: ToolOutput = self.llm_call.run("");
+        let res: LlmCallResult = self.llm_call.run("");
         if res.is_done() {
             WorkflowResult::Ok
         } else {
-            WorkflowResult::LlmCallFailed(res)
+            WorkflowResult::LlmCallResult(res)
         }
     }
 }

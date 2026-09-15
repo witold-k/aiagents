@@ -40,6 +40,5 @@ pub trait Workflow {
             WorkflowResult::Ok
         }
     }
-
 }
 

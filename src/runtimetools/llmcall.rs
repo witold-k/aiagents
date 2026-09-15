@@ -52,6 +52,10 @@ impl LlmCallResult {
     pub fn is_valid(&self) -> bool {
         matches!(self, Self::Ok | Self::Done | Self::ToolResult(_))
     }
+
+    pub fn is_done(&self) -> bool {
+        matches!(self, Self::Done)
+    }
 }
 
 impl<'a> LlmCall<'a> {
