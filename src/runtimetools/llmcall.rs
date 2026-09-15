@@ -50,8 +50,8 @@ pub enum LlmCallResult {
 }
 
 impl LlmCallResult {
-    pub is_valid(&self) {
-        self == Ok || self == Done
+    pub fn is_valid(&self) -> bool {
+        matches!(self, Self::Ok | Self::Done | Self::ToolResult(_))
     }
 }
 
