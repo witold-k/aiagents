@@ -48,6 +48,7 @@ impl<'a> AIAgentLoop<'a> {
                 okcount = 0;
             }
             else {
+                eprintln!("{}", wr);
                 okcount += 1;
             }
             totalleft -= 1;

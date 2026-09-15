@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Witold Kaminski
 
+use std::fmt;
 use crate::runtimetools::{
     buildresult::Buildresult,
     llmcall::{LlmCall, LlmCallResult},
@@ -18,6 +19,15 @@ impl WorkflowResult {
         match self {
             Self::Ok => true,
             Self::LlmCallResult(result) => result.is_valid(),
+        }
+    }
+}
+
+impl fmt::Display for WorkflowResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Ok => write!(f, "Ok"),
+            Self::LlmCallResult(result) => write!(f, "{result}"),
         }
     }
 }
