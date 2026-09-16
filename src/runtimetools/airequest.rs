@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Witold Kaminski
 
+use std::fmt;
 use serde::{Serialize, Deserialize};
 use serde_json::Value;
 use ureq::{
@@ -91,6 +92,13 @@ impl AIRequest {
 
         Ok(json)
     }
-
 }
 
+impl fmt::Display for AIRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f,
+            "url: {}, model: {}, max_tokens: {}, temperature {}",
+            self.url, self.model, self.max_tokens, self.temperature
+        )
+    }
+}

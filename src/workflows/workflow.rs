@@ -1,24 +1,34 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Witold Kaminski
 
+use std::fmt;
 use crate::runtimetools::{
     buildresult::Buildresult,
-    llmcall::LlmCall,
-};
-use crate::agenttools::{
-    all_tools::ToolOutput,
+    llmcall::{LlmCall, LlmCallResult},
 };
 
 // FIXME general: Workflow should be renamed to WorkflowResult
 
 pub enum WorkflowResult {
     Ok,
-    LlmCallFailed(ToolOutput),
+    LlmCallResult(LlmCallResult),
 }
 
 impl WorkflowResult {
     pub fn success(&self) -> bool {
-        matches!(self, WorkflowResult::Ok)
+        match self {
+            Self::Ok => true,
+            Self::LlmCallResult(result) => result.is_valid(),
+        }
+    }
+}
+
+impl fmt::Display for WorkflowResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Ok => write!(f, "Ok"),
+            Self::LlmCallResult(result) => write!(f, "{result}"),
+        }
     }
 }
 
@@ -33,13 +43,12 @@ pub trait Workflow {
         llm_call: &LlmCall
     ) -> WorkflowResult {
         if buildresult.has_error() {
-            let res: ToolOutput = llm_call.run(&buildresult.to_string());
-            WorkflowResult::LlmCallFailed(res)
+            let res: LlmCallResult = llm_call.run(&buildresult.to_string());
+            WorkflowResult::LlmCallResult(res)
         }
         else {
             WorkflowResult::Ok
         }
     }
-
 }
 

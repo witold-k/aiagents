@@ -7,12 +7,9 @@ use std::path::Path;
 use crate::config::Config;
 use crate::repostate::{ RepoState, gitstate::GitState };
 use crate::runtimetools::{
-    llmcall::LlmCall,
+    llmcall::{LlmCall, LlmCallResult},
     buildsystem::{Buildsystem, Buildcommand},
     generic_work_step::run_cmd,
-};
-use crate::agenttools::{
-    all_tools::ToolOutput,
 };
 use crate::workflows::{
     workflow::Workflow,
@@ -63,11 +60,11 @@ impl<'a> Workflow for DocWorkflow<'a> {
         // no errors occured => commit current state
         self.state.commit();
 
-        let res: ToolOutput = self.llm_call.run("");
-        if res.is_done() {
+        let res: LlmCallResult = self.llm_call.run("");
+        if res.is_valid() {
             WorkflowResult::Ok
         } else {
-            WorkflowResult::LlmCallFailed(res)
+            WorkflowResult::LlmCallResult(res)
         }
     }
 }

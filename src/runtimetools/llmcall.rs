@@ -3,6 +3,7 @@
 
 use serde_json::Value;
 use std::cell::RefCell;
+use std::fmt;
 use std::path::{Path, PathBuf};
 use fsscanner::{
     fileentry::FileEntry,
@@ -13,7 +14,6 @@ use fsscanner::{
 use crate::agenttools::{
     all_tools::{execute_tool, ToolOutput},
     aitooltype::AIToolType,
-    done::*,
     failed::*,
 };
 use crate::aimessageid::AIMessageId;
@@ -38,6 +38,39 @@ pub struct LlmCall<'a> {
     filter: &'a Pathfilter,
     messages: RefCell<AIMessageList>,
     dump: bool,
+}
+
+pub enum LlmCallResult {
+    Ok,
+    Done,
+    RetryFailed,
+    ToolResult(ToolOutput),
+    RequestError(AIRequest),
+    ToolError(ToolOutput)
+}
+
+impl LlmCallResult {
+    pub fn is_valid(&self) -> bool {
+        matches!(self, Self::Ok | Self::Done | Self::ToolResult(_))
+    }
+
+    pub fn is_done(&self) -> bool {
+        matches!(self, Self::Done)
+    }
+}
+
+
+impl fmt::Display for LlmCallResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Ok => write!(f, "Ok"),
+            Self::Done => write!(f, "Done"),
+            Self::RetryFailed => write!(f, "RetryFailed"),
+            Self::ToolResult(result) => write!(f, "{result}"),
+            Self::RequestError(result) => write!(f, "{result}"),
+            Self::ToolError(result) => write!(f, "{result}"),
+        }
+    }
 }
 
 impl<'a> LlmCall<'a> {
@@ -142,7 +175,7 @@ impl<'a> LlmCall<'a> {
         }
     }
 
-    pub fn run(&self, request: &str) -> ToolOutput {
+    pub fn run(&self, request: &str) -> LlmCallResult {
         const OK_CONFIRM_COUNT: usize = 2;
 
         let endpoint = self.provider.endpoint.to_string();
@@ -160,7 +193,7 @@ impl<'a> LlmCall<'a> {
         let mut res = self.analyze(&mut air, request);
 
         for attempt in 1..max_attempts {
-            if res.is_failed() {
+            if !res.is_valid() {
                 ok_count = 0;
             } else {
                 ok_count += 1;
@@ -184,7 +217,7 @@ impl<'a> LlmCall<'a> {
         &self,
         air: &mut AIRequest,
         request: &str,
-    ) -> ToolOutput {
+    ) -> LlmCallResult {
         {
            let mut messages = self.messages.borrow_mut();
            messages.cut_to_depth();
@@ -201,16 +234,7 @@ impl<'a> LlmCall<'a> {
 
                 match air.request(&messages.to_json().to_string()) {
                     Ok(v) => v,
-                    Err(_) => {
-                        let errtxt = format!(
-                            "===================================================== >>>\n{}\n==========================================================\n{}\n<<< =====================================================\n",
-                            messages.to_short_string(),
-                            messages.to_json()
-                        );
-                        return ToolOutput::Failed(
-                            Failed::from_string(errtxt).execute()
-                        );
-                    }
+                    Err(_) => return LlmCallResult::RequestError(air.clone()),
                 }
             };
 
@@ -245,15 +269,15 @@ impl<'a> LlmCall<'a> {
                 if content.contains("action") {
                     let result = self.handle_text_action(content);
                     if result.is_valid() {
-                        return result;
+                        return LlmCallResult::ToolResult(result);
                     }
                     continue;
                 }
             }
 
-            return ToolOutput::Done(Done::default().execute());
+            return LlmCallResult::Done;
         }
-        ToolOutput::Failed(Failed::default().execute())
+        LlmCallResult::RetryFailed
     }
 /*
     pub fn handle_native_tool_calls(&self, tool_calls: &Value) -> ToolBridgeResult {
