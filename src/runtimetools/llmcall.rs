@@ -19,7 +19,7 @@ use crate::agenttools::{
 use crate::aimessageid::AIMessageId;
 use crate::config::AIProvider;
 use crate::runtimetools::aimessage::{AIMessageList, AIMessageType, AIMessageListData};
-use crate::runtimetools::airequest::AIRequest;
+use crate::runtimetools::airequest::{AIRequest, AIRequestResult};
 use crate::utils:: {
     ast::get_ast_string,
     scan_dir::scan_with_suffix_and_filter,
@@ -45,7 +45,7 @@ pub enum LlmCallResult {
     Done,
     RetryFailed,
     ToolResult(ToolOutput),
-    RequestError(AIRequest),
+    RequestError(AIRequestResult),
     ToolError(ToolOutput)
 }
 
@@ -58,7 +58,6 @@ impl LlmCallResult {
         matches!(self, Self::Done)
     }
 }
-
 
 impl fmt::Display for LlmCallResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -226,15 +225,16 @@ impl<'a> LlmCall<'a> {
         for _ in 0..self.config.max_try_count.max_tool_call_fail {
             let response = {
                 let messages = self.messages.borrow();
+                let json_messages = messages.to_json();
                 if self.dump {
                     println!("### SEND");
-                    println!("[process_tool_chain] {}", serde_json::to_string_pretty(&messages.to_json()).unwrap_or("failed to decode json".to_string()));
+                    println!("[process_tool_chain] {}", serde_json::to_string_pretty(&json_messages).unwrap_or("failed to decode json".to_string()));
                     println!("### END");
                 }
 
-                match air.request(&messages.to_json().to_string()) {
-                    Ok(v) => v,
-                    Err(_) => return LlmCallResult::RequestError(air.clone()),
+                match air.request(&json_messages.to_string()) {
+                    AIRequestResult::Ok(val) => val,
+                    err => return LlmCallResult::RequestError(err),
                 }
             };
 

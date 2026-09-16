@@ -19,6 +19,26 @@ pub struct AIRequest {
     temperature: f32,
 }
 
+pub enum AIRequestResult {
+    Ok(Value),
+    DeserFailed(AIRequest, String),
+    RequestFailed(AIRequest, String),
+    DecodeFailed(AIRequest, String),
+    ReportedError(AIRequest, Value, Value),
+}
+
+impl fmt::Display for AIRequestResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Ok(val) => write!(f, "Ok: {}", val),
+            Self::DeserFailed(req, err) => write!(f, "DeserFailed: {} => {}", req, err),
+            Self::RequestFailed(req, err) => write!(f, "RequestFailed: {} => {}", req, err),
+            Self::DecodeFailed(req, err) => write!(f, "DecodeFailed: {} => {}", req, err),
+            Self::ReportedError(req, err, payload) => write!(f, "ReportedFailed: {} => {}, {}", req, err, payload),
+        }
+    }
+}
+
 impl AIRequest {
     pub fn new(
         model: impl Into<String>,
@@ -49,9 +69,11 @@ impl AIRequest {
             .into()
     }
 
-    pub fn request(&self, messages: &str) -> Result<Value, String> {
-        let messages: Value =
-            serde_json::from_str(messages).map_err(|e| format!("Invalid messages JSON: {e}"))?;
+    pub fn request(&self, messages: &str) -> AIRequestResult {
+        let messages: Value = match serde_json::from_str(messages) {
+            Ok(msg) => msg,
+            Err(err) => return AIRequestResult::DeserFailed(self.clone(), err.to_string()),
+        };
 
         let json_payload = serde_json::json!({
             "model": self.model,
@@ -73,24 +95,22 @@ impl AIRequest {
             );
         }
 
-        let mut response = req
-            .send_json(json_payload.clone())
-            .map_err(|e| format!("Request failed: {e}"))?;
+        let mut response = match req.send_json(json_payload.clone()) {
+            Ok(resp) => resp,
+            Err(err) => return AIRequestResult::RequestFailed(self.clone(), err.to_string()),
+        };
 
-        let json: Value = response
-            .body_mut()
-            .read_json()
-            .map_err(|e| format!("Invalid JSON response: {e}"))?;
+        let json: Value = match response.body_mut().read_json() {
+            Ok(json) => json,
+            Err(err) => return AIRequestResult::DecodeFailed(self.clone(), err.to_string()),
+        };
 
         if let Some(error) = json.get("error") {
-            return Err(format!(
-                "API error: {}\nPayload: {}",
-                error,
-                json_payload
-            ));
+            return AIRequestResult::ReportedError(self.clone(), error.clone(), json_payload);
+
         }
 
-        Ok(json)
+        AIRequestResult::Ok(json)
     }
 }
 
