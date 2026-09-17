@@ -40,17 +40,17 @@ impl<'a> WorkspaceWorkflow<'a> {
 
     /// returns build error, if any
     pub fn build(&self) -> Buildresult {
-        println!("## BUILD");
+        println!("## [WS] BUILD");
         let br = run_cmd(self.projdir, &self.bc.build);
         if br.has_error() {
             return br;
         }
-        println!("## LINT");
+        println!("## [WS] LINT");
         let br = run_cmd(self.projdir, &self.bc.lint);
         if br.has_error() {
             return br;
         }
-        println!("## TEST");
+        println!("## [WS] TEST");
         let br = run_cmd(self.projdir, &self.bc.test);
         if br.has_error() {
             return br;

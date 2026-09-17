@@ -46,12 +46,13 @@ impl<'a> AIAgentLoop<'a> {
             let wr: WorkflowResult = self.workflow.execute();
             if !wr.success() {
                 okcount = 0;
+                eprintln!("FAIL: {}", wr);
                 if wr.request_failure() {
                     println!("{}", wr);
                 }
             }
             else {
-                eprintln!("{}", wr);
+                //println!("{}", wr);
                 okcount += 1;
             }
             totalleft -= 1;

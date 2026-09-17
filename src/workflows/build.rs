@@ -38,7 +38,7 @@ impl<'a> BuildWorkflow<'a> {
 
     /// returns build error, if any
     pub fn build(&self) -> Buildresult {
-        println!("## BUILD");
+        println!("## [BUILD] BUILD");
         let br = run_cmd(self.projdir, &self.bc.build);
         if br.has_error() {
             return br;

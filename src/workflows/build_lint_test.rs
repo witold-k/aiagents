@@ -38,17 +38,17 @@ impl<'a> BLTWorkflow<'a> {
 
     /// returns build error, if any
     pub fn build(&self) -> Buildresult {
-        println!("## BUILD");
+        println!("## [BLT] BUILD");
         let br = run_cmd(self.projdir, &self.bc.build);
         if br.has_error() {
             return br;
         }
-        println!("## LINT");
+        println!("## [BLT] LINT");
         let br = run_cmd(self.projdir, &self.bc.lint);
         if br.has_error() {
             return br;
         }
-        println!("## TEST");
+        println!("## [BLT] TEST");
         let br = run_cmd(self.projdir, &self.bc.test);
         if br.has_error() {
             return br;

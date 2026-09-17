@@ -12,6 +12,7 @@ use crate::runtimetools::{
 pub enum WorkflowResult {
     Ok,
     LlmCallResult(LlmCallResult),
+    BuildResult(Buildresult),
 }
 
 impl WorkflowResult {
@@ -19,6 +20,7 @@ impl WorkflowResult {
         match self {
             Self::Ok => true,
             Self::LlmCallResult(result) => result.is_valid(),
+            Self::BuildResult(result) => !result.has_error(),
         }
     }
 
@@ -36,6 +38,7 @@ impl fmt::Display for WorkflowResult {
         match self {
             Self::Ok => write!(f, "Ok"),
             Self::LlmCallResult(result) => write!(f, "{result}"),
+            Self::BuildResult(result) => write!(f, "{result}"),
         }
     }
 }
@@ -52,7 +55,12 @@ pub trait Workflow {
     ) -> WorkflowResult {
         if buildresult.has_error() {
             let res: LlmCallResult = llm_call.run(&buildresult.to_string());
-            WorkflowResult::LlmCallResult(res)
+            if res.is_valid() {
+                WorkflowResult::BuildResult(buildresult.clone())
+            }
+            else {
+                WorkflowResult::LlmCallResult(res)
+            }
         }
         else {
             WorkflowResult::Ok
