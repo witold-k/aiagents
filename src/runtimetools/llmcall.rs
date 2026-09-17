@@ -54,6 +54,10 @@ impl LlmCallResult {
         matches!(self, Self::Ok | Self::Done | Self::ToolResult(_))
     }
 
+    pub fn is_request_error(&self) -> bool {
+        matches!(self, Self::RequestError(_))
+    }
+
     pub fn is_done(&self) -> bool {
         matches!(self, Self::Done)
     }
@@ -345,7 +349,7 @@ impl<'a> LlmCall<'a> {
 
         if result.is_valid() {
             if result.to_base().is_save() || result.to_base().is_done() {
-                println!("TOOL: {}", result.to_msg_string(fake_id));
+                //println!("TOOL: {}", result.to_msg_string(fake_id));
                 messages.clear();
                 // TODO FIXME update only saved file
                 messages.update();
@@ -358,7 +362,6 @@ impl<'a> LlmCall<'a> {
             }
         }
         else {
-            println!("[aiagentloop] ERROR: {}", result);
             messages.append(
                 fake_id, AIMessageType::Tool, result.to_base(),
                 &format!("Error occurred: {}", result.to_json(fake_id))

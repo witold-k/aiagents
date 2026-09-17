@@ -46,6 +46,9 @@ impl<'a> AIAgentLoop<'a> {
             let wr: WorkflowResult = self.workflow.execute();
             if !wr.success() {
                 okcount = 0;
+                if wr.request_failure() {
+                    println!("{}", wr);
+                }
             }
             else {
                 eprintln!("{}", wr);

@@ -21,6 +21,14 @@ impl WorkflowResult {
             Self::LlmCallResult(result) => result.is_valid(),
         }
     }
+
+    pub fn request_failure(&self) -> bool {
+        match self {
+            Self::LlmCallResult(result) => result.is_request_error(),
+            _ => false
+        }
+    }
+
 }
 
 impl fmt::Display for WorkflowResult {
