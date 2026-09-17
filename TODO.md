@@ -1,12 +1,12 @@
 # TODO
 
-changed todos. repriorized. this is a hobby project - the way is the goal -
-so removed boring tasks, kept fun or really necessary ones.
-This todo list is ment top be a hint what to do and is addressed only to me.
+Changed TODOs and reprioritized them. This is a hobby project — the journey is
+the goal — so boring tasks were removed, while fun or genuinely necessary ones
+were kept. This TODO list is meant as a personal hint about what to work on next.
 
-## NEXT REDESIGN LLM calls/Buildsystem:
+## NEXT: REDESIGN LLM calls / build system
 
-- workflow redesign, ongoing: RunBuildResult needs info about fail
+- workflow redesign, ongoing: improve failure information in workflow results
 
 ---
 
@@ -14,7 +14,7 @@ This todo list is ment top be a hint what to do and is addressed only to me.
 
 ## AST
 
-For Rust source analysis, use a Rust `syn` (?) crate rather than an external AST
+For Rust source analysis, use the Rust `syn` crate rather than an external AST
 binary.
 
 ---
@@ -44,8 +44,8 @@ Possible experiments include:
 
 ## Web access
 
-- use lightpanda for weblookup (maybe if ever ...)
-[lightpanda](https://lightpanda.io/)
+- use Lightpanda for web lookup (maybe, if ever ...)
+[Lightpanda](https://lightpanda.io/)
 
 ---
 
@@ -93,4 +93,3 @@ can indicate that the user's request is complete and should be processed.
 
 This keeps interactive mode consistent with the project's goal of using
 simple existing mechanisms rather than adding another tooling layer.
-

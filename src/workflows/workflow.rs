@@ -7,8 +7,6 @@ use crate::runtimetools::{
     llmcall::{LlmCall, LlmCallResult},
 };
 
-// FIXME general: Workflow should be renamed to WorkflowResult
-
 pub enum WorkflowResult {
     Ok,
     LlmCallResult(LlmCallResult),
@@ -67,4 +65,3 @@ pub trait Workflow {
         }
     }
 }
-

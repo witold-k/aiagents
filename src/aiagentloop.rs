@@ -9,6 +9,9 @@ use fsscanner::{
 use crate::workflows::workflow::{Workflow, WorkflowResult};
 use crate::config::Config;
 
+const REQUIRED_CONSECUTIVE_SUCCESSES: usize = 2;
+const INITIAL_SUCCESS_COUNT: usize = 1;
+
 #[expect(dead_code)]
 pub struct AIAgentLoop<'a> {
     config: Config,
@@ -40,9 +43,9 @@ impl<'a> AIAgentLoop<'a> {
     }
 
     pub fn run(&self) {
-        let mut okcount = 1;
+        let mut okcount = INITIAL_SUCCESS_COUNT;
         let mut totalleft = self.config.max_try_count.max_workflow_fail as isize;
-        while okcount < 2 && totalleft > 0 {
+        while okcount < REQUIRED_CONSECUTIVE_SUCCESSES && totalleft > 0 {
             let wr: WorkflowResult = self.workflow.execute();
             if !wr.success() {
                 okcount = 0;

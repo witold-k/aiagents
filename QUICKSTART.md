@@ -1,59 +1,70 @@
 # QUICKSTART
 
-you need
-- a running OpenAI API compatible LLM instance, e.g. via llama.cpp oder ollama.
-- a repository you want to fix
-- and either
-    - a compiled version of `aifix` in your path, e.g. `~/bin`
-    - or a rust installation and this repo to compile it yourself
+You need:
 
+- a running OpenAI API-compatible LLM service, e.g. via llama.cpp or Ollama
+- a repository you want to work on
+- and either:
+  - a compiled version of `aifix` in your `PATH`
+  - or a Rust installation and this repository to compile it yourself
 
-## 1. compile
+## 1. Compile
 
-just type `cargo install`. `aifix` will be created and compiled to `~/bin`
+From the repository root, install `aifix` with:
 
-## 2. setup configuration
+```bash
+cargo install --path .
+```
 
-just type
+By default, Cargo installs binaries into `$CARGO_HOME/bin` (usually
+`~/.cargo/bin`). Make sure that directory is in your `PATH`.
+
+## 2. Set up configuration
+
+Create a default configuration with:
 
 ```bash
 aifix -r default
 ```
 
-to create a default configuration, you need to edit it, eg:
+Then edit the generated configuration, for example:
+
 ```bash
 nvim ~/.config/aifix/config.json
 ```
-or
+
+or:
+
 ```bash
 nano ~/.config/aifix/config.json
 ```
 
-## 3. start llm service
+Configure the endpoint and model for your OpenAI API-compatible LLM service.
 
-if you host your own llm you can start it after edit
-the confuration file directly via:
-```bash
-aifix -r default
-```
+## 3. Start the LLM service
 
-## 4. run aifix to fix code
+Start your OpenAI API-compatible LLM service, for example llama.cpp or Ollama,
+using the endpoint configured in `~/.config/aifix/config.json`.
 
-change dir to the current code and execute, e.g.
+## 4. Run aifix to fix code
+
+Change to the repository you want to work on and run, for example:
+
 ```bash
 aifix -l rust -t fix_code -f $(pwd) -f $(pwd)/..
 ```
 
-if you have c++ you need to configure your project first, then:
+For C++, configure the project first and provide its build directory:
+
 ```bash
-aifix -l cpp -t fix_code -b <build directory> -f $(pwd) -f $(pwd)/..
+aifix -l cpp -t fix_code -b <build-directory> -f $(pwd) -f $(pwd)/..
 ```
 
-## 5. examples
+## 5. Examples
 
-examples can be found in `runtests`, e.g.
+Small end-to-end examples can be found in `runtests`, for example:
+
 ```bash
 cd runtests/cargo/aitestloop_simple
 just fix
 ```
-
