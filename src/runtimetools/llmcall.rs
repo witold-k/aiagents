@@ -100,7 +100,10 @@ impl<'a> LlmCall<'a> {
             structureinfo: Self::create_structure_info(),
             files: Self::create_files_info(
                 config, &projdir, workspacedir.as_deref(), task_id, filter, selected
-            ),
+            ).unwrap_or_else(|err| {
+                eprintln!("Failed to load initial file context: {err}");
+                Vec::new()
+            }),
             focus: "".into(),
             faults: None,
         };
@@ -128,7 +131,7 @@ impl<'a> LlmCall<'a> {
         _task_id: Tasks,
         filter: &'a Pathfilter,
         selected: &'a [PathBuf],
-    ) -> Vec<FileEntry> {
+    ) -> fsscanner::Result<Vec<FileEntry>> {
         let proj_str = normalize_path(projdir).display().to_string();
         let build_path = format!("{}/build/", proj_str);
         let target_path = format!("{}/target/", proj_str);
@@ -136,7 +139,7 @@ impl<'a> LlmCall<'a> {
         for sel in selected {
             collect_files_all(sel, &mut selected_paths);
         }
-        let mut selected_entries = FileEntry::vec_from_filtered_pathbufvec(None, selected_paths.to_vec());
+        let mut selected_entries = FileEntry::vec_from_filtered_pathbufvec(None, selected_paths.to_vec())?;
         selected_entries.retain(|entry| {
             let path = entry.to_string();
             let Some(filename) = entry.path.file_name().and_then(|f| f.to_str()).map(String::from) else {
@@ -161,7 +164,7 @@ impl<'a> LlmCall<'a> {
                     &[".md", ".txt"],
                     filter,
                 ) {
-                    all_entries.push(FileEntry::from_path(&path));
+                    all_entries.push(FileEntry::from_path(&path)?);
                 }
 
                 for path in scan_with_suffix_and_filter(
@@ -169,12 +172,12 @@ impl<'a> LlmCall<'a> {
                     &[],
                     filter,
                 ) {
-                    all_entries.push(FileEntry::from_path(&path));
+                    all_entries.push(FileEntry::from_path(&path)?);
                 }
                 all_entries.append(&mut selected_entries);
-                all_entries
+                Ok(all_entries)
             },
-            None => selected_entries
+            None => Ok(selected_entries)
         }
     }
 
@@ -352,7 +355,9 @@ impl<'a> LlmCall<'a> {
                 //println!("TOOL: {}", result.to_msg_string(fake_id));
                 messages.clear();
                 // TODO FIXME update only saved file
-                messages.update();
+                if let Err(err) = messages.update() {
+                    eprintln!("Failed to refresh file context: {err}");
+                }
             }
             else {
                 if result.to_base().is_failed() {
