@@ -192,10 +192,11 @@ impl AIMessageList {
         self.messages.clear();
     }
 
-    pub fn update(&mut self) {
-        for file in self.files.iter_mut() {
-            file.load();
+    pub fn update(&mut self) -> fsscanner::Result<()> {
+        for file in &mut self.files {
+            file.load()?;
         }
+        Ok(())
     }
 
     pub fn to_json(&self) -> serde_json::Value {
