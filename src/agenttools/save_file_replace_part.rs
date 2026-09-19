@@ -13,6 +13,7 @@ use fsscanner::{
 };
 use crate::agenttools::aitooltype::{ ResultToString, ResultToJson, Validatable };
 use crate::aimessageid::AIMessageId;
+use crate::agenttools::pathguard::can_write_resolved;
 
 #[extract_accessors]
 #[derive(Debug)]
@@ -161,7 +162,7 @@ impl<'a> SaveFilePart<'a> {
     pub fn execute(self) -> Result<SaveFilePartResult, SaveFilePartError> {
         let path = normalize_path(&self.path);
 
-        if !self.filter.contains(&path) {
+        if !can_write_resolved(self.filter, &path) {
             return Err(SaveFilePartError::new(SaveFilePartErrorType::Forbidden, &path, ""));
         }
 
