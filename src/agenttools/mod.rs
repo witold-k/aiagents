@@ -20,6 +20,7 @@ pub mod failed;
 pub mod list_dir;
 pub mod load_file;
 pub mod load_file_part;
+pub(crate) mod pathguard;
 pub mod save_file;
 pub mod save_file_replace_part;
 pub mod scan_dir;
