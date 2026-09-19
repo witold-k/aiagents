@@ -7,7 +7,10 @@ use std::path::Path;
 /// Validates an existing path after resolving all symbolic links.
 #[inline]
 pub(crate) fn can_read_resolved(filter: &Pathfilter, path: &Path) -> bool {
-    filter.contains(path) && filter.contains_resolved(path)
+    filter.contains(path)
+        && path
+            .canonicalize()
+            .is_ok_and(|resolved| filter.contains(&resolved))
 }
 
 /// Validates a write target without requiring the final file to exist.
@@ -21,13 +24,17 @@ pub(crate) fn can_write_resolved(filter: &Pathfilter, path: &Path) -> bool {
     }
 
     if path.exists() {
-        return filter.contains_resolved(path);
+        return path
+            .canonicalize()
+            .is_ok_and(|resolved| filter.contains(&resolved));
     }
 
     let mut ancestor = path.parent();
     while let Some(candidate) = ancestor {
         if candidate.exists() {
-            return filter.contains_resolved(candidate);
+            return candidate
+                .canonicalize()
+                .is_ok_and(|resolved| filter.contains(&resolved));
         }
         ancestor = candidate.parent();
     }
