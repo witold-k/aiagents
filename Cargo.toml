@@ -13,7 +13,7 @@ ureq = { version = "3.3", features = ["json"] }
 
 # -- for directory scanning
 struct_extractors = { version = "0.1.0", git = "https://github.com/witold-k/struct_extractors" }
-fsscanner = { version = "0.4.0", git = "https://github.com/witold-k/fsscanner" }
+fsscanner = { version = "0.4.0", git = "https://github.com/witold-k/fsscanner", rev = "a5920ddf9354b18fa0bf82b8474f0872cbe19c85" }
 
 # -- process
 ctrlc = "3.5.2"

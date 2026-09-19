@@ -10,6 +10,7 @@ use fsscanner::{
 };
 use crate::agenttools::aitooltype::{ ResultToString, ResultToJson, Validatable };
 use crate::aimessageid::AIMessageId;
+use crate::agenttools::pathguard::can_read_resolved;
 
 #[derive(Debug)]
 pub struct LoadFile<'a> {
@@ -68,7 +69,7 @@ impl<'a> LoadFile<'a> {
     pub fn execute(&self) -> Result<LoadFileResult, LoadFileError> {
         let path = &self.path;
 
-        if !self.filter.contains(path) {
+        if !can_read_resolved(self.filter, path) {
             return Err(LoadFileError::new(LoadFileErrorType::Forbidden, path));
         }
 

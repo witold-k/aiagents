@@ -14,6 +14,7 @@ use fsscanner::{
 use crate::utils::jsonutils::get_json_field;
 use crate::agenttools::aitooltype::{ AIToolType, ResultToString, ResultToJson, Validatable };
 use crate::aimessageid::AIMessageId;
+use crate::agenttools::pathguard::can_write_resolved;
 
 #[extract_accessors]
 #[derive(Clone, Debug)]
@@ -113,7 +114,7 @@ impl<'a> SaveFile<'a> {
     pub fn execute(self) -> Result<SaveFileResult, SaveFileError> {
         let path = normalize_path(&self.path);
 
-        if !self.filter.can_write(&path) {
+        if !can_write_resolved(self.filter, &path) {
             return Err(SaveFileError::new(SaveFileErrorType::Forbidden, &path, ""));
         }
 

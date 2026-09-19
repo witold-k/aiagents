@@ -7,6 +7,7 @@ use serde_json::{json, Value};
 use fsscanner::pathfilter::Pathfilter;
 use crate::agenttools::aitooltype::{ ResultToString, ResultToJson, Validatable };
 use crate::aimessageid::AIMessageId;
+use crate::agenttools::pathguard::can_read_resolved;
 
 #[derive(Clone, Debug)]
 pub struct AstError {
@@ -47,7 +48,7 @@ impl<'a> Ast<'a> {
     pub fn execute(&self) -> Result<AstResult, AstError> {
         let path = &self.path;
 
-        if !self.filter.contains(path) {
+        if !can_read_resolved(self.filter, path) {
             return Err(AstError::new(AstErrorType::Forbidden, path));
         }
 
