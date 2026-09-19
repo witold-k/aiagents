@@ -1,7 +1,7 @@
 #[cfg(all(test, unix))]
 mod tests {
     use aiagents::agenttools::{
-        load_file::{LoadFile, LoadFileErrorType},
+        load_file::LoadFile,
         save_file::{SaveFile, SaveFileErrorType},
     };
     use fsscanner::pathfilter::Pathfilter;
@@ -25,7 +25,7 @@ mod tests {
         let tool = LoadFile::from_json(&root, &filter, &payload).unwrap();
         let err = tool.execute().unwrap_err();
 
-        assert!(matches!(err.err_type(), LoadFileErrorType::Forbidden));
+        assert!(err.to_string().starts_with("Forbidden:"));
         std::fs::remove_dir_all(&base).unwrap();
     }
 
@@ -44,7 +44,7 @@ mod tests {
         let tool = SaveFile::from_json(&root, &filter, &payload).unwrap();
         let err = tool.execute().unwrap_err();
 
-        assert!(matches!(err.err_type(), SaveFileErrorType::Forbidden));
+        assert!(matches!(err.get_err_type(), SaveFileErrorType::Forbidden));
         assert!(!outside.join("new.rs").exists());
         std::fs::remove_dir_all(&base).unwrap();
     }
