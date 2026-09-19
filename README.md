@@ -40,6 +40,7 @@ The workflow concept itself is generic.
 * local-first: intended to work with smaller LLMs running on consumer hardware
 * model independence: no dependency on provider-specific tool-calling APIs
 * minimal UI: user interaction should be reduced as much as possible
+* consistent test layout: tests live under `tests/`, mirror the relative `src/` hierarchy, and use the source filename with a `_test.rs` suffix
 
 `aifix` uses a small text-based tool protocol. Smaller models are not always
 reliable at producing strict structured output, so malformed actions are
