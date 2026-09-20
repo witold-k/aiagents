@@ -12,7 +12,7 @@ phf =  { version = "0.14", features = ["macros"] }
 ureq = { version = "3.3", features = ["json"] }
 
 # -- for directory scanning
-struct_extractors = { version = "0.1.0", git = "https://github.com/witold-k/struct_extractors" }
+struct_extractors = { version = "0.1.0", git = "https://github.com/witold-k/struct_extractors", rev = "8e769e7ee7dfbf447ef5e3a768bd6b666d09334b" }
 fsscanner = { version = "0.4.0", git = "https://github.com/witold-k/fsscanner", rev = "a5920ddf9354b18fa0bf82b8474f0872cbe19c85" }
 
 # -- process
