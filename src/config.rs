@@ -58,7 +58,7 @@ impl Default for Config {
 
             providerlist: vec![
                 AIProvider {
-                    name: "devs".into(),
+                    name: "qwen".into(),
                     comment: "works, but is not very useful".into(),
                     source: "https://huggingface.co/apto-as/Qwen2.5-Coder-14B-Instruct-Q5_K_M-GGUF/resolve/main/qwen2.5-coder-14b-instruct-q5_k_m.gguf".into(),
                     endpoint: "http://localhost:8080/v1/chat/completions".into(),
@@ -404,6 +404,18 @@ impl Config {
     }
 
     fn validate(&self) -> Result<(), ConfigError> {
+        for (index, provider) in self.providerlist.iter().enumerate() {
+            if self.providerlist[..index]
+                .iter()
+                .any(|other| other.name == provider.name)
+            {
+                return Err(ConfigError::Invalid(format!(
+                    "duplicate provider name '{}'",
+                    provider.name,
+                )));
+            }
+        }
+
         if self.queue_length_save > self.queue_length_max {
             return Err(ConfigError::Invalid(
                 "queue_length_save cannot be greater than queue_length_max"

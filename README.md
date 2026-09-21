@@ -1,9 +1,8 @@
 # aiagents
 
-> **WARNING:** This project is under active development.
-> **WARNING:** Test coverage is still incomplete.
-> **WARNING:** This is a hobby project. The primary goal is having fun.
-> **BUT:** Experimental execution is available; see the Quickstart.
+> **Status:** This is an experimental hobby project under active development.
+> The runtime is functional and can be used for real experiments; see the
+> [Quickstart](QUICKSTART.md). Test coverage is improving but not yet complete.
 
 ## aiagents::aifix - experimental agentic runtime
 
@@ -19,18 +18,29 @@ Apache-2.0 (C) Witold Kaminski 2026
 Please follow the instructions in:
 [Quickstart](QUICKSTART.md)
 
-## What is it?
+## Current state
 
-`aifix` is a small application for automated AI-powered workflows, such as:
+`aifix` is a working experimental runtime for automated AI-assisted software
+engineering. It can execute multi-step workflows that inspect a repository,
+run tools, feed results back to an LLM, and continue from the model response.
 
-* repair: build, test, fix code
-* create documentation
-* review
-* others, see [Tasks](#tasks)
+Implemented workflows include:
 
-These workflows are already implemented. The same runtime can be used for
-interactive development as well as automated software-maintenance workflows.
-The workflow concept itself is generic.
+* analyze, build, test, and fix code
+* generate and review code
+* generate and review documentation
+* generate initial test code
+* set up builds and transpile code
+
+The runtime provides controlled file operations for loading, saving, replacing,
+listing, and scanning files and directories. File access is restricted by
+configured read/write filters and resolved paths are checked to prevent
+escaping those boundaries through symlinks.
+
+The project is usable for experiments today, but it is not intended to be a
+general-purpose autonomous coding platform or a security sandbox. The current
+focus is local execution with smaller models and deliberately simple,
+inspectable mechanisms.
 
 ## Design goals
 
@@ -65,8 +75,8 @@ The main design goal is to keep the runtime simple and small. If additional
 isolation is required, execute `aifix` inside Docker, Podman, a VM, or even on
 a dedicated isolated PC.
 
-`aifix` is a single binary without runtime dependencies. It only needs HTTPS
-access to an LLM service.
+`aifix` is a single binary without additional runtime libraries. It only needs
+HTTPS access to an LLM service.
 
 ### Repository access
 
@@ -112,11 +122,11 @@ The current task system includes operations such as:
 Task descriptions are kept separate from the Rust implementation and are
 converted into generated Rust metadata during the build.
 
-## Identified goals
+## Direction
 
-Since pure code fixing does not work particularly well with small models, and
-this runtime is intended to run with smaller models at home, the following
-areas are currently targeted:
+Pure autonomous code fixing is not the main objective. Smaller local models
+are often more useful when work is split into constrained, inspectable steps.
+The following areas are therefore the current focus:
 
 * simple reviewer: create review files alongside reviewed source files
 * documentation generation, potentially in several steps:

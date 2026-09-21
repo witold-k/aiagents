@@ -1,5 +1,5 @@
 # .github/workflows/ci.yml
-# GitHub Actions CI/CD Pipeline for Rust
+# GitHub Actions CI for Rust
 
 name: Rust CI
 
@@ -12,13 +12,12 @@ env:
   RUST_BACKTRACE: "1"
 
 jobs:
-  # 1. Build and Test Job
   build-and-test:
     name: Build & Test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7 
+        uses: actions/checkout@v7
 
       - name: Set up Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -35,13 +34,13 @@ jobs:
       - name: Run code linter
         run: cargo clippy -- -D warnings
 
-  # 2. Separate Coverage Job to isolate coverage instrumentation
+  # Keep coverage instrumentation isolated from the normal build and tests.
   coverage:
     name: Test Coverage
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7 
+        uses: actions/checkout@v7
 
       - name: Set up Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
