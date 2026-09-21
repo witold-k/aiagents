@@ -1,11 +1,11 @@
 # aiagents
 
 > **WARNING:** This project is under active development.
-> **WARNING:** Code coverage and test count are currently low.
+> **WARNING:** Test coverage is still incomplete.
 > **WARNING:** This is a hobby project. The primary goal is having fun.
 > **BUT:** Experimental execution is available; see the Quickstart.
 
-# aiagents::aifix - experimental agentic runtime
+## aiagents::aifix - experimental agentic runtime
 
 A small Rust runtime for AI-assisted software engineering ... or maybe other
 tasks.
@@ -40,7 +40,8 @@ The workflow concept itself is generic.
 * local-first: intended to work with smaller LLMs running on consumer hardware
 * model independence: no dependency on provider-specific tool-calling APIs
 * minimal UI: user interaction should be reduced as much as possible
-* consistent test layout: tests live under `tests/`, mirror the relative `src/` hierarchy, and use the source filename with a `_test.rs` suffix
+* consistent test layout: tests live under `tests/`, mirror the relative
+  `src/` hierarchy, and use the source filename with a `_test.rs` suffix
 
 `aifix` uses a small text-based tool protocol. Smaller models are not always
 reliable at producing strict structured output, so malformed actions are
