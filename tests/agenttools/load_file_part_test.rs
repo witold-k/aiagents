@@ -35,4 +35,60 @@ mod tests {
         );
     }
 
+    #[test]
+    fn rejects_zero_start() {
+        let tree = TempTree::new("load-part-zero-start");
+        tree.write("input.txt", "one\ntwo\n");
+        let filter = Pathfilter::new(vec![tree.root().to_path_buf()]);
+        let payload = json!({"file": "input.txt", "start": 0, "count": 1});
+
+        assert!(
+            LoadFilePart::from_json(tree.root(), &filter, &payload).is_err()
+        );
+    }
+
+    #[test]
+    fn rejects_negative_start_and_count() {
+        let tree = TempTree::new("load-part-negative");
+        tree.write("input.txt", "one\ntwo\n");
+        let filter = Pathfilter::new(vec![tree.root().to_path_buf()]);
+
+        let start = json!({"file": "input.txt", "start": -1, "count": 1});
+        assert!(
+            LoadFilePart::from_json(tree.root(), &filter, &start).is_err()
+        );
+
+        let count = json!({"file": "input.txt", "start": 1, "count": -1});
+        assert!(
+            LoadFilePart::from_json(tree.root(), &filter, &count).is_err()
+        );
+    }
+
+    #[test]
+    fn zero_count_returns_empty_data() {
+        let tree = TempTree::new("load-part-zero-count");
+        tree.write("input.txt", "one\ntwo\n");
+        let filter = Pathfilter::new(vec![tree.root().to_path_buf()]);
+        let payload = json!({"file": "input.txt", "start": 1, "count": 0});
+        let tool =
+            LoadFilePart::from_json(tree.root(), &filter, &payload).unwrap();
+
+        let result = tool.execute().unwrap();
+        assert_eq!(result.data, "");
+        assert_eq!(result.count, 0);
+    }
+
+    #[test]
+    fn start_beyond_eof_returns_padding() {
+        let tree = TempTree::new("load-part-eof");
+        tree.write("input.txt", "one\ntwo\n");
+        let filter = Pathfilter::new(vec![tree.root().to_path_buf()]);
+        let payload = json!({"file": "input.txt", "start": 4, "count": 2});
+        let tool =
+            LoadFilePart::from_json(tree.root(), &filter, &payload).unwrap();
+
+        let result = tool.execute().unwrap();
+        assert_eq!(result.data, "\n\n\n");
+    }
+
 }

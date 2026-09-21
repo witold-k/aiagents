@@ -52,4 +52,51 @@ mod tests {
             "original data"
         );
     }
+    #[test]
+    fn out_of_bounds_occurrence_leaves_file_unchanged() {
+        let tree = TempTree::new("replace-index");
+        tree.write("input.txt", "same\nsame\n");
+
+        let filter = Pathfilter::new(vec![tree.root().to_path_buf()]);
+        let payload = json!({
+            "file": "input.txt",
+            "index": 2,
+            "original": "same",
+            "content": "changed",
+            "note": "must fail"
+        });
+        let tool =
+            SaveFilePart::from_json(tree.root(), &filter, &payload).unwrap();
+
+        let err = tool.execute().unwrap_err();
+        assert!(err.to_string().starts_with("OriginalMismatch:"));
+        assert_eq!(
+            std::fs::read_to_string(tree.root().join("input.txt")).unwrap(),
+            "same\nsame\n"
+        );
+    }
+
+    #[test]
+    fn normalizes_crlf_when_replacing() {
+        let tree = TempTree::new("replace-crlf");
+        tree.write("input.txt", "before\r\ntarget\r\nafter\r\n");
+
+        let filter = Pathfilter::new(vec![tree.root().to_path_buf()]);
+        let payload = json!({
+            "file": "input.txt",
+            "index": 0,
+            "original": "target\r\n",
+            "content": "changed\r\n",
+            "note": "normalize line endings"
+        });
+        let tool =
+            SaveFilePart::from_json(tree.root(), &filter, &payload).unwrap();
+
+        tool.execute().unwrap();
+        assert_eq!(
+            std::fs::read_to_string(tree.root().join("input.txt")).unwrap(),
+            "before\nchanged\nafter\n"
+        );
+    }
+
 }

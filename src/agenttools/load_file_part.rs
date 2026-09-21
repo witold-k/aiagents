@@ -84,12 +84,25 @@ impl<'a> LoadFilePart<'a> {
             }
         };
 
+        if start < 1 {
+            return Err(LoadFilePartError {
+                err_type: LoadFilePartErrorType::DecodeError,
+                err_info: format!("invalid start: {start}"),
+            });
+        }
+
         let count = match payload
             .get("count")
             .or_else(|| payload.get("len"))
             .and_then(|v| v.as_i64())
         {
-            Some(count) => count,
+            Some(count) if count >= 0 => count,
+            Some(count) => {
+                return Err(LoadFilePartError {
+                    err_type: LoadFilePartErrorType::DecodeError,
+                    err_info: format!("invalid count: {count}"),
+                });
+            }
             None => {
                 return Err(LoadFilePartError {
                     err_type: LoadFilePartErrorType::DecodeError,
@@ -117,7 +130,7 @@ impl<'a> LoadFilePart<'a> {
         Ok(LoadFilePart {
             filter,
             path: normalize_path(&rpath),
-            start: (start as i32 - 1) as usize,
+            start: (start - 1) as usize,
             count: count as usize,
         })
     }

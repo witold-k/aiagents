@@ -10,7 +10,10 @@ mod tests {
 
     #[test]
     fn load_file_rejects_symlink_escape() {
-        let base = std::env::temp_dir().join(format!("aiagents-load-sandbox-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!(
+            "aiagents-load-sandbox-{}",
+            std::process::id()
+        ));
         let root = base.join("root");
         let outside = base.join("outside");
         let _ = std::fs::remove_dir_all(&base);
@@ -31,7 +34,10 @@ mod tests {
 
     #[test]
     fn save_file_rejects_existing_file_symlink_escape() {
-        let base = std::env::temp_dir().join(format!("aiagents-save-sandbox-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!(
+            "aiagents-save-sandbox-{}",
+            std::process::id()
+        ));
         let root = base.join("root");
         let outside = base.join("outside");
         let _ = std::fs::remove_dir_all(&base);
@@ -42,7 +48,11 @@ mod tests {
         symlink(&target, root.join("target.rs")).unwrap();
 
         let filter = Pathfilter::new(vec![root.clone()]);
-        let payload = json!({"file": "target.rs", "content": "blocked", "note": "test"});
+        let payload = json!({
+            "file": "target.rs",
+            "content": "blocked",
+            "note": "test"
+        });
         let tool = SaveFile::from_json(&root, &filter, &payload).unwrap();
         let err = tool.execute().unwrap_err();
 

@@ -87,4 +87,49 @@ mod tests {
             .is_err()
         );
     }
+    #[test]
+    fn parent_escape_is_rejected() {
+        let tree = TempTree::new("save-parent-escape");
+        let filter = Pathfilter::new(vec![tree.root().to_path_buf()]);
+        let payload = json!({
+            "file": "../outside.txt",
+            "content": "blocked",
+            "note": "must stay inside root"
+        });
+        let tool = SaveFile::from_json(tree.root(), &filter, &payload).unwrap();
+
+        let err = tool.execute().unwrap_err();
+        assert!(matches!(
+            err.get_err_type(),
+            SaveFileErrorType::Forbidden
+        ));
+        assert!(!tree.root().parent().unwrap().join("outside.txt").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn new_file_through_symlink_directory_is_rejected() {
+        use std::os::unix::fs::symlink;
+
+        let tree = TempTree::new("save-dir-symlink");
+        let outside = tree.root().parent().unwrap().join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        symlink(&outside, tree.root().join("linked")).unwrap();
+
+        let filter = Pathfilter::new(vec![tree.root().to_path_buf()]);
+        let payload = json!({
+            "file": "linked/new.txt",
+            "content": "blocked",
+            "note": "must not follow symlink outside"
+        });
+        let tool = SaveFile::from_json(tree.root(), &filter, &payload).unwrap();
+
+        let err = tool.execute().unwrap_err();
+        assert!(matches!(
+            err.get_err_type(),
+            SaveFileErrorType::Forbidden
+        ));
+        assert!(!outside.join("new.txt").exists());
+    }
+
 }
