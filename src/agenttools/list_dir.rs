@@ -49,7 +49,14 @@ impl<'a> ListDir<'a> {
     ) -> Result<ListDir<'a>, ListDirError> {
         match payload.get("path").and_then(|v| v.as_str()).map(PathBuf::from) {
             Some(path) => {
-                match resolve_relaxed_path(projroot, &path) {
+                let direct_path = normalize_path(&projroot.join(&path));
+                let resolved = if direct_path.is_dir() {
+                    Some(direct_path)
+                } else {
+                    resolve_relaxed_path(projroot, &path)
+                };
+
+                match resolved {
                     Some(rpath) => Ok(ListDir {
                         filter,
                         path: normalize_path(&rpath),

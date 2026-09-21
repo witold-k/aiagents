@@ -73,11 +73,11 @@ impl<'a> SaveFile<'a> {
                 });
             }
         };
-        let file = match resolve_relaxed_path(projroot, &file) {
-            Some(file) => file,
-            None => {
-                return Err(SaveFileError::new(SaveFileErrorType::NotFound, &file, ""));
-            }
+        let direct_path = normalize_path(&projroot.join(&file));
+        let file = if direct_path.exists() {
+            resolve_relaxed_path(projroot, &file).unwrap_or(direct_path)
+        } else {
+            direct_path
         };
 
         let content = match get_json_field(payload, "content") {
