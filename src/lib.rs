@@ -20,4 +20,5 @@ pub mod config;
 pub mod repostate;
 pub mod runtimetools;
 pub mod utils;
+pub mod vc;
 pub mod workflows;
