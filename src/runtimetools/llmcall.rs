@@ -194,6 +194,27 @@ impl<'a> LlmCall<'a> {
         self.messages.borrow_mut().context.clear();
     }
 
+    pub fn run_until_done(&self, request: &str) -> LlmCallResult {
+        let endpoint = self.provider.endpoint.to_string();
+        let mut air = AIRequest::new(
+            &self.provider.model,
+            endpoint,
+            &self.provider.api_key,
+            self.provider.insecure,
+            30000,
+            0.6,
+        );
+
+        for _ in 0..self.config.max_try_count.max_workflow_fail {
+            let result = self.analyze(&mut air, request);
+            if result.is_done() || !result.is_valid() {
+                return result;
+            }
+        }
+
+        LlmCallResult::RetryFailed
+    }
+
     pub fn run(&self, request: &str) -> LlmCallResult {
         const OK_CONFIRM_COUNT: usize = 2;
 
