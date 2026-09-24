@@ -98,6 +98,7 @@ impl<'a> LlmCall<'a> {
             task_description,
             subtask,
             structureinfo: Self::create_structure_info(),
+            context: String::new(),
             files: Self::create_files_info(
                 config, &projdir, workspacedir.as_deref(), task_id, filter, selected
             ).unwrap_or_else(|err| {
@@ -179,6 +180,18 @@ impl<'a> LlmCall<'a> {
             },
             None => Ok(selected_entries)
         }
+    }
+
+    pub fn max_workflow_attempts(&self) -> usize {
+        self.config.max_try_count.max_workflow_fail
+    }
+
+    pub fn set_context(&self, context: impl Into<String>) {
+        self.messages.borrow_mut().context = context.into();
+    }
+
+    pub fn clear_context(&self) {
+        self.messages.borrow_mut().context.clear();
     }
 
     pub fn run(&self, request: &str) -> LlmCallResult {
@@ -276,6 +289,9 @@ impl<'a> LlmCall<'a> {
                 if content.contains("action") {
                     let result = self.handle_text_action(content);
                     if result.is_valid() {
+                        if result.to_base().is_done() {
+                            return LlmCallResult::Done;
+                        }
                         return LlmCallResult::ToolResult(result);
                     }
                     continue;

@@ -82,7 +82,11 @@ pub fn run_service(config: &Config, name: &Option<String>) {
 pub fn main() {
     let args = match parse_args() {
         Ok(a) => a,
-        Err(_) => { help(); return; }
+        Err(err) => {
+            eprintln!("Error: {err}");
+            help();
+            return;
+        }
     };
 
     if args.help {
@@ -208,7 +212,15 @@ pub fn main() {
     );
 
     let src_path2 = src_path.clone();
-    let ws = WorkflowSelector::new(&config, &llm_call, bs, &src_path2, &ws_path, &target_path);
+    let ws = WorkflowSelector::new(
+        &config,
+        &llm_call,
+        bs,
+        &src_path2,
+        &ws_path,
+        &target_path,
+        &args.task_args,
+    );
     let workflow = ws.select(task);
 
     let ailoop = AIAgentLoop::new(

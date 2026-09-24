@@ -21,6 +21,54 @@ fn main() {
             generate_dimension(folder_name, &path, &out_dir, &visible_root);
         }
     }
+
+    generate_task_argument_help(&root, &out_dir, &visible_root);
+}
+
+fn generate_task_argument_help(root: &Path, out_dir: &Path, visible_root: &Path) {
+    let folder = root.join("task_arguments");
+    let mut entries = Vec::new();
+
+    if let Ok(files) = fs::read_dir(&folder) {
+        for file in files.flatten() {
+            let path = file.path();
+            if !path.is_file() {
+                continue;
+            }
+            let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+                continue;
+            };
+            let task = stem.strip_suffix("_args").unwrap_or(stem);
+            let content = fs::read_to_string(&path).unwrap();
+            entries.push((task.to_string(), content));
+        }
+    }
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let help = entries
+        .iter()
+        .map(|(task, content)| {
+            let arguments = content
+                .lines()
+                .map(|line| format!("            {line}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!("        {task}:\n{arguments}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let escaped = format!("{help:?}");
+    let out = format!(
+        "pub const TASK_ARGUMENT_HELP: &str = {escaped};\n"
+    );
+
+    let dest_out = out_dir.join("generated_task_argument_help.rs");
+    fs::write(&dest_out, &out).unwrap();
+
+    let dest_visible = visible_root.join("generated_task_argument_help.rs");
+    let _ = fs::remove_file(&dest_visible);
+    create_link_or_copy(&dest_out, &dest_visible);
 }
 
 fn generate_dimension(

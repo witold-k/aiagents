@@ -7,6 +7,7 @@ use std::str::FromStr;
 use fsscanner::fileentry::FileEntry;
 use crate::generated_tasks::Tasks;
 use crate::generated_languages::Languages;
+use crate::generated_task_argument_help::TASK_ARGUMENT_HELP;
 
 #[derive(Debug)]
 pub struct Args {
@@ -14,6 +15,7 @@ pub struct Args {
     pub task: String,
     pub taskdata: Option<FileEntry>,
     pub subtask: Vec<PathBuf>,
+    pub task_args: Vec<String>,
     pub config: Option<String>,
     pub select: Vec<PathBuf>,
     pub pathfilter: Vec<PathBuf>,
@@ -32,6 +34,9 @@ pub fn help() {
     -t --task [required, multiple possible invalid with -w switch]:
         - first -t selects task: one of: {}
         - following are paths to subtasks that enhance the task description
+    -a --args [optional]: all following arguments are passed to the selected task
+        task-specific arguments:
+{}
     -s --select [optional, multiple possible]: one or more files or dirs,
         - if task needs a file to operate and none is given a random file will be choosen
     -c --config [optional]: load config from path
@@ -48,6 +53,7 @@ pub fn help() {
 "#
         , Languages::to_vec_str().join(", ")
         , Tasks::to_vec_str().join(", ")
+        , TASK_ARGUMENT_HELP
     );
 }
 
@@ -64,6 +70,7 @@ pub fn parse_args() -> Result<Args, String> {
     let mut task: Option<String> = None;
     let mut taskdata: Option<FileEntry> = None;
     let mut subtask: Vec<PathBuf> = Vec::new();
+    let mut task_args: Vec<String> = Vec::new();
     let mut select: Vec<PathBuf> = Vec::new();
     let mut config: Option<String> = None;
     let mut pathfilter: Vec<PathBuf> = Vec::new();
@@ -98,6 +105,10 @@ pub fn parse_args() -> Result<Args, String> {
                     };
                     subtask.push(file);
                }
+            }
+            "-a" | "--args" => {
+                task_args.extend(args.by_ref());
+                break;
             }
             "-s" | "--select" => {
                 let value = args.next().ok_or("Missing value for --select")?;
@@ -152,6 +163,7 @@ pub fn parse_args() -> Result<Args, String> {
             task: "".into(),
             taskdata,
             subtask,
+            task_args,
             config,
             select,
             pathfilter,
@@ -193,6 +205,7 @@ pub fn parse_args() -> Result<Args, String> {
         task: task_value,
         taskdata,
         subtask,
+        task_args,
         config,
         select,
         pathfilter,

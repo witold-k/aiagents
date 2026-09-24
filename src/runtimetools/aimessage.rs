@@ -40,6 +40,7 @@ pub struct AIMessageList {
     pub task_description: String,
     pub subtask:       Vec<String>,
     pub structureinfo: String,
+    pub context:       String,
     pub files:  Vec<FileEntry>,
     pub note:   String,
     pub focus:  String,
@@ -55,6 +56,7 @@ pub struct AIMessageListData {
     pub task_description: String,
     pub subtask:          Vec<String>,
     pub structureinfo:    String,
+    pub context:          String,
     pub files:  Vec<FileEntry>,
     pub focus:  String,
     pub faults: Option<String>,
@@ -91,6 +93,14 @@ impl AIMessage {
     #[inline(always)]
     pub fn is_user(&self) -> bool {
         AIMessageType::User == self.msgtype
+    }
+
+    #[inline(always)]
+    fn serializes_as_user(&self) -> bool {
+        matches!(
+            self.msgtype,
+            AIMessageType::User | AIMessageType::Build | AIMessageType::Tool
+        )
     }
 
     pub fn to_json(&self) -> Value {
@@ -144,6 +154,7 @@ impl AIMessageList {
             task_description: data.task_description,
             subtask:       data.subtask,
             structureinfo: data.structureinfo,
+            context:       data.context,
             files:         data.files,
             note:       "".into(),
             focus:      data.focus,
@@ -219,6 +230,12 @@ impl AIMessageList {
             content.push('\n');
         }
 
+        if !self.context.is_empty() {
+            let context = format!("=== CONTEXT ===\n{}", self.context);
+            content.push_str(&context);
+            content.push('\n');
+        }
+
         if !self.files.is_empty() {
             let fdata = format!(
                 "=== FILES ===\n{}",
@@ -260,7 +277,7 @@ impl AIMessageList {
             content.push('\n');
         }
 
-        let prepend_user = self.messages.first().is_some_and(|m| m.is_user());
+        let prepend_user = self.messages.first().is_some_and(|m| m.serializes_as_user());
         if prepend_user {
             let mut first = self.messages[0].clone();
             content.push_str(&first.data);
@@ -333,7 +350,7 @@ impl AIMessageList {
             content.push('\n');
         }
 
-        let prepend_user = self.messages.first().is_some_and(|m| m.is_user());
+        let prepend_user = self.messages.first().is_some_and(|m| m.serializes_as_user());
         if prepend_user {
             let mut first = self.messages[0].clone();
             content.push_str(&first.data);

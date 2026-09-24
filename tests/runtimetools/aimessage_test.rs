@@ -34,6 +34,7 @@ mod tests {
             task_description: String::new(),
             subtask: Vec::new(),
             structureinfo: String::new(),
+            context: String::new(),
             files: Vec::new(),
             focus: String::new(),
             faults: None,
@@ -262,6 +263,7 @@ mod tests {
             task_description: "task description".to_string(),
             subtask: vec!["subtask 1".to_string()],
             structureinfo: "AST".to_string(),
+            context: String::new(),
             files: Vec::new(),
             focus: "focus".to_string(),
             faults: Some("fault".to_string()),
@@ -677,6 +679,25 @@ mod tests {
     }
 
     #[test]
+    fn list_to_json_includes_context() {
+        let mut list = empty_list();
+        list.task_description = "Task".to_string();
+        list.context = "release evidence".to_string();
+
+        let result = list.to_json();
+
+        assert_eq!(
+            result,
+            json!([
+                {
+                    "role": "user",
+                    "content": "Task\n=== CONTEXT ===\nrelease evidence\n"
+                }
+            ])
+        );
+    }
+
+    #[test]
     fn list_to_json_includes_faults() {
         let mut list = empty_list();
         list.task_description = "Task".to_string();
@@ -799,6 +820,32 @@ mod tests {
                 }
             ])
         );
+    }
+
+    #[test]
+    fn list_to_json_does_not_prepend_user_when_first_message_is_tool() {
+        let mut list = empty_list();
+        list.task_description = "Task description".to_string();
+
+        list.messages.push(message(
+            1,
+            AIMessageType::Tool,
+            AIToolType::LoadFile,
+            "tool result",
+        ));
+        list.messages.push(message(
+            2,
+            AIMessageType::Model,
+            AIToolType::LoadFile,
+            "assistant response",
+        ));
+
+        let result = list.to_json();
+        let messages = result.as_array().unwrap();
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(messages[1]["role"], "assistant");
     }
 
     // -----------------------------------------------------------------------

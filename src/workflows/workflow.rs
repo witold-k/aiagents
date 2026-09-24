@@ -11,6 +11,7 @@ pub enum WorkflowResult {
     Ok,
     LlmCallResult(LlmCallResult),
     BuildResult(Buildresult),
+    Error(String),
 }
 
 impl WorkflowResult {
@@ -19,6 +20,7 @@ impl WorkflowResult {
             Self::Ok => true,
             Self::LlmCallResult(result) => result.is_valid(),
             Self::BuildResult(result) => !result.has_error(),
+            Self::Error(_) => false,
         }
     }
 
@@ -37,6 +39,7 @@ impl fmt::Display for WorkflowResult {
             Self::Ok => write!(f, "Ok"),
             Self::LlmCallResult(result) => write!(f, "{result}"),
             Self::BuildResult(result) => write!(f, "{result}"),
+            Self::Error(error) => write!(f, "{error}"),
         }
     }
 }

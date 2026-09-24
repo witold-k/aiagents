@@ -10,6 +10,9 @@ pub mod generated_languages {
 pub mod generated_tasks {
     include!(concat!(env!("OUT_DIR"), "/generated_tasks.rs"));
 }
+pub mod generated_task_argument_help {
+    include!(concat!(env!("OUT_DIR"), "/generated_task_argument_help.rs"));
+}
 pub mod generated_workspaces {
     include!(concat!(env!("OUT_DIR"), "/generated_workspaces.rs"));
 }

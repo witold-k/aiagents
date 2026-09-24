@@ -7,3 +7,4 @@ pub mod buildresult;
 pub mod buildsystem;
 pub mod generic_work_step;
 pub mod llmcall;
+pub mod releasedoc;
