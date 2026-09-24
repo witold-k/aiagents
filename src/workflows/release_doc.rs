@@ -86,18 +86,11 @@ impl<'a> Workflow for ReleaseDocWorkflow<'a> {
 
         self.llm_call.set_context(context.to_llm_summary_context());
 
-        for _ in 0..self.llm_call.max_workflow_attempts() {
-            let result: LlmCallResult = self.llm_call.run("");
-            if result.is_done() {
-                return WorkflowResult::Ok;
-            }
-            if !result.is_valid() {
-                return WorkflowResult::LlmCallResult(result);
-            }
+        let result: LlmCallResult = self.llm_call.run_until_done("");
+        if result.is_done() {
+            WorkflowResult::Ok
+        } else {
+            WorkflowResult::LlmCallResult(result)
         }
-
-        WorkflowResult::Error(
-            "Release documentation did not finish with done".into(),
-        )
     }
 }
