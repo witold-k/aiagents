@@ -194,6 +194,67 @@ impl<'a> LlmCall<'a> {
         self.messages.borrow_mut().context.clear();
     }
 
+    pub fn run_text_step(&self, prompt: &str, context: &str) -> Result<String, LlmCallResult> {
+        let endpoint = self.provider.endpoint.to_string();
+        let air = AIRequest::new(
+            &self.provider.model,
+            endpoint,
+            &self.provider.api_key,
+            self.provider.insecure,
+            30000,
+            0.6,
+        );
+
+        let json_messages = {
+            let mut messages = self.messages.borrow().clone();
+            messages.clear();
+            messages.task_description = prompt.to_string();
+            messages.subtask.clear();
+            messages.structureinfo.clear();
+            messages.context = context.to_string();
+            messages.files.clear();
+            messages.note.clear();
+            messages.focus.clear();
+            messages.to_json()
+        };
+
+        if self.dump {
+            println!("### SEND");
+            println!(
+                "[run_text_step] {}",
+                serde_json::to_string_pretty(&json_messages)
+                    .unwrap_or_else(|_| "failed to encode json".to_string())
+            );
+            println!("### END");
+        }
+
+        let response = match air.request(&json_messages.to_string()) {
+            AIRequestResult::Ok(value) => value,
+            err => return Err(LlmCallResult::RequestError(err)),
+        };
+
+        if self.dump {
+            println!("### RESPONSE");
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&response)
+                    .unwrap_or_else(|_| "failed to decode json".to_string())
+            );
+        }
+
+        let content = response
+            .get("choices")
+            .and_then(|value| value.get(0))
+            .and_then(|choice| choice.get("message"))
+            .and_then(|message| message.get("content"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|content| !content.is_empty())
+            .map(str::to_string);
+
+        content.ok_or(LlmCallResult::RetryFailed)
+    }
+
     pub fn run_until_done(&self, request: &str) -> LlmCallResult {
         let endpoint = self.provider.endpoint.to_string();
         let mut air = AIRequest::new(

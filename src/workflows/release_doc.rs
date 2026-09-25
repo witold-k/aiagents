@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Witold Kaminski
 
-use std::path::Path;
+use std::{fs, path::Path};
 
+use crate::generated_workflowsteps::WorkflowSteps;
 use crate::runtimetools::{
-    llmcall::{LlmCall, LlmCallResult},
+    llmcall::LlmCall,
     releasedoc::ReleaseDocContext,
 };
 use crate::vc::git::Git;
@@ -84,13 +85,29 @@ impl<'a> Workflow for ReleaseDocWorkflow<'a> {
             }
         };
 
-        self.llm_call.set_context(context.to_llm_summary_context());
+        let analysis = match self.llm_call.run_text_step(
+            WorkflowSteps::ReleaseDocAnalyze.get_prompt(),
+            &context.to_llm_summary_context(),
+        ) {
+            Ok(analysis) => analysis,
+            Err(result) => return WorkflowResult::LlmCallResult(result),
+        };
 
-        let result: LlmCallResult = self.llm_call.run_until_done("");
-        if result.is_done() {
-            WorkflowResult::Ok
-        } else {
-            WorkflowResult::LlmCallResult(result)
+        let release_notes = match self.llm_call.run_text_step(
+            WorkflowSteps::ReleaseDocWrite.get_prompt(),
+            &analysis,
+        ) {
+            Ok(release_notes) => release_notes,
+            Err(result) => return WorkflowResult::LlmCallResult(result),
+        };
+
+        let output = self.projdir.join("RELEASE_NOTES.md");
+        match fs::write(&output, release_notes) {
+            Ok(()) => WorkflowResult::Ok,
+            Err(err) => WorkflowResult::Error(format!(
+                "Failed to write {}: {err}",
+                output.display()
+            )),
         }
     }
 }
