@@ -320,6 +320,26 @@ impl<'a> LlmCall<'a> {
         self.messages.borrow_mut().context.clear();
     }
 
+    fn record_completed_edit(messages: &mut AIMessageList, json: &Value) {
+        let Some(file) = json.get("file").and_then(Value::as_str) else {
+            return;
+        };
+        let Some(original) = json.get("original").and_then(Value::as_str) else {
+            return;
+        };
+        let Some(content) = json.get("content").and_then(Value::as_str) else {
+            return;
+        };
+
+        messages.context.push_str(&format!(
+            "\n\n=== COMPLETED EDIT ===\n\
+             File: {file}\n\
+             This edit was successfully applied. Do not revert it while completing the remaining fix plan.\n\
+             BEFORE:\n{original}\n\
+             AFTER:\n{content}"
+        ));
+    }
+
     pub fn load_selected_source_files(
         &self,
         selection: &str,
@@ -709,6 +729,9 @@ impl<'a> LlmCall<'a> {
 
         if result.is_valid() {
             if result.to_base().is_save() || result.to_base().is_done() {
+                if result.to_base().is_save() {
+                    Self::record_completed_edit(&mut messages, &json);
+                }
                 //println!("TOOL: {}", result.to_msg_string(fake_id));
                 messages.clear();
 
