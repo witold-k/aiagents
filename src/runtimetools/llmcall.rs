@@ -346,24 +346,12 @@ impl<'a> LlmCall<'a> {
         };
 
         let path = normalize_path(Path::new(file));
-        let mut entry = match FileEntry::from_path(&path) {
-            Ok(entry) => entry,
-            Err(err) => {
-                eprintln!("Failed to create file entry after original mismatch: {err}");
-                return;
-            }
-        };
-        if let Err(err) = entry.load() {
-            eprintln!("Failed to reload file after original mismatch: {err}");
+        let Some(entry) = messages.files.iter_mut().find(|entry| entry.path == path) else {
             return;
-        }
+        };
 
-        messages.files.retain(|existing| existing.path != path);
-        messages.files.push(entry);
-
-        let mut transient_source_files = self.transient_source_files.borrow_mut();
-        if !transient_source_files.contains(&path) {
-            transient_source_files.push(path);
+        if let Err(err) = entry.reload() {
+            eprintln!("Failed to reload file after original mismatch: {err}");
         }
     }
 
