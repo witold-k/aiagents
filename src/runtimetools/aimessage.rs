@@ -4,6 +4,7 @@
 use serde::{Serialize, Deserialize};
 use serde_json::{json, Value};
 use fsscanner::fileentry::FileEntry;
+use std::path::PathBuf;
 //use std::fmt::{Display, Formatter};
 use crate::aimessageid::AIMessageId;
 use crate::agenttools::aitooltype::AIToolType;
@@ -42,6 +43,7 @@ pub struct AIMessageList {
     pub structureinfo: String,
     pub context:       String,
     pub files:  Vec<FileEntry>,
+    pub filelist: Vec<PathBuf>,
     pub note:   String,
     pub focus:  String,
     pub faults: Option<String>,
@@ -58,6 +60,7 @@ pub struct AIMessageListData {
     pub structureinfo:    String,
     pub context:          String,
     pub files:  Vec<FileEntry>,
+    pub filelist: Vec<PathBuf>,
     pub focus:  String,
     pub faults: Option<String>,
 }
@@ -156,6 +159,7 @@ impl AIMessageList {
             structureinfo: data.structureinfo,
             context:       data.context,
             files:         data.files,
+            filelist:      data.filelist,
             note:       "".into(),
             focus:      data.focus,
             faults:     data.faults,
@@ -226,6 +230,19 @@ impl AIMessageList {
 
         if !self.structureinfo.is_empty() {
             let fdata = format!("=== INFO/AST ===\n{}", self.structureinfo);
+            content.push_str(&fdata);
+            content.push('\n');
+        }
+
+        if !self.filelist.is_empty() {
+            let fdata = format!(
+                "=== FILE LIST ===\n{}",
+                self.filelist
+                    .iter()
+                    .map(|path| path.to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            );
             content.push_str(&fdata);
             content.push('\n');
         }

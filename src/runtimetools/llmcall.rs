@@ -99,6 +99,7 @@ impl<'a> LlmCall<'a> {
             subtask,
             structureinfo: Self::create_structure_info(),
             context: String::new(),
+            filelist: Self::create_file_list(config, &projdir, filter),
             files: Self::create_files_info(
                 config, &projdir, workspacedir.as_deref(), task_id, filter, selected
             ).unwrap_or_else(|err| {
@@ -122,6 +123,32 @@ impl<'a> LlmCall<'a> {
     // FIXME should be moved to utils and used in workflow (eg. BLT)
     pub fn create_structure_info() -> String {
         get_ast_string("src")
+    }
+
+    pub fn create_file_list(
+        config: &Config,
+        projdir: &Path,
+        filter: &Pathfilter,
+    ) -> Vec<PathBuf> {
+        let projdir = normalize_path(projdir);
+        let build_path = projdir.join("build");
+        let target_path = projdir.join("target");
+
+        scan_with_suffix_and_filter(&projdir, &[], filter)
+            .into_iter()
+            .filter(|path| !path.starts_with(&build_path) && !path.starts_with(&target_path))
+            .filter(|path| {
+                let Some(filename) = path.file_name().and_then(|f| f.to_str()) else {
+                    return false;
+                };
+                let Some(suffix) = path.extension().and_then(|s| s.to_str()) else {
+                    return false;
+                };
+                config.scanfullfilter.contains(&filename.to_string())
+                    && config.scanendfilter.contains(&suffix.to_string())
+            })
+            .map(|path| path.strip_prefix(&projdir).unwrap_or(&path).to_path_buf())
+            .collect()
     }
 
     // FIXME should be moved to utils and used in workflow (eg. BLT)
@@ -244,6 +271,7 @@ impl<'a> LlmCall<'a> {
             messages.subtask.clear();
             if !keep_source_context {
                 messages.structureinfo.clear();
+                messages.filelist.clear();
                 messages.files.clear();
             }
             messages.context = context.to_string();
