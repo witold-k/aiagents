@@ -649,6 +649,9 @@ impl<'a> LlmCall<'a> {
 
                 if !content.is_empty() {
                     let result = self.handle_text_action(content);
+                    if result.to_base().is_failed() {
+                        return LlmCallResult::ToolResult(result);
+                    }
                     if result.is_valid() {
                         if result.to_base().is_done() {
                             return LlmCallResult::Done;
