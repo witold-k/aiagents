@@ -334,6 +334,7 @@ impl<'a> LlmCall<'a> {
             }
         }
 
+        let selection = strip_code_fences(selection);
         let requested = selection
             .lines()
             .map(str::trim)
