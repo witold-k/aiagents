@@ -68,7 +68,7 @@ impl<'a> Workflow for BLTWorkflow<'a> {
             return WorkflowResult::Ok;
         }
 
-        let diagnostic = buildresult.to_string();
+        let diagnostic = buildresult.limit_lines(100).to_string();
 
         println!("## [BLT] SELECT SOURCE CONTEXT");
         let selection = match self.llm_call.run_context_step_limited(

@@ -55,7 +55,8 @@ pub trait Workflow {
         llm_call: &LlmCall
     ) -> WorkflowResult {
         if buildresult.has_error() {
-            let res: LlmCallResult = llm_call.run(&buildresult.to_string());
+            let diagnostic = buildresult.limit_lines(100).to_string();
+            let res: LlmCallResult = llm_call.run(&diagnostic);
             if res.is_valid() {
                 WorkflowResult::BuildResult(buildresult.clone())
             }

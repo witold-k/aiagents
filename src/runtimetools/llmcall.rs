@@ -37,6 +37,7 @@ pub struct LlmCall<'a> {
     workspacedir: Option<PathBuf>,
     filter: &'a Pathfilter,
     messages: RefCell<AIMessageList>,
+    transient_source_files: RefCell<Vec<PathBuf>>,
     dump: bool,
 }
 
@@ -116,6 +117,7 @@ impl<'a> LlmCall<'a> {
             workspacedir,
             filter,
             messages: RefCell::new(AIMessageList::new(data)),
+            transient_source_files: RefCell::new(Vec::new()),
             dump,
         }
     }
@@ -285,6 +287,7 @@ impl<'a> LlmCall<'a> {
                 println!("## [LLM] SOURCE SELECT loaded: {}", relative_path.display());
             }
             messages.files.push(entry);
+            self.transient_source_files.borrow_mut().push(path);
             loaded += 1;
         }
 
@@ -599,6 +602,14 @@ impl<'a> LlmCall<'a> {
             if result.to_base().is_save() || result.to_base().is_done() {
                 //println!("TOOL: {}", result.to_msg_string(fake_id));
                 messages.clear();
+
+                let transient_source_files = self.transient_source_files.borrow();
+                messages.files.retain(|file| {
+                    !transient_source_files.iter().any(|path| *path == file.path)
+                });
+                drop(transient_source_files);
+                self.transient_source_files.borrow_mut().clear();
+
                 // TODO FIXME update only saved file
                 if let Err(err) = messages.update() {
                     eprintln!("Failed to refresh file context: {err}");
