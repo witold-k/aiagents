@@ -249,7 +249,26 @@ impl<'a> LlmCall<'a> {
             messages.context = context.to_string();
             messages.note.clear();
             messages.focus.clear();
-            messages.to_json()
+
+            if self.dump && keep_source_context {
+                println!(
+                    "## [LLM] ANALYZE SOURCE CONTEXT: {} files, AST {} bytes",
+                    messages.files.len(),
+                    messages.structureinfo.len()
+                );
+                for file in &messages.files {
+                    println!("## [LLM] ANALYZE FILE: {}", file.path.display());
+                }
+            }
+
+            let json = messages.to_json();
+            if self.dump && keep_source_context {
+                println!(
+                    "## [LLM] ANALYZE REQUEST: {} bytes",
+                    json.to_string().len()
+                );
+            }
+            json
         };
 
         if self.dump {
