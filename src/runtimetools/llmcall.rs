@@ -340,6 +340,33 @@ impl<'a> LlmCall<'a> {
         ));
     }
 
+    fn reload_mismatched_save_file(&self, messages: &mut AIMessageList, json: &Value) {
+        let Some(file) = json.get("file").and_then(Value::as_str) else {
+            return;
+        };
+
+        let path = normalize_path(Path::new(file));
+        let mut entry = match FileEntry::from_path(&path) {
+            Ok(entry) => entry,
+            Err(err) => {
+                eprintln!("Failed to create file entry after original mismatch: {err}");
+                return;
+            }
+        };
+        if let Err(err) = entry.load() {
+            eprintln!("Failed to reload file after original mismatch: {err}");
+            return;
+        }
+
+        messages.files.retain(|existing| existing.path != path);
+        messages.files.push(entry);
+
+        let mut transient_source_files = self.transient_source_files.borrow_mut();
+        if !transient_source_files.contains(&path) {
+            transient_source_files.push(path);
+        }
+    }
+
     pub fn load_selected_source_files(
         &self,
         selection: &str,
@@ -758,10 +785,14 @@ impl<'a> LlmCall<'a> {
             }
         }
         else {
+            let error = format!("Error occurred: {}", result.to_json(fake_id));
             messages.append(
-                fake_id, AIMessageType::Tool, result.to_base(),
-                &format!("Error occurred: {}", result.to_json(fake_id))
+                fake_id, AIMessageType::Tool, result.to_base(), &error
             );
+
+            if result.to_base().is_save() && error.contains("original mismatch") {
+                self.reload_mismatched_save_file(&mut messages, &json);
+            }
         }
 
         result
