@@ -9,7 +9,7 @@ use fsscanner::{
     fileentry::FileEntry,
     fsscanner_base::collect_files_all,
     pathfilter::Pathfilter,
-    pathutils::normalize_path,
+    pathutils::{normalize_path, resolve_relaxed_path},
 };
 use crate::agenttools::{
     all_tools::{execute_tool, ToolOutput},
@@ -134,19 +134,15 @@ impl<'a> LlmCall<'a> {
         let build_path = projdir.join("build");
         let target_path = projdir.join("target");
 
-        scan_with_suffix_and_filter(&projdir, &[], filter)
+        let suffixes = config
+            .scanendfilter
+            .iter()
+            .filter_map(|suffix| suffix.strip_prefix('.'))
+            .collect::<Vec<_>>();
+
+        scan_with_suffix_and_filter(&projdir, &suffixes, filter)
             .into_iter()
             .filter(|path| !path.starts_with(&build_path) && !path.starts_with(&target_path))
-            .filter(|path| {
-                let Some(filename) = path.file_name().and_then(|f| f.to_str()) else {
-                    return false;
-                };
-                let Some(suffix) = path.extension().and_then(|s| s.to_str()) else {
-                    return false;
-                };
-                config.scanfullfilter.contains(&filename.to_string())
-                    && config.scanendfilter.contains(&suffix.to_string())
-            })
             .map(|path| path.strip_prefix(&projdir).unwrap_or(&path).to_path_buf())
             .collect()
     }
@@ -223,6 +219,76 @@ impl<'a> LlmCall<'a> {
 
     pub fn clear_context(&self) {
         self.messages.borrow_mut().context.clear();
+    }
+
+    pub fn load_selected_source_files(
+        &self,
+        selection: &str,
+        max_files: usize,
+    ) -> fsscanner::Result<usize> {
+        if self.dump {
+            println!("## [LLM] SOURCE SELECT RAW:");
+            println!("{selection}");
+            println!("## [LLM] SOURCE SELECT FILE LIST:");
+            for path in &self.messages.borrow().filelist {
+                println!("{}", path.display());
+            }
+        }
+
+        let requested = selection
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .take(max_files)
+            .map(PathBuf::from)
+            .collect::<Vec<_>>();
+
+        let mut messages = self.messages.borrow_mut();
+        let mut loaded = 0;
+
+        for requested_path in requested {
+            let Some(path) = resolve_relaxed_path(&self.projdir, &requested_path)
+                .map(|path| normalize_path(&path))
+            else {
+                if self.dump {
+                    println!(
+                        "## [LLM] SOURCE SELECT ignored unknown path: {}",
+                        requested_path.display()
+                    );
+                }
+                continue;
+            };
+
+            let Some(relative_path) = messages
+                .filelist
+                .iter()
+                .find(|relative_path| normalize_path(&self.projdir.join(relative_path)) == path)
+                .cloned()
+            else {
+                if self.dump {
+                    println!(
+                        "## [LLM] SOURCE SELECT resolved outside file list: {} -> {}",
+                        requested_path.display(),
+                        path.display()
+                    );
+                }
+                continue;
+            };
+
+            if messages.files.iter().any(|file| file.path == path) {
+                continue;
+            }
+
+            let mut entry = FileEntry::from_path(&path)?;
+            entry.load()?;
+            if self.dump {
+                println!("## [LLM] SOURCE SELECT loaded: {}", relative_path.display());
+            }
+            messages.files.push(entry);
+            loaded += 1;
+        }
+
+        Ok(loaded)
     }
 
     pub fn run_text_step(&self, prompt: &str, context: &str) -> Result<String, LlmCallResult> {

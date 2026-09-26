@@ -69,6 +69,24 @@ impl<'a> Workflow for BLTWorkflow<'a> {
         }
 
         let diagnostic = buildresult.to_string();
+
+        println!("## [BLT] SELECT SOURCE CONTEXT");
+        let selection = match self.llm_call.run_context_step_limited(
+            WorkflowSteps::CodeFixSelectFiles.get_prompt(),
+            &diagnostic,
+            512,
+        ) {
+            Ok(selection) => selection,
+            Err(result) => return WorkflowResult::LlmCallResult(result),
+        };
+
+        match self.llm_call.load_selected_source_files(&selection, 2) {
+            Ok(count) => println!("## [BLT] SOURCE CONTEXT: {count} files loaded"),
+            Err(err) => {
+                eprintln!("## [BLT] SOURCE CONTEXT ERROR: {err}");
+            },
+        }
+
         println!("## [BLT] ANALYZE FIX");
         let analysis = match self.llm_call.run_context_step_limited(
             WorkflowSteps::FixCodeAnalyze.get_prompt(),
