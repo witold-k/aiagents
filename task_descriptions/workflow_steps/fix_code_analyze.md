@@ -6,6 +6,8 @@ Use the diagnostics and source context to choose a mechanism that is valid under
 
 Name the concrete language or library mechanism. Verify that the proposed member representation can actually exist in every required state.
 
+The repair mechanism must satisfy the required invariant directly. Do not change another type merely to make the diagnosed invalid requirement satisfiable.
+
 Do not revisit or replace the supplied diagnosis. Do not modify files or emit tool calls.
 
 Return only the concise repair design for the patching agent.
