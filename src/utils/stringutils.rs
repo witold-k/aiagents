@@ -61,6 +61,42 @@ pub fn strip_code_fences(input: &str) -> String {
     input.trim().to_string()
 }
 
+pub fn strip_outer_markdown_fence(input: &str) -> String {
+    let input = input.trim();
+    let Some(rest) = input.strip_prefix("```") else {
+        return input.to_string();
+    };
+    let Some(content) = rest.strip_suffix("```") else {
+        return input.to_string();
+    };
+
+    content.trim().to_string()
+}
+
+pub fn extract_known_paths(input: &str, known_paths: &[std::path::PathBuf], max_paths: usize) -> Vec<std::path::PathBuf> {
+    let mut matches = Vec::new();
+
+    for line in input.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        if matches.len() >= max_paths {
+            break;
+        }
+
+        let Some(path) = known_paths
+            .iter()
+            .filter(|path| line.contains(&path.to_string_lossy().replace('\\', "/")))
+            .max_by_key(|path| path.as_os_str().len())
+        else {
+            continue;
+        };
+
+        if !matches.contains(path) {
+            matches.push(path.clone());
+        }
+    }
+
+    matches
+}
+
 pub fn extract_standalone_keyword(input: &str, keywords: &[&str]) -> Option<String> {
     input.lines().find_map(|line| {
         let mut line = line.trim();

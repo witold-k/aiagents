@@ -10,7 +10,7 @@ use fsscanner::{
     fileentry::FileEntry,
     fsscanner_base::collect_files_all,
     pathfilter::Pathfilter,
-    pathutils::{normalize_path, resolve_relaxed_path},
+    pathutils::normalize_path,
 };
 use crate::agenttools::{
     all_tools::{execute_tool, ToolOutput},
@@ -24,7 +24,7 @@ use crate::runtimetools::airequest::{AIRequest, AIRequestResult};
 use crate::utils:: {
     ast::get_ast_string,
     scan_dir::scan_with_suffix_and_filter,
-    stringutils::{strip_code_fences, raw_fence_to_string},
+    stringutils::{extract_known_paths, strip_code_fences, raw_fence_to_string},
 };
 use crate::config::Config;
 use crate::generated_tasks::Tasks;
@@ -334,46 +334,12 @@ impl<'a> LlmCall<'a> {
             }
         }
 
-        let selection = strip_code_fences(selection);
-        let requested = selection
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .take(max_files)
-            .map(PathBuf::from)
-            .collect::<Vec<_>>();
-
         let mut messages = self.messages.borrow_mut();
+        let selected_paths = extract_known_paths(selection, &messages.filelist, max_files);
         let mut loaded = 0;
 
-        for requested_path in requested {
-            let Some(path) = resolve_relaxed_path(&self.projdir, &requested_path)
-                .map(|path| normalize_path(&path))
-            else {
-                if self.dump {
-                    println!(
-                        "## [LLM] SOURCE SELECT ignored unknown path: {}",
-                        requested_path.display()
-                    );
-                }
-                continue;
-            };
-
-            let Some(relative_path) = messages
-                .filelist
-                .iter()
-                .find(|relative_path| normalize_path(&self.projdir.join(relative_path)) == path)
-                .cloned()
-            else {
-                if self.dump {
-                    println!(
-                        "## [LLM] SOURCE SELECT resolved outside file list: {} -> {}",
-                        requested_path.display(),
-                        path.display()
-                    );
-                }
-                continue;
-            };
+        for relative_path in selected_paths {
+            let path = normalize_path(&self.projdir.join(&relative_path));
 
             if messages.files.iter().any(|file| file.path == path) {
                 continue;
@@ -421,7 +387,17 @@ impl<'a> LlmCall<'a> {
         context: &str,
         max_tokens: u32,
     ) -> Result<String, LlmCallResult> {
-        self.run_text_step_with_context(prompt, context, max_tokens, false, 0.6)
+        self.run_text_step_limited_with_temperature(prompt, context, max_tokens, 0.6)
+    }
+
+    pub fn run_text_step_limited_with_temperature(
+        &self,
+        prompt: &str,
+        context: &str,
+        max_tokens: u32,
+        temperature: f32,
+    ) -> Result<String, LlmCallResult> {
+        self.run_text_step_with_context(prompt, context, max_tokens, false, temperature)
     }
 
     fn run_text_step_with_context(
@@ -543,7 +519,7 @@ impl<'a> LlmCall<'a> {
             &self.provider.api_key,
             self.provider.insecure,
             30000,
-            0.6,
+            0.2,
         );
 
         for _ in 0..self.config.max_try_count.max_workflow_fail {

@@ -1,8 +1,10 @@
 #[cfg(test)]
 mod tests {
+    use aiagents::utils::stringutils::extract_known_paths;
     use aiagents::utils::stringutils::iter_fenced_blocks;
     use aiagents::utils::stringutils::raw_fence_to_string;
     use aiagents::utils::stringutils::strip_code_fences;
+    use aiagents::utils::stringutils::strip_outer_markdown_fence;
 
 
     #[test]
@@ -129,6 +131,50 @@ mod tests {
         let result = strip_code_fences(input);
 
         assert_eq!(result, "hello world");
+    }
+
+    #[test]
+    fn strip_outer_markdown_fence_preserves_first_plaintext_line() {
+        let input = "```cpp/src/OpenResult.hpp\ncpp/src/Shmem.hpp\n```";
+        assert_eq!(strip_outer_markdown_fence(input), "cpp/src/OpenResult.hpp\ncpp/src/Shmem.hpp");
+    }
+
+    #[test]
+    fn strip_outer_markdown_fence_returns_raw_text_without_fence() {
+        let input = "  cpp/src/OpenResult.hpp\ncpp/src/Shmem.hpp  ";
+        assert_eq!(strip_outer_markdown_fence(input), "cpp/src/OpenResult.hpp\ncpp/src/Shmem.hpp");
+    }
+
+    #[test]
+    fn extract_known_paths_handles_llm_formatting() {
+        let known = vec![
+            "cpp/src/OpenResult.hpp".into(),
+            "cpp/src/Shmem.cpp".into(),
+            "cpp/src/Shmem.hpp".into(),
+        ];
+        let input = "The relevant files are:\\n1. `/home/witold/project/cpp/src/Shmem.cpp` - where the error occurs\\n2. `/home/witold/project/cpp/src/OpenResult.hpp` - where the result type is defined";
+
+        assert_eq!(
+            extract_known_paths(input, &known, 2),
+            vec![
+                std::path::PathBuf::from("cpp/src/Shmem.cpp"),
+                std::path::PathBuf::from("cpp/src/OpenResult.hpp"),
+            ]
+        );
+    }
+
+    #[test]
+    fn extract_known_paths_prefers_longest_match_and_ignores_duplicates() {
+        let known = vec![
+            "src/OpenResult.hpp".into(),
+            "cpp/src/OpenResult.hpp".into(),
+        ];
+        let input = "`/project/cpp/src/OpenResult.hpp`\\ncpp/src/OpenResult.hpp";
+
+        assert_eq!(
+            extract_known_paths(input, &known, 2),
+            vec![std::path::PathBuf::from("cpp/src/OpenResult.hpp")]
+        );
     }
 
     #[test]
