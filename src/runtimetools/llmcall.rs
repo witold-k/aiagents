@@ -153,7 +153,7 @@ impl<'a> LlmCall<'a> {
                 continue;
             }
 
-            if name == "src" {
+            if matches!(name, "src" | "include" | "lib") {
                 roots.push(path);
                 continue;
             }
@@ -188,9 +188,33 @@ impl<'a> LlmCall<'a> {
             matching_roots
         };
 
-        let structureinfo = selected_roots
+        let mut structure_targets = selected_roots
             .into_iter()
-            .map(|root| get_ast_string(&root.to_string_lossy()))
+            .cloned()
+            .collect::<Vec<_>>();
+
+        if let Ok(entries) = fs::read_dir(&self.projdir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_file() {
+                    continue;
+                }
+
+                let Some(filename) = path.file_name().and_then(|name| name.to_str()) else {
+                    continue;
+                };
+
+                if diagnostic.contains(filename)
+                    && self.messages.borrow().filelist.iter().any(|listed| listed == Path::new(filename))
+                {
+                    structure_targets.push(path);
+                }
+            }
+        }
+
+        let structureinfo = structure_targets
+            .into_iter()
+            .map(|path| get_ast_string(&path.to_string_lossy()))
             .collect::<Vec<_>>()
             .join("\n");
 
