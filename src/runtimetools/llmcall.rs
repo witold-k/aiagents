@@ -402,7 +402,17 @@ impl<'a> LlmCall<'a> {
         context: &str,
         max_tokens: u32,
     ) -> Result<String, LlmCallResult> {
-        self.run_text_step_with_context(prompt, context, max_tokens, true)
+        self.run_context_step_limited_with_temperature(prompt, context, max_tokens, 0.6)
+    }
+
+    pub fn run_context_step_limited_with_temperature(
+        &self,
+        prompt: &str,
+        context: &str,
+        max_tokens: u32,
+        temperature: f32,
+    ) -> Result<String, LlmCallResult> {
+        self.run_text_step_with_context(prompt, context, max_tokens, true, temperature)
     }
 
     pub fn run_text_step_limited(
@@ -411,7 +421,7 @@ impl<'a> LlmCall<'a> {
         context: &str,
         max_tokens: u32,
     ) -> Result<String, LlmCallResult> {
-        self.run_text_step_with_context(prompt, context, max_tokens, false)
+        self.run_text_step_with_context(prompt, context, max_tokens, false, 0.6)
     }
 
     fn run_text_step_with_context(
@@ -420,6 +430,7 @@ impl<'a> LlmCall<'a> {
         context: &str,
         max_tokens: u32,
         keep_source_context: bool,
+        temperature: f32,
     ) -> Result<String, LlmCallResult> {
         let endpoint = self.provider.endpoint.to_string();
         let air = AIRequest::new(
@@ -428,7 +439,7 @@ impl<'a> LlmCall<'a> {
             &self.provider.api_key,
             self.provider.insecure,
             max_tokens,
-            0.6,
+            temperature,
         );
 
         let json_messages = {
@@ -539,7 +550,8 @@ impl<'a> LlmCall<'a> {
             let result = self.analyze(&mut air, request);
 
             match &result {
-                LlmCallResult::ToolResult(tool_result) if tool_result.to_base().is_load() => {}
+                LlmCallResult::ToolResult(tool_result)
+                    if tool_result.to_base().is_load() || tool_result.to_base().is_save() => {}
                 _ => return result,
             }
         }

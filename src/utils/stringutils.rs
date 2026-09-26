@@ -61,6 +61,26 @@ pub fn strip_code_fences(input: &str) -> String {
     input.trim().to_string()
 }
 
+pub fn extract_standalone_keyword(input: &str, keywords: &[&str]) -> Option<String> {
+    input.lines().find_map(|line| {
+        let mut line = line.trim();
+
+        for marker in ["**", "__"] {
+            if line.starts_with(marker)
+                && line.ends_with(marker)
+                && line.len() >= marker.len() * 2
+            {
+                line = line[marker.len()..line.len() - marker.len()].trim();
+            }
+        }
+
+        keywords
+            .iter()
+            .find(|keyword| line == **keyword)
+            .map(|keyword| (*keyword).to_string())
+    })
+}
+
 /// this is unfortunately necessary since some models does not
 /// convert (escape) code correctly into json.
 pub fn raw_fence_to_string(encoded: &str) -> String {
