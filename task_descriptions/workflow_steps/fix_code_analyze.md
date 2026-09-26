@@ -1,13 +1,13 @@
 # Code Fix Design
 
-Design one concrete minimal repair for the supplied diagnosis and required invariant.
+Design one concrete minimal repair for the supplied diagnosis and constraints.
 
 Use the diagnostics and source context to choose a mechanism that is valid under the language rules and still supports the failing use case.
 
 Name the concrete language or library mechanism. Verify that the proposed member representation can actually exist in every required state.
 
-The repair mechanism must satisfy the required invariant directly. Do not change another type merely to make the diagnosed invalid requirement satisfiable.
+You may make reasonable design decisions when the source does not determine a single repair.
 
-Do not revisit or replace the supplied diagnosis. Do not modify files or emit tool calls.
+Do not modify files or emit tool calls.
 
 Return only the concise repair design for the patching agent.
