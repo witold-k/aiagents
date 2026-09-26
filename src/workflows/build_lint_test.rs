@@ -5,6 +5,7 @@
 
 use std::path::Path;
 use crate::config::Config;
+use crate::generated_workflowsteps::WorkflowSteps;
 use crate::runtimetools::{
     llmcall::LlmCall,
     buildresult::Buildresult,
@@ -62,7 +63,32 @@ impl<'a> Workflow for BLTWorkflow<'a> {
     fn execute(
         &self,
     ) -> WorkflowResult {
-        self.execute_build_llm(&self.build(), &self.llm_call)
+        let buildresult = self.build();
+        if !buildresult.has_error() {
+            return WorkflowResult::Ok;
+        }
+
+        let diagnostic = buildresult.to_string();
+        println!("## [BLT] ANALYZE FIX");
+        let analysis = match self.llm_call.run_context_step_limited(
+            WorkflowSteps::FixCodeAnalyze.get_prompt(),
+            &diagnostic,
+            2048,
+        ) {
+            Ok(analysis) => analysis,
+            Err(result) => return WorkflowResult::LlmCallResult(result),
+        };
+
+        println!("## [BLT] FIX PLAN");
+        println!("{analysis}");
+        println!("## [BLT] APPLY FIX");
+        self.llm_call.set_context(format!(
+            "=== FIX ANALYSIS ===\n{analysis}"
+        ));
+
+        let result = self.execute_build_llm(&buildresult, &self.llm_call);
+        println!("## [BLT] APPLY RESULT: {result}");
+        result
     }
 }
 

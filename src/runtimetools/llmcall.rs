@@ -190,18 +190,50 @@ impl<'a> LlmCall<'a> {
         self.messages.borrow_mut().context = context.into();
     }
 
+    pub fn set_task_description(&self, task_description: impl Into<String>) {
+        self.messages.borrow_mut().task_description = task_description.into();
+    }
+
     pub fn clear_context(&self) {
         self.messages.borrow_mut().context.clear();
     }
 
     pub fn run_text_step(&self, prompt: &str, context: &str) -> Result<String, LlmCallResult> {
+        self.run_text_step_limited(prompt, context, 30000)
+    }
+
+    pub fn run_context_step_limited(
+        &self,
+        prompt: &str,
+        context: &str,
+        max_tokens: u32,
+    ) -> Result<String, LlmCallResult> {
+        self.run_text_step_with_context(prompt, context, max_tokens, true)
+    }
+
+    pub fn run_text_step_limited(
+        &self,
+        prompt: &str,
+        context: &str,
+        max_tokens: u32,
+    ) -> Result<String, LlmCallResult> {
+        self.run_text_step_with_context(prompt, context, max_tokens, false)
+    }
+
+    fn run_text_step_with_context(
+        &self,
+        prompt: &str,
+        context: &str,
+        max_tokens: u32,
+        keep_source_context: bool,
+    ) -> Result<String, LlmCallResult> {
         let endpoint = self.provider.endpoint.to_string();
         let air = AIRequest::new(
             &self.provider.model,
             endpoint,
             &self.provider.api_key,
             self.provider.insecure,
-            30000,
+            max_tokens,
             0.6,
         );
 
@@ -210,9 +242,11 @@ impl<'a> LlmCall<'a> {
             messages.clear();
             messages.task_description = prompt.to_string();
             messages.subtask.clear();
-            messages.structureinfo.clear();
+            if !keep_source_context {
+                messages.structureinfo.clear();
+                messages.files.clear();
+            }
             messages.context = context.to_string();
-            messages.files.clear();
             messages.note.clear();
             messages.focus.clear();
             messages.to_json()
