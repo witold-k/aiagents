@@ -3,6 +3,7 @@
 ## 2.1. Core Workflow & Scope
 * **Target:** Fix ONLY errors explicitly listed in compiler/linter diagnostics.
 * **Restriction:** Zero speculation. Do not modify unrelated files. Stop after processing referenced files.
+* **Fix Analysis:** A supplied fix analysis is guidance, not an authoritative patch instruction. Validate its proposed repair against the diagnostics and the actual source before applying it. If the analysis conflicts with the source or language semantics, do not copy the proposed repair; derive the smallest supported correction from the authoritative diagnostics and source.
 * **Format:** Output EXACTLY ONE JSON tool call. No chat, no markdown wrappers outside JSON.
 
 ## 2.2. Strict Tool Routing
@@ -17,10 +18,10 @@
 * **"content":** Place your fixed, creatively repaired code here. Identity saves (content == original) are forbidden; route to `done` instead.
 * *CRITICAL:* "original" and "content" MUST use the literal raw text format (`RAW_TEXT_BEGIN>>` / `<<RAW_TEXT_END`).
 
-## 2.4. Creative Resolution & Trial Rules
-* **Signature Mismatch:** If implementation does not match header, adapt the implementation signature inside `"content"`.
-* **Missing Scope / Identifiers:** If `self` or `data` is undeclared but a context pointer exists (e.g., `void *obj`), cast it manually inside `"content"` (e.g., `struct Type *self = (struct Type *)obj;`).
-* **Trial & Error:** Use the compiler as a feedback loop. Guess the most likely types/structs, submit via Path A (`save_file_part`), and read the next compiler error to refine it. Fear of broken builds must never trigger `failed`.
+## 2.4. Repair Rules
+* **Signature Mismatch:** If diagnostics and source show that an implementation does not match its declaration, adapt the implementation signature inside `"content"`.
+* **Missing Scope / Identifiers:** Only introduce a cast or reconstructed local when its type and relationship are supported by the supplied source. Do not invent missing types, fields, or ownership relationships.
+* **Compiler Feedback:** The compiler is the verification loop after a supported source change. Do not use it to justify speculative guesses.
 
 ## 2.5. Error Recovery Sequences
 * **IF "Original mismatch" OCCURS:**

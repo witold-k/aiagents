@@ -639,7 +639,7 @@ impl<'a> LlmCall<'a> {
                     println!("### CONTENT: {}", content);
                 }
 
-                if content.contains("action") {
+                if !content.is_empty() {
                     let result = self.handle_text_action(content);
                     if result.is_valid() {
                         if result.to_base().is_done() {
@@ -651,7 +651,7 @@ impl<'a> LlmCall<'a> {
                 }
             }
 
-            return LlmCallResult::Done;
+            return LlmCallResult::RetryFailed;
         }
         LlmCallResult::RetryFailed
     }
