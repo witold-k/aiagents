@@ -155,7 +155,10 @@ pub fn main() {
     let combined_task = format!("{}\n{}\n{}", lang_str, task_str, ws_str);
 
     let task = task_opt.unwrap_or(Tasks::FixCode);
-    let src_path: PathBuf = ".".into();
+    let src_path = std::env::current_dir().unwrap_or_else(|err| {
+        eprintln!("failed to determine current directory: {err}");
+        std::process::exit(1);
+    });
     let ws_path = {
         if is_workspace {
             args.workspace.clone().unwrap()

@@ -4,6 +4,7 @@
 use serde_json::Value;
 use std::cell::RefCell;
 use std::fmt;
+use std::fs;
 use std::path::{Path, PathBuf};
 use fsscanner::{
     fileentry::FileEntry,
@@ -98,7 +99,7 @@ impl<'a> LlmCall<'a> {
             task_id,
             task_description,
             subtask,
-            structureinfo: Self::create_structure_info(),
+            structureinfo: String::new(),
             context: String::new(),
             filelist: Self::create_file_list(config, &projdir, filter),
             files: Self::create_files_info(
@@ -110,6 +111,11 @@ impl<'a> LlmCall<'a> {
             focus: "".into(),
             faults: None,
         };
+        if dump {
+            println!("## [LLM] PROJECT DIR: {}", normalize_path(&projdir).display());
+            println!("## [LLM] FILE LIST COUNT: {}", data.filelist.len());
+        }
+
         Self {
             config,
             provider,
@@ -122,9 +128,73 @@ impl<'a> LlmCall<'a> {
         }
     }
 
-    // FIXME should be moved to utils and used in workflow (eg. BLT)
-    pub fn create_structure_info() -> String {
-        get_ast_string("src")
+    const SOURCE_ROOT_SEARCH_DEPTH: usize = 4;
+
+    fn find_source_roots(dir: &Path, depth: usize, roots: &mut Vec<PathBuf>) {
+        if depth > Self::SOURCE_ROOT_SEARCH_DEPTH {
+            return;
+        }
+
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+
+            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+
+            if matches!(name, "build" | "target" | ".git") {
+                continue;
+            }
+
+            if name == "src" {
+                roots.push(path);
+                continue;
+            }
+
+            Self::find_source_roots(&path, depth + 1, roots);
+        }
+    }
+
+    pub fn update_structure_info(&self, diagnostic: &str) {
+        let mut roots = Vec::new();
+        Self::find_source_roots(&self.projdir, 0, &mut roots);
+
+        if self.dump {
+            println!("## [LLM] SOURCE ROOT SEARCH: {}", self.projdir.display());
+            println!("## [LLM] SOURCE ROOT SEARCH FOUND: {}", roots.len());
+            for root in &roots {
+                println!("## [LLM] SOURCE ROOT: {}", root.display());
+            }
+        }
+
+        let matching_roots = roots
+            .iter()
+            .filter(|root| {
+                let relative = root.strip_prefix(&self.projdir).unwrap_or(root);
+                diagnostic.contains(&relative.to_string_lossy().replace('\\', "/"))
+            })
+            .collect::<Vec<_>>();
+
+        let selected_roots = if matching_roots.is_empty() {
+            roots.iter().collect::<Vec<_>>()
+        } else {
+            matching_roots
+        };
+
+        let structureinfo = selected_roots
+            .into_iter()
+            .map(|root| get_ast_string(&root.to_string_lossy()))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        self.messages.borrow_mut().structureinfo = structureinfo;
     }
 
     pub fn create_file_list(
@@ -142,11 +212,14 @@ impl<'a> LlmCall<'a> {
             .filter_map(|suffix| suffix.strip_prefix('.'))
             .collect::<Vec<_>>();
 
-        scan_with_suffix_and_filter(&projdir, &suffixes, filter)
+        let scanned = scan_with_suffix_and_filter(&projdir, &suffixes, filter);
+        let filelist = scanned
             .into_iter()
             .filter(|path| !path.starts_with(&build_path) && !path.starts_with(&target_path))
             .map(|path| path.strip_prefix(&projdir).unwrap_or(&path).to_path_buf())
-            .collect()
+            .collect::<Vec<_>>();
+
+        filelist
     }
 
     // FIXME should be moved to utils and used in workflow (eg. BLT)
@@ -420,6 +493,29 @@ impl<'a> LlmCall<'a> {
             let result = self.analyze(&mut air, request);
             if result.is_done() || !result.is_valid() {
                 return result;
+            }
+        }
+
+        LlmCallResult::RetryFailed
+    }
+
+    pub fn run_fix_step(&self, request: &str) -> LlmCallResult {
+        let endpoint = self.provider.endpoint.to_string();
+        let mut air = AIRequest::new(
+            &self.provider.model,
+            endpoint,
+            &self.provider.api_key,
+            self.provider.insecure,
+            30000,
+            0.6,
+        );
+
+        for _ in 0..self.config.max_try_count.max_workflow_fail {
+            let result = self.analyze(&mut air, request);
+
+            match &result {
+                LlmCallResult::ToolResult(tool_result) if tool_result.to_base().is_load() => {}
+                _ => return result,
             }
         }
 

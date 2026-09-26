@@ -69,6 +69,7 @@ impl<'a> Workflow for BLTWorkflow<'a> {
         }
 
         let diagnostic = buildresult.limit_lines(100).to_string();
+        self.llm_call.update_structure_info(&diagnostic);
 
         println!("## [BLT] SELECT SOURCE CONTEXT");
         let selection = match self.llm_call.run_context_step_limited(
@@ -104,9 +105,15 @@ impl<'a> Workflow for BLTWorkflow<'a> {
             "=== FIX ANALYSIS ===\n{analysis}"
         ));
 
-        let result = self.execute_build_llm(&buildresult, &self.llm_call);
+        let diagnostic = buildresult.limit_lines(100).to_string();
+        let result = self.llm_call.run_fix_step(&diagnostic);
         println!("## [BLT] APPLY RESULT: {result}");
-        result
+
+        if result.is_valid() {
+            WorkflowResult::BuildResult(buildresult)
+        } else {
+            WorkflowResult::LlmCallResult(result)
+        }
     }
 }
 
