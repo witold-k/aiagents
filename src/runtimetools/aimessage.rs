@@ -209,7 +209,7 @@ impl AIMessageList {
 
     pub fn update(&mut self) -> fsscanner::Result<()> {
         for file in &mut self.files {
-            file.reload()?;
+            file.load()?;
         }
         Ok(())
     }
