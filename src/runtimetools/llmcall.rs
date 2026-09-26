@@ -350,7 +350,7 @@ impl<'a> LlmCall<'a> {
             return;
         };
 
-        if let Err(err) = entry.reload() {
+        if let Err(err) = entry.load() {
             eprintln!("Failed to reload file after original mismatch: {err}");
         }
     }
