@@ -136,18 +136,10 @@ impl<'a> SaveFilePart<'a> {
             }
         };
 
-        let note = match payload.get("note").and_then(|v| v.as_str()) {
-            Some(note) => note,
-            None => {
-                return Err(SaveFilePartError {
-                    err_type: SaveFilePartErrorType::DecodeError,
-                    err_info: format!(
-                        "invalid note: {}",
-                        payload.get("note").unwrap_or(&Value::Null),
-                    ),
-                });
-            }
-        };
+        let note = payload
+            .get("note")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
 
         Ok(SaveFilePart {
             filter,

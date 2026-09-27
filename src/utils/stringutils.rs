@@ -97,6 +97,25 @@ pub fn extract_known_paths(input: &str, known_paths: &[std::path::PathBuf], max_
     matches
 }
 
+pub fn extract_standalone_choice(input: &str, max_choice: usize) -> Option<usize> {
+    input.lines().find_map(|line| {
+        let mut line = line.trim();
+
+        for marker in ["**", "__", "`"] {
+            if line.starts_with(marker)
+                && line.ends_with(marker)
+                && line.len() >= marker.len() * 2
+            {
+                line = line[marker.len()..line.len() - marker.len()].trim();
+            }
+        }
+
+        line.parse::<usize>()
+            .ok()
+            .filter(|choice| (1..=max_choice).contains(choice))
+    })
+}
+
 pub fn extract_standalone_keyword(input: &str, keywords: &[&str]) -> Option<String> {
     input.lines().find_map(|line| {
         let mut line = line.trim();

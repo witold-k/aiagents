@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use aiagents::utils::stringutils::extract_known_paths;
+    use aiagents::utils::stringutils::extract_standalone_choice;
     use aiagents::utils::stringutils::iter_fenced_blocks;
     use aiagents::utils::stringutils::raw_fence_to_string;
     use aiagents::utils::stringutils::strip_code_fences;
@@ -175,6 +176,19 @@ mod tests {
             extract_known_paths(input, &known, 2),
             vec![std::path::PathBuf::from("cpp/src/OpenResult.hpp")]
         );
+    }
+
+    #[test]
+    fn extract_standalone_choice_accepts_plain_and_marked_numbers() {
+        assert_eq!(extract_standalone_choice("2", 3), Some(2));
+        assert_eq!(extract_standalone_choice("**3**", 3), Some(3));
+        assert_eq!(extract_standalone_choice("`1`", 3), Some(1));
+    }
+
+    #[test]
+    fn extract_standalone_choice_rejects_out_of_range_and_prose() {
+        assert_eq!(extract_standalone_choice("4", 3), None);
+        assert_eq!(extract_standalone_choice("Design 2", 3), None);
     }
 
     #[test]

@@ -6,7 +6,7 @@
 use std::path::Path;
 use crate::config::Config;
 use crate::generated_workflowsteps::WorkflowSteps;
-use crate::utils::stringutils::extract_standalone_keyword;
+use crate::utils::stringutils::{extract_standalone_choice, extract_standalone_keyword};
 use crate::runtimetools::{
     llmcall::{LlmCall, LlmCallResult},
     buildresult::Buildresult,
@@ -107,9 +107,10 @@ impl<'a> Workflow for BLTWorkflow<'a> {
         println!("## [BLT] DESIGN FIX");
         const MAX_ANALYSIS_ATTEMPTS: usize = 3;
         let mut design_request = format!(
-            "=== DIAGNOSIS AND REQUIRED INVARIANT ===\n{diagnosis}\n\n=== ORIGINAL DIAGNOSTIC ===\n{diagnostic}"
+            "=== DIAGNOSIS AND CONSTRAINTS ===\n{diagnosis}\n\n=== ORIGINAL DIAGNOSTIC ===\n{diagnostic}"
         );
         let mut fix_history = Vec::new();
+        let mut fix_designs = Vec::new();
 
         for attempt in 1..=MAX_ANALYSIS_ATTEMPTS {
             let analysis = match self.llm_call.run_context_step_limited_with_temperature(
@@ -127,7 +128,7 @@ impl<'a> Workflow for BLTWorkflow<'a> {
 
             println!("## [BLT] CRITIQUE FIX {attempt}");
             let critique_request = format!(
-                "=== DIAGNOSIS AND REQUIRED INVARIANT ===\n{diagnosis}\n\n=== CANDIDATE FIX DESIGN ===\n{analysis}\n\n=== ORIGINAL DIAGNOSTIC ===\n{diagnostic}"
+                "=== DIAGNOSIS AND CONSTRAINTS ===\n{diagnosis}\n\n=== CANDIDATE FIX DESIGN ===\n{analysis}\n\n=== ORIGINAL DIAGNOSTIC ===\n{diagnostic}"
             );
             let critique = match self.llm_call.run_context_step_limited_with_temperature(
                 WorkflowSteps::FixCodeCritique.get_prompt(),
@@ -151,6 +152,7 @@ impl<'a> Workflow for BLTWorkflow<'a> {
                 },
             };
 
+            fix_designs.push(analysis.clone());
             fix_history.push(format!(
                 "=== FIX DESIGN {attempt} [{decision}] ===\n{analysis}\n\n=== CRITIQUE {attempt} ===\n{critique}"
             ));
@@ -160,26 +162,32 @@ impl<'a> Workflow for BLTWorkflow<'a> {
             }
 
             design_request = format!(
-                "=== DIAGNOSIS AND REQUIRED INVARIANT ===\n{diagnosis}\n\n=== ORIGINAL DIAGNOSTIC ===\n{diagnostic}\n\n=== REJECTED DESIGN CRITIQUE ===\n{critique}\n\nProduce a different repair mechanism that satisfies the same diagnosis and invariant."
+                "=== DIAGNOSIS AND CONSTRAINTS ===\n{diagnosis}\n\n=== ORIGINAL DIAGNOSTIC ===\n{diagnostic}\n\n=== REJECTED DESIGN CRITIQUE ===\n{critique}\n\nProduce a different repair mechanism that satisfies the same diagnosis and constraints."
             );
         }
 
         println!("## [BLT] SYNTHESIZE FIX");
         let synthesis_request = format!(
-            "=== DIAGNOSIS AND REQUIRED INVARIANT ===\n{diagnosis}\n\n=== ORIGINAL DIAGNOSTIC ===\n{diagnostic}\n\n=== FIX DESIGN HISTORY ===\n{}",
+            "=== DIAGNOSIS AND CONSTRAINTS ===\n{diagnosis}\n\n=== ORIGINAL DIAGNOSTIC ===\n{diagnostic}\n\n=== FIX DESIGN HISTORY ===\n{}",
             fix_history.join("\n\n")
         );
-        let final_plan = match self.llm_call.run_context_step_limited_with_temperature(
+        let synthesis = match self.llm_call.run_context_step_limited_with_temperature(
             WorkflowSteps::FixCodeSynthesize.get_prompt(),
             &synthesis_request,
-            1024,
+            64,
             0.1,
         ) {
-            Ok(plan) => plan,
+            Ok(selection) => selection,
             Err(result) => return WorkflowResult::LlmCallResult(result),
         };
 
-        println!("## [BLT] FINAL FIX PLAN");
+        let Some(choice) = extract_standalone_choice(&synthesis, fix_designs.len()) else {
+            println!("## [BLT] SYNTHESIS INVALID RESPONSE");
+            return WorkflowResult::LlmCallResult(LlmCallResult::RetryFailed);
+        };
+        let final_plan = &fix_designs[choice - 1];
+
+        println!("## [BLT] FINAL FIX PLAN: DESIGN {choice}");
         println!("{final_plan}");
 
         println!("## [BLT] APPLY FIX");

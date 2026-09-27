@@ -320,6 +320,54 @@ impl<'a> LlmCall<'a> {
         self.messages.borrow_mut().context.clear();
     }
 
+    fn record_completed_edit(messages: &mut AIMessageList, json: &Value) {
+        let Some(file) = json.get("file").and_then(Value::as_str) else {
+            return;
+        };
+        let Some(original) = json.get("original").and_then(Value::as_str) else {
+            return;
+        };
+        let Some(content) = json.get("content").and_then(Value::as_str) else {
+            return;
+        };
+
+        let reverse_edit = format!(
+            "\n\n=== COMPLETED EDIT ===\n\\
+             File: {file}\n\\
+             This edit was successfully applied. Do not revert it while completing the remaining fix plan.\n\\
+             BEFORE:\n{content}\n\\
+             AFTER:\n{original}"
+        );
+
+        if let Some(pos) = messages.context.rfind(&reverse_edit) {
+            messages.context.replace_range(pos..pos + reverse_edit.len(), "");
+            return;
+        }
+
+        messages.context.push_str(&format!(
+            "\n\n=== COMPLETED EDIT ===\n\\
+             File: {file}\n\\
+             This edit was successfully applied. Do not revert it while completing the remaining fix plan.\n\\
+             BEFORE:\n{original}\n\\
+             AFTER:\n{content}"
+        ));
+    }
+
+    fn reload_mismatched_save_file(&self, messages: &mut AIMessageList, json: &Value) {
+        let Some(file) = json.get("file").and_then(Value::as_str) else {
+            return;
+        };
+
+        let path = normalize_path(Path::new(file));
+        let Some(entry) = messages.files.iter_mut().find(|entry| entry.path == path) else {
+            return;
+        };
+
+        if let Err(err) = entry.load() {
+            eprintln!("Failed to reload file after original mismatch: {err}");
+        }
+    }
+
     pub fn load_selected_source_files(
         &self,
         selection: &str,
@@ -512,6 +560,19 @@ impl<'a> LlmCall<'a> {
     }
 
     pub fn run_fix_step(&self, request: &str) -> LlmCallResult {
+        let original_task_description = {
+            let mut messages = self.messages.borrow_mut();
+            let original = messages.task_description.clone();
+            if let Some(start) = messages.task_description.find("# Code-Fixing Agent") {
+                let apply_description = &messages.task_description[start..];
+                let end = apply_description
+                    .find("# 1. GENERAL RULES")
+                    .unwrap_or(apply_description.len());
+                messages.task_description = apply_description[..end].trim_end().to_string();
+            }
+            original
+        };
+
         let endpoint = self.provider.endpoint.to_string();
         let mut air = AIRequest::new(
             &self.provider.model,
@@ -522,17 +583,27 @@ impl<'a> LlmCall<'a> {
             0.2,
         );
 
+        let mut final_result = LlmCallResult::RetryFailed;
         for _ in 0..self.config.max_try_count.max_workflow_fail {
             let result = self.analyze(&mut air, request);
 
             match &result {
                 LlmCallResult::ToolResult(tool_result)
                     if tool_result.to_base().is_load() || tool_result.to_base().is_save() => {}
-                _ => return result,
+                _ => {
+                    final_result = result;
+                    break;
+                },
             }
         }
 
-        LlmCallResult::RetryFailed
+        {
+            let mut messages = self.messages.borrow_mut();
+            messages.task_description = original_task_description;
+            messages.context.clear();
+        }
+
+        final_result
     }
 
     pub fn run(&self, request: &str) -> LlmCallResult {
@@ -629,6 +700,9 @@ impl<'a> LlmCall<'a> {
 
                 if !content.is_empty() {
                     let result = self.handle_text_action(content);
+                    if result.to_base().is_failed() {
+                        return LlmCallResult::ToolResult(result);
+                    }
                     if result.is_valid() {
                         if result.to_base().is_done() {
                             return LlmCallResult::Done;
@@ -703,12 +777,26 @@ impl<'a> LlmCall<'a> {
         if self.dump {
             println!("### CONTENT FOR TOOL: {}", cleancode);
         }
+
+        if json.get("action").and_then(Value::as_str) == Some("save_file_part")
+            && json.get("original").and_then(Value::as_str)
+                == json.get("content").and_then(Value::as_str)
+        {
+            let message = "No change was made because original and content are identical. If the fix plan is complete, use done.";
+            messages.append(fake_id, AIMessageType::Model, AIToolType::Failed, &cleancode);
+            messages.append(fake_id, AIMessageType::Tool, AIToolType::Failed, message);
+            return ToolOutput::Failed(Failed::from_string(message.to_string()).execute());
+        }
+
         let result = execute_tool(&json, &self.projdir, self.filter);
 
         messages.append(fake_id, AIMessageType::Model, result.to_base(), &cleancode);
 
         if result.is_valid() {
             if result.to_base().is_save() || result.to_base().is_done() {
+                if result.to_base().is_save() {
+                    Self::record_completed_edit(&mut messages, &json);
+                }
                 //println!("TOOL: {}", result.to_msg_string(fake_id));
                 messages.clear();
 
@@ -732,10 +820,14 @@ impl<'a> LlmCall<'a> {
             }
         }
         else {
+            let error = format!("Error occurred: {}", result.to_json(fake_id));
             messages.append(
-                fake_id, AIMessageType::Tool, result.to_base(),
-                &format!("Error occurred: {}", result.to_json(fake_id))
+                fake_id, AIMessageType::Tool, result.to_base(), &error
             );
+
+            if result.to_base().is_save() && error.contains("original mismatch") {
+                self.reload_mismatched_save_file(&mut messages, &json);
+            }
         }
 
         result
