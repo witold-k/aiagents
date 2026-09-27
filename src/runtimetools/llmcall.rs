@@ -48,7 +48,7 @@ pub enum LlmCallResult {
     Done,
     RetryFailed,
     ToolResult(ToolOutput),
-    RequestError(AIRequestResult),
+    RequestError(Box<AIRequestResult>),
     ToolError(ToolOutput)
 }
 
@@ -238,13 +238,11 @@ impl<'a> LlmCall<'a> {
             .collect::<Vec<_>>();
 
         let scanned = scan_with_suffix_and_filter(&projdir, &suffixes, filter);
-        let filelist = scanned
+        scanned
             .into_iter()
             .filter(|path| !path.starts_with(&build_path) && !path.starts_with(&target_path))
             .map(|path| path.strip_prefix(&projdir).unwrap_or(&path).to_path_buf())
-            .collect::<Vec<_>>();
-
-        filelist
+            .collect::<Vec<_>>()
     }
 
     // FIXME should be moved to utils and used in workflow (eg. BLT)
@@ -514,7 +512,7 @@ impl<'a> LlmCall<'a> {
 
         let response = match air.request(&json_messages.to_string()) {
             AIRequestResult::Ok(value) => value,
-            err => return Err(LlmCallResult::RequestError(err)),
+            err => return Err(LlmCallResult::RequestError(Box::new(err))),
         };
 
         if self.dump {
@@ -667,7 +665,7 @@ impl<'a> LlmCall<'a> {
 
                 match air.request(&json_messages.to_string()) {
                     AIRequestResult::Ok(val) => val,
-                    err => return LlmCallResult::RequestError(err),
+                    err => return LlmCallResult::RequestError(Box::new(err)),
                 }
             };
 
@@ -809,7 +807,7 @@ impl<'a> LlmCall<'a> {
 
                 let transient_source_files = self.transient_source_files.borrow();
                 messages.files.retain(|file| {
-                    !transient_source_files.iter().any(|path| *path == file.path)
+                    !transient_source_files.contains(&file.path)
                 });
                 drop(transient_source_files);
                 self.transient_source_files.borrow_mut().clear();

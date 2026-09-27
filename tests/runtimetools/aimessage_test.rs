@@ -35,6 +35,8 @@ mod tests {
             subtask: Vec::new(),
             structureinfo: String::new(),
             context: String::new(),
+
+            filelist: Vec::new(),
             files: Vec::new(),
             focus: String::new(),
             faults: None,
@@ -264,6 +266,8 @@ mod tests {
             subtask: vec!["subtask 1".to_string()],
             structureinfo: "AST".to_string(),
             context: String::new(),
+
+            filelist: Vec::new(),
             files: Vec::new(),
             focus: "focus".to_string(),
             faults: Some("fault".to_string()),

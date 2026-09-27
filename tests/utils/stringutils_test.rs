@@ -153,7 +153,7 @@ mod tests {
             "cpp/src/Shmem.cpp".into(),
             "cpp/src/Shmem.hpp".into(),
         ];
-        let input = "The relevant files are:\\n1. `/home/witold/project/cpp/src/Shmem.cpp` - where the error occurs\\n2. `/home/witold/project/cpp/src/OpenResult.hpp` - where the result type is defined";
+        let input = "The relevant files are:\n1. `/home/witold/project/cpp/src/Shmem.cpp` - where the error occurs\n2. `/home/witold/project/cpp/src/OpenResult.hpp` - where the result type is defined";
 
         assert_eq!(
             extract_known_paths(input, &known, 2),
@@ -170,7 +170,7 @@ mod tests {
             "src/OpenResult.hpp".into(),
             "cpp/src/OpenResult.hpp".into(),
         ];
-        let input = "`/project/cpp/src/OpenResult.hpp`\\ncpp/src/OpenResult.hpp";
+        let input = "`/project/cpp/src/OpenResult.hpp`\ncpp/src/OpenResult.hpp";
 
         assert_eq!(
             extract_known_paths(input, &known, 2),
