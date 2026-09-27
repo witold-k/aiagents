@@ -37,6 +37,7 @@ pub enum SaveFilePartErrorType {
     ReadFailed,
     WriteFailed,
     OriginalMismatch,
+    NoChange,
 }
 
 #[derive(Clone, Debug)]
@@ -288,6 +289,9 @@ impl SaveFilePartError {
 
             SaveFilePartErrorType::OriginalMismatch =>
                 format!("[save_file] ERROR: original mismatch: {}", self.err_info),
+
+            SaveFilePartErrorType::NoChange =>
+                format!("[save_file] NO CHANGE: {}", self.err_info),
         };
 
         json!({

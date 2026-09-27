@@ -16,6 +16,7 @@ use crate::agenttools::{
     all_tools::{execute_tool, ToolOutput},
     aitooltype::AIToolType,
     failed::*,
+    save_file_replace_part::{SaveFilePartError, SaveFilePartErrorType},
 };
 use crate::aimessageid::AIMessageId;
 use crate::config::AIProvider;
@@ -778,17 +779,23 @@ impl<'a> LlmCall<'a> {
             println!("### CONTENT FOR TOOL: {}", cleancode);
         }
 
-        if json.get("action").and_then(Value::as_str) == Some("save_file_part")
+        let result = if json.get("action").and_then(Value::as_str) == Some("save_file_part")
             && json.get("original").and_then(Value::as_str)
                 == json.get("content").and_then(Value::as_str)
         {
-            let message = "No change was made because original and content are identical. If the fix plan is complete, use done.";
-            messages.append(fake_id, AIMessageType::Model, AIToolType::Failed, &cleancode);
-            messages.append(fake_id, AIMessageType::Tool, AIToolType::Failed, message);
-            return ToolOutput::Failed(Failed::from_string(message.to_string()).execute());
-        }
-
-        let result = execute_tool(&json, &self.projdir, self.filter);
+            let file = json
+                .get("file")
+                .and_then(Value::as_str)
+                .map(Path::new)
+                .unwrap_or(&self.projdir);
+            ToolOutput::SaveFilePart(Err(SaveFilePartError::new(
+                SaveFilePartErrorType::NoChange,
+                file,
+                "original and content are identical; if the fix plan is complete, use done",
+            )))
+        } else {
+            execute_tool(&json, &self.projdir, self.filter)
+        };
 
         messages.append(fake_id, AIMessageType::Model, result.to_base(), &cleancode);
 

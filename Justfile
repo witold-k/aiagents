@@ -29,6 +29,7 @@ cover-text:
 
 install:
 	cargo build --release
+	cargo clippy --release
 	cp {{target_dir}}/release/aifix ~/bin
 
 fix:
