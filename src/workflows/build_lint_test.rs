@@ -171,11 +171,10 @@ impl<'a> Workflow for BLTWorkflow<'a> {
             "=== DIAGNOSIS AND CONSTRAINTS ===\n{diagnosis}\n\n=== ORIGINAL DIAGNOSTIC ===\n{diagnostic}\n\n=== FIX DESIGN HISTORY ===\n{}",
             fix_history.join("\n\n")
         );
-        let synthesis = match self.llm_call.run_context_step_limited_with_temperature(
+        let synthesis = match self.llm_call.run_context_choice_step(
             WorkflowSteps::FixCodeSynthesize.get_prompt(),
             &synthesis_request,
-            64,
-            0.1,
+            fix_designs.len(),
         ) {
             Ok(selection) => selection,
             Err(result) => return WorkflowResult::LlmCallResult(result),

@@ -17,6 +17,8 @@ pub struct AIRequest {
     insecure: bool,
     max_tokens: u32,
     temperature: f32,
+    #[serde(default)]
+    grammar: Option<String>,
 }
 
 pub enum AIRequestResult {
@@ -55,7 +57,13 @@ impl AIRequest {
             insecure,
             max_tokens,
             temperature,
+            grammar: None,
         }
+    }
+
+    pub fn with_grammar(mut self, grammar: impl Into<String>) -> Self {
+        self.grammar = Some(grammar.into());
+        self
     }
 
     fn create_agent(&self) -> Agent {
@@ -75,12 +83,16 @@ impl AIRequest {
             Err(err) => return AIRequestResult::DeserFailed(self.clone(), err.to_string()),
         };
 
-        let json_payload = serde_json::json!({
+        let mut json_payload = serde_json::json!({
             "model": self.model,
             "messages": messages,
             "max_tokens": self.max_tokens,
             "temperature": self.temperature,
         });
+
+        if let Some(grammar) = &self.grammar {
+            json_payload["grammar"] = grammar.clone().into();
+        }
 
         let agent = self.create_agent();
 

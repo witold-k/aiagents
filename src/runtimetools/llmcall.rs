@@ -425,7 +425,27 @@ impl<'a> LlmCall<'a> {
         max_tokens: u32,
         temperature: f32,
     ) -> Result<String, LlmCallResult> {
-        self.run_text_step_with_context(prompt, context, max_tokens, true, temperature)
+        self.run_text_step_with_context(prompt, context, max_tokens, true, temperature, None)
+    }
+
+    pub fn run_context_choice_step(
+        &self,
+        prompt: &str,
+        context: &str,
+        choice_count: usize,
+    ) -> Result<String, LlmCallResult> {
+        if choice_count == 0 {
+            return Err(LlmCallResult::RetryFailed);
+        }
+
+        let grammar = format!(
+            "root ::= {}",
+            (1..=choice_count)
+                .map(|choice| format!("\"{choice}\""))
+                .collect::<Vec<_>>()
+                .join(" | ")
+        );
+        self.run_text_step_with_context(prompt, context, 8, true, 0.0, Some(&grammar))
     }
 
     pub fn run_text_step_limited(
@@ -444,7 +464,7 @@ impl<'a> LlmCall<'a> {
         max_tokens: u32,
         temperature: f32,
     ) -> Result<String, LlmCallResult> {
-        self.run_text_step_with_context(prompt, context, max_tokens, false, temperature)
+        self.run_text_step_with_context(prompt, context, max_tokens, false, temperature, None)
     }
 
     fn run_text_step_with_context(
@@ -454,9 +474,10 @@ impl<'a> LlmCall<'a> {
         max_tokens: u32,
         keep_source_context: bool,
         temperature: f32,
+        grammar: Option<&str>,
     ) -> Result<String, LlmCallResult> {
         let endpoint = self.provider.endpoint.to_string();
-        let air = AIRequest::new(
+        let mut air = AIRequest::new(
             &self.provider.model,
             endpoint,
             &self.provider.api_key,
@@ -464,6 +485,9 @@ impl<'a> LlmCall<'a> {
             max_tokens,
             temperature,
         );
+        if let Some(grammar) = grammar {
+            air = air.with_grammar(grammar);
+        }
 
         let json_messages = {
             let mut messages = self.messages.borrow().clone();
