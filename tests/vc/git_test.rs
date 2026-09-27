@@ -1,36 +1,36 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Witold Kaminski
 
-use aiagents::vc::git::Git;
+use crate::git_fixture::TestRepository;
 
 #[test]
 fn reads_repository_history() {
-    let git = Git::new(env!("CARGO_MANIFEST_DIR"));
+    let repository = TestRepository::new();
+    let git = repository.git();
 
     assert!(git.is_repository().unwrap());
-    assert_eq!(
-        git.repository_root().unwrap(),
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-    );
+    assert_eq!(git.repository_root().unwrap(), repository.path());
 
     let commits = git.commits(None, Some("HEAD")).unwrap();
-    assert!(!commits.is_empty());
+    assert_eq!(commits.len(), 2);
     assert!(!commits[0].hash.is_empty());
     assert!(!commits[0].subject.is_empty());
 }
 
-
 #[test]
 fn reads_diff_between_refs() {
-    let git = Git::new(env!("CARGO_MANIFEST_DIR"));
+    let repository = TestRepository::new();
+    let git = repository.git();
     let diff = git.diff("HEAD~1", "HEAD").unwrap();
 
     assert!(!diff.is_empty());
+    assert!(diff.contains("Cargo.toml"));
 }
 
 #[test]
 fn lists_and_reads_files_at_ref() {
-    let git = Git::new(env!("CARGO_MANIFEST_DIR"));
+    let repository = TestRepository::new();
+    let git = repository.git();
     let files = git.files("HEAD").unwrap();
 
     assert!(files.iter().any(|path| path == std::path::Path::new("Cargo.toml")));

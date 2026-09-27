@@ -2,11 +2,13 @@
 // Copyright (c) 2026 Witold Kaminski
 
 use aiagents::runtimetools::releasedoc::ReleaseDocContext;
-use aiagents::vc::git::Git;
+
+use crate::git_fixture::TestRepository;
 
 #[test]
 fn collects_release_context_between_refs() {
-    let git = Git::new(env!("CARGO_MANIFEST_DIR"));
+    let repository = TestRepository::new();
+    let git = repository.git();
     let context = ReleaseDocContext::between(&git, "HEAD~1", "HEAD").unwrap();
 
     assert_eq!(context.from.as_deref(), Some("HEAD~1"));
@@ -21,17 +23,23 @@ fn collects_release_context_between_refs() {
 
 #[test]
 fn collects_release_context_since_latest_tag() {
-    let git = Git::new(env!("CARGO_MANIFEST_DIR"));
+    let repository = TestRepository::new();
+    let git = repository.git();
     let context = ReleaseDocContext::since_latest_tag(&git).unwrap();
 
+    assert_eq!(context.from.as_deref(), Some("v0.1.0"));
     assert_eq!(context.to, "HEAD");
-    assert!(!context.files.is_empty());
+    assert_eq!(context.commits.len(), 1);
+    assert!(context
+        .files
+        .iter()
+        .any(|file| file.path == std::path::Path::new("Cargo.toml")));
 }
-
 
 #[test]
 fn formats_release_context_for_llm() {
-    let git = Git::new(env!("CARGO_MANIFEST_DIR"));
+    let repository = TestRepository::new();
+    let git = repository.git();
     let context = ReleaseDocContext::between(&git, "HEAD~1", "HEAD").unwrap();
     let llm_context = context.to_llm_context();
 
@@ -42,10 +50,10 @@ fn formats_release_context_for_llm() {
     assert!(llm_context.contains("--- FILE: Cargo.toml ---"));
 }
 
-
 #[test]
 fn compact_context_lists_files_without_embedding_contents() {
-    let git = Git::new(env!("CARGO_MANIFEST_DIR"));
+    let repository = TestRepository::new();
+    let git = repository.git();
     let context = ReleaseDocContext::between(&git, "HEAD~1", "HEAD").unwrap();
     let llm_context = context.to_llm_summary_context();
 
