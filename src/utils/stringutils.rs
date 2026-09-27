@@ -110,6 +110,10 @@ pub fn extract_standalone_choice(input: &str, max_choice: usize) -> Option<usize
             }
         }
 
+        if line.len() >= 6 && line[..6].eq_ignore_ascii_case("design") {
+            line = line[6..].trim();
+        }
+
         line.parse::<usize>()
             .ok()
             .filter(|choice| (1..=max_choice).contains(choice))

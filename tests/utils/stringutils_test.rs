@@ -179,16 +179,21 @@ mod tests {
     }
 
     #[test]
-    fn extract_standalone_choice_accepts_plain_and_marked_numbers() {
+    fn extract_standalone_choice_accepts_plain_marked_and_design_prefixed_numbers() {
         assert_eq!(extract_standalone_choice("2", 3), Some(2));
         assert_eq!(extract_standalone_choice("**3**", 3), Some(3));
         assert_eq!(extract_standalone_choice("`1`", 3), Some(1));
+        assert_eq!(extract_standalone_choice("Design 2", 3), Some(2));
+        assert_eq!(extract_standalone_choice("DESIGN 1", 3), Some(1));
+        assert_eq!(extract_standalone_choice("**Design 3**", 3), Some(3));
     }
 
     #[test]
-    fn extract_standalone_choice_rejects_out_of_range_and_prose() {
+    fn extract_standalone_choice_rejects_out_of_range_and_explanatory_prose() {
         assert_eq!(extract_standalone_choice("4", 3), None);
-        assert_eq!(extract_standalone_choice("Design 2", 3), None);
+        assert_eq!(extract_standalone_choice("Design 4", 3), None);
+        assert_eq!(extract_standalone_choice("I prefer Design 2", 3), None);
+        assert_eq!(extract_standalone_choice("Design 2 because it is simpler", 3), None);
     }
 
     #[test]
