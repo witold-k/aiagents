@@ -52,6 +52,7 @@ impl<'a> AIAgentLoop<'a> {
                 eprintln!("FAIL: {}", wr);
                 if wr.request_failure() {
                     println!("{}", wr);
+                    break;
                 }
             }
             else {

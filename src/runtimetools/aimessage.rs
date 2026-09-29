@@ -202,9 +202,13 @@ impl AIMessageList {
         }
     }
 
+    pub fn clear_history(&mut self) {
+        self.messages.clear();
+    }
+
     pub fn clear(&mut self) {
         self.faults = None;
-        self.messages.clear();
+        self.clear_history();
     }
 
     pub fn update(&mut self) -> fsscanner::Result<()> {

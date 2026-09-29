@@ -3,6 +3,7 @@
 
 // This file contains functions for building, linting, and testing a project.
 
+use std::cell::RefCell;
 use std::path::Path;
 use crate::config::Config;
 use crate::generated_workflowsteps::WorkflowSteps;
@@ -25,6 +26,7 @@ pub struct BLTWorkflow<'a> {
     bc: Buildcommand,
     projdir: &'a Path,
     targetdir: &'a Path,
+    previous_repair: RefCell<Option<String>>,
 }
 
 impl<'a> BLTWorkflow<'a> {
@@ -35,7 +37,14 @@ impl<'a> BLTWorkflow<'a> {
         projdir: &'a Path,
         targetdir: &'a Path,
     ) -> Self {
-        BLTWorkflow { config, llm_call, bc: bs.build_cmd(projdir, targetdir), projdir, targetdir }
+        BLTWorkflow {
+            config,
+            llm_call,
+            bc: bs.build_cmd(projdir, targetdir),
+            projdir,
+            targetdir,
+            previous_repair: RefCell::new(None),
+        }
     }
 
     /// returns build error, if any
@@ -72,6 +81,14 @@ impl<'a> Workflow for BLTWorkflow<'a> {
         let diagnostic = buildresult.limit_lines(100).to_string();
         self.llm_call.update_structure_info(&diagnostic);
 
+        let previous_repair = self.previous_repair.borrow().clone();
+        let diagnostic_context = match &previous_repair {
+            Some(previous) => format!(
+                "=== PREVIOUS REPAIR ===\n{previous}\n\n=== CURRENT BUILD RESULT ===\n{diagnostic}"
+            ),
+            None => diagnostic.clone(),
+        };
+
         println!("## [BLT] SELECT SOURCE CONTEXT");
         let selection = match self.llm_call.run_context_step_limited_with_temperature(
             WorkflowSteps::CodeFixSelectFiles.get_prompt(),
@@ -93,7 +110,7 @@ impl<'a> Workflow for BLTWorkflow<'a> {
         println!("## [BLT] DIAGNOSE FIX");
         let diagnosis = match self.llm_call.run_context_step_limited_with_temperature(
             WorkflowSteps::FixCodeDiagnose.get_prompt(),
-            &diagnostic,
+            &diagnostic_context,
             1024,
             0.1,
         ) {
@@ -107,7 +124,7 @@ impl<'a> Workflow for BLTWorkflow<'a> {
         println!("## [BLT] DESIGN FIX");
         const MAX_ANALYSIS_ATTEMPTS: usize = 3;
         let mut design_request = format!(
-            "=== DIAGNOSIS AND CONSTRAINTS ===\n{diagnosis}\n\n=== ORIGINAL DIAGNOSTIC ===\n{diagnostic}"
+            "=== DIAGNOSIS AND CONSTRAINTS ===\n{diagnosis}\n\n=== REPAIR CONTEXT ===\n{diagnostic_context}"
         );
         let mut fix_history = Vec::new();
         let mut fix_designs = Vec::new();
@@ -123,12 +140,13 @@ impl<'a> Workflow for BLTWorkflow<'a> {
                 Err(result) => return WorkflowResult::LlmCallResult(result),
             };
 
+
             println!("## [BLT] FIX DESIGN {attempt}");
             println!("{analysis}");
 
             println!("## [BLT] CRITIQUE FIX {attempt}");
             let critique_request = format!(
-                "=== DIAGNOSIS AND CONSTRAINTS ===\n{diagnosis}\n\n=== CANDIDATE FIX DESIGN ===\n{analysis}\n\n=== ORIGINAL DIAGNOSTIC ===\n{diagnostic}"
+                "=== DIAGNOSIS AND CONSTRAINTS ===\n{diagnosis}\n\n=== CANDIDATE FIX DESIGN ===\n{analysis}\n\n=== REPAIR CONTEXT ===\n{diagnostic_context}"
             );
             let critique = match self.llm_call.run_context_step_limited_with_temperature(
                 WorkflowSteps::FixCodeCritique.get_prompt(),
@@ -162,13 +180,13 @@ impl<'a> Workflow for BLTWorkflow<'a> {
             }
 
             design_request = format!(
-                "=== DIAGNOSIS AND CONSTRAINTS ===\n{diagnosis}\n\n=== ORIGINAL DIAGNOSTIC ===\n{diagnostic}\n\n=== REJECTED DESIGN CRITIQUE ===\n{critique}\n\nProduce a different repair mechanism that satisfies the same diagnosis and constraints."
+                "=== DIAGNOSIS AND CONSTRAINTS ===\n{diagnosis}\n\n=== REPAIR CONTEXT ===\n{diagnostic_context}\n\n=== REJECTED DESIGN CRITIQUE ===\n{critique}\n\nProduce a different repair mechanism that satisfies the same diagnosis and constraints."
             );
         }
 
         println!("## [BLT] SYNTHESIZE FIX");
         let synthesis_request = format!(
-            "=== DIAGNOSIS AND CONSTRAINTS ===\n{diagnosis}\n\n=== ORIGINAL DIAGNOSTIC ===\n{diagnostic}\n\n=== FIX DESIGN HISTORY ===\n{}",
+            "=== DIAGNOSIS AND CONSTRAINTS ===\n{diagnosis}\n\n=== REPAIR CONTEXT ===\n{diagnostic_context}\n\n=== FIX DESIGN HISTORY ===\n{}",
             fix_history.join("\n\n")
         );
         let synthesis = match self.llm_call.run_context_choice_step(
@@ -202,6 +220,16 @@ impl<'a> Workflow for BLTWorkflow<'a> {
         let diagnostic = buildresult.limit_lines(100).to_string();
         let result = self.llm_call.run_fix_step(&diagnostic);
         println!("## [BLT] APPLY RESULT: {result}");
+
+        if result.is_valid() {
+            let completed_edits = self.llm_call.completed_edits();
+            if !completed_edits.is_empty() {
+                *self.previous_repair.borrow_mut() = Some(format!(
+                    "Selected plan:\n{final_plan}\n\nApplied edits:\n{}",
+                    completed_edits.join("\n\n")
+                ));
+            }
+        }
 
         if result.is_valid() {
             WorkflowResult::BuildResult(buildresult)

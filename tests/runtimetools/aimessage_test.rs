@@ -498,6 +498,23 @@ mod tests {
         assert_eq!(list.note, "note");
     }
 
+    #[test]
+    fn clear_history_removes_only_messages() {
+        let mut list = empty_list();
+        list.messages.push(message(
+            1,
+            AIMessageType::Model,
+            AIToolType::LoadFile,
+            "assistant response",
+        ));
+        list.faults = Some("fault".to_string());
+
+        list.clear_history();
+
+        assert!(list.messages.is_empty());
+        assert_eq!(list.faults.as_deref(), Some("fault"));
+    }
+
     // -----------------------------------------------------------------------
     // cut_to_depth
     // -----------------------------------------------------------------------

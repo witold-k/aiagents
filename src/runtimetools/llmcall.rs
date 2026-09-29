@@ -40,6 +40,7 @@ pub struct LlmCall<'a> {
     filter: &'a Pathfilter,
     messages: RefCell<AIMessageList>,
     transient_source_files: RefCell<Vec<PathBuf>>,
+    completed_edits: RefCell<Vec<String>>,
     dump: bool,
 }
 
@@ -125,6 +126,7 @@ impl<'a> LlmCall<'a> {
             filter,
             messages: RefCell::new(AIMessageList::new(data)),
             transient_source_files: RefCell::new(Vec::new()),
+            completed_edits: RefCell::new(Vec::new()),
             dump,
         }
     }
@@ -317,6 +319,13 @@ impl<'a> LlmCall<'a> {
 
     pub fn clear_context(&self) {
         self.messages.borrow_mut().context.clear();
+    }
+
+    fn completed_edit_summary(json: &Value) -> Option<String> {
+        let file = json.get("file").and_then(Value::as_str)?;
+        let original = json.get("original").and_then(Value::as_str)?;
+        let content = json.get("content").and_then(Value::as_str)?;
+        Some(format!("File: {file}\nBEFORE:\n{original}\nAFTER:\n{content}"))
     }
 
     fn record_completed_edit(messages: &mut AIMessageList, json: &Value) {
@@ -583,9 +592,14 @@ impl<'a> LlmCall<'a> {
     }
 
     pub fn run_fix_step(&self, request: &str) -> LlmCallResult {
+        const MAX_TOOL_ACTIONS_AFTER_EDIT: usize = 4;
+
+        self.completed_edits.borrow_mut().clear();
+
         let original_task_description = {
             let mut messages = self.messages.borrow_mut();
             let original = messages.task_description.clone();
+            messages.clear_history();
             if let Some(start) = messages.task_description.find("# Code-Fixing Agent") {
                 let apply_description = &messages.task_description[start..];
                 let end = apply_description
@@ -607,12 +621,35 @@ impl<'a> LlmCall<'a> {
         );
 
         let mut final_result = LlmCallResult::RetryFailed;
+        let mut applied_edit = false;
+        let mut tool_actions_after_edit = 0;
         for _ in 0..self.config.max_try_count.max_workflow_fail {
             let result = self.analyze(&mut air, request);
 
             match &result {
                 LlmCallResult::ToolResult(tool_result)
-                    if tool_result.to_base().is_load() || tool_result.to_base().is_save() => {}
+                    if tool_result.to_base().is_load() || tool_result.to_base().is_save() =>
+                {
+                    if tool_result.to_base().is_save() && tool_result.is_valid() {
+                        applied_edit = true;
+                        tool_actions_after_edit = 0;
+                        self.messages.borrow_mut().context.push_str(
+                            "\n\n=== APPLY STATUS ===\n\
+                             At least one planned edit has been applied. If the selected fix plan is complete, return done now.\n\
+                             Load or save another file only when the selected fix plan explicitly requires another edit."
+                        );
+                    } else if applied_edit {
+                        tool_actions_after_edit += 1;
+                        if tool_actions_after_edit >= MAX_TOOL_ACTIONS_AFTER_EDIT {
+                            final_result = LlmCallResult::RetryFailed;
+                            break;
+                        }
+                    }
+                },
+                LlmCallResult::Done if !applied_edit => {
+                    final_result = LlmCallResult::RetryFailed;
+                    break;
+                },
                 _ => {
                     final_result = result;
                     break;
@@ -627,6 +664,10 @@ impl<'a> LlmCall<'a> {
         }
 
         final_result
+    }
+
+    pub fn completed_edits(&self) -> Vec<String> {
+        self.completed_edits.borrow().clone()
     }
 
     pub fn run(&self, request: &str) -> LlmCallResult {
@@ -784,7 +825,12 @@ impl<'a> LlmCall<'a> {
         let mut json = match json_result {
             Ok(v) => v,
             Err(e) => {
-                // your error processing logic
+                // Preserve the model response before adding user-side error feedback.
+                // Chat templates that require alternating roles would otherwise see
+                // consecutive user messages on the retry.
+                messages.append(
+                    fake_id, AIMessageType::Model, AIToolType::Failed, &cleancode
+                );
                 eprintln!("[handle_text_action] JSON parse error: {}\n>>>>CODE:\n{}\n<<<<", e, cleancode);
                 messages.append(
                     fake_id, AIMessageType::Tool, AIToolType::Failed,
@@ -825,6 +871,9 @@ impl<'a> LlmCall<'a> {
             if result.to_base().is_save() || result.to_base().is_done() {
                 if result.to_base().is_save() {
                     Self::record_completed_edit(&mut messages, &json);
+                    if let Some(edit) = Self::completed_edit_summary(&json) {
+                        self.completed_edits.borrow_mut().push(edit);
+                    }
                 }
                 //println!("TOOL: {}", result.to_msg_string(fake_id));
                 messages.clear();
