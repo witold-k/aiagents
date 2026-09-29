@@ -29,7 +29,7 @@ pub struct SaveFilePart<'a> {
     note: String
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum SaveFilePartErrorType {
     DecodeError,
     Forbidden,
@@ -265,6 +265,10 @@ impl fmt::Display for SaveFilePartError {
 impl std::error::Error for SaveFilePartError {}
 
 impl SaveFilePartError {
+    pub fn is_original_mismatch(&self) -> bool {
+        self.err_type == SaveFilePartErrorType::OriginalMismatch
+    }
+
     pub fn new(err_type: SaveFilePartErrorType, path: &Path, info: &str) -> Self {
         let err_info = format!("{}: {}", path.to_string_lossy(), info);
         Self { err_type, err_info }

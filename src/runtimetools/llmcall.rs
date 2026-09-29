@@ -366,7 +366,13 @@ impl<'a> LlmCall<'a> {
             return;
         };
 
-        let path = normalize_path(Path::new(file));
+        let file = Path::new(file);
+        let resolved = if file.is_absolute() {
+            file.to_path_buf()
+        } else {
+            self.projdir.join(file)
+        };
+        let path = normalize_path(&resolved);
         let Some(entry) = messages.files.iter_mut().find(|entry| entry.path == path) else {
             return;
         };
@@ -591,7 +597,7 @@ impl<'a> LlmCall<'a> {
         LlmCallResult::RetryFailed
     }
 
-    pub fn run_fix_step(&self, request: &str) -> LlmCallResult {
+    pub fn run_fix_step(&self, _request: &str) -> LlmCallResult {
         const MAX_TOOL_ACTIONS_AFTER_EDIT: usize = 4;
 
         self.completed_edits.borrow_mut().clear();
@@ -624,7 +630,7 @@ impl<'a> LlmCall<'a> {
         let mut applied_edit = false;
         let mut tool_actions_after_edit = 0;
         for _ in 0..self.config.max_try_count.max_workflow_fail {
-            let result = self.analyze(&mut air, request);
+            let result = self.analyze(&mut air, "");
 
             match &result {
                 LlmCallResult::ToolResult(tool_result)
@@ -898,13 +904,23 @@ impl<'a> LlmCall<'a> {
             }
         }
         else {
+            let original_mismatch = matches!(
+                &result,
+                ToolOutput::SaveFilePart(Err(err)) if err.is_original_mismatch()
+            );
             let error = format!("Error occurred: {}", result.to_json(fake_id));
             messages.append(
                 fake_id, AIMessageType::Tool, result.to_base(), &error
             );
 
-            if result.to_base().is_save() && error.contains("original mismatch") {
+            if original_mismatch {
                 self.reload_mismatched_save_file(&mut messages, &json);
+                messages.clear_history();
+                messages.context.push_str(
+                    "\n\n=== APPLY RECOVERY ===\n\
+                     The previous save_file_part was not applied because its original block no longer matches the file.\n\
+                     The file has been reloaded with its current contents. Use that current source for the next edit."
+                );
             }
         }
 
