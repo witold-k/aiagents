@@ -37,6 +37,10 @@ listing, and scanning files and directories. File access is restricted by
 configured read/write filters and resolved paths are checked to prevent
 escaping those boundaries through symlinks.
 
+The iterative Build/Lint/Test repair flow is described in
+[BLT Execute Workflow](docs/blt_execute.md), including the boundary between
+LLM-driven repair decisions and deterministic validation.
+
 The project is usable for experiments today, but it is not intended to be a
 general-purpose autonomous coding platform or a security sandbox. The current
 focus is local execution with smaller models and deliberately simple,

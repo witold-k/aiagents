@@ -47,6 +47,12 @@ impl<'a> BLTWorkflow<'a> {
         }
     }
 
+    fn debug(&self, message: impl std::fmt::Display) {
+        if self.llm_call.debug_enabled() {
+            println!("{message}");
+        }
+    }
+
     /// returns build error, if any
     pub fn build(&self) -> Buildresult {
         println!("## [BLT] BUILD");
@@ -89,7 +95,7 @@ impl<'a> Workflow for BLTWorkflow<'a> {
             None => diagnostic.clone(),
         };
 
-        println!("## [BLT] SELECT SOURCE CONTEXT");
+        self.debug("## [BLT] SELECT SOURCE CONTEXT");
         let selection = match self.llm_call.run_context_step_limited_with_temperature(
             WorkflowSteps::CodeFixSelectFiles.get_prompt(),
             &diagnostic,
@@ -101,13 +107,13 @@ impl<'a> Workflow for BLTWorkflow<'a> {
         };
 
         match self.llm_call.load_selected_source_files(&selection, 2) {
-            Ok(count) => println!("## [BLT] SOURCE CONTEXT: {count} files loaded"),
+            Ok(count) => self.debug(format!("## [BLT] SOURCE CONTEXT: {count} files loaded")),
             Err(err) => {
                 eprintln!("## [BLT] SOURCE CONTEXT ERROR: {err}");
             },
         }
 
-        println!("## [BLT] DIAGNOSE FIX");
+        self.debug("## [BLT] DIAGNOSE FIX");
         let diagnosis = match self.llm_call.run_context_step_limited_with_temperature(
             WorkflowSteps::FixCodeDiagnose.get_prompt(),
             &diagnostic_context,
@@ -118,10 +124,10 @@ impl<'a> Workflow for BLTWorkflow<'a> {
             Err(result) => return WorkflowResult::LlmCallResult(result),
         };
 
-        println!("## [BLT] DIAGNOSIS");
-        println!("{diagnosis}");
+        self.debug("## [BLT] DIAGNOSIS");
+        self.debug(&diagnosis);
 
-        println!("## [BLT] DESIGN FIX");
+        self.debug("## [BLT] DESIGN FIX");
         const MAX_ANALYSIS_ATTEMPTS: usize = 3;
         let mut design_request = format!(
             "=== DIAGNOSIS AND CONSTRAINTS ===\n{diagnosis}\n\n=== REPAIR CONTEXT ===\n{diagnostic_context}"
@@ -141,10 +147,10 @@ impl<'a> Workflow for BLTWorkflow<'a> {
             };
 
 
-            println!("## [BLT] FIX DESIGN {attempt}");
-            println!("{analysis}");
+            self.debug(format!("## [BLT] FIX DESIGN {attempt}"));
+            self.debug(&analysis);
 
-            println!("## [BLT] CRITIQUE FIX {attempt}");
+            self.debug(format!("## [BLT] CRITIQUE FIX {attempt}"));
             let critique_request = format!(
                 "=== DIAGNOSIS AND CONSTRAINTS ===\n{diagnosis}\n\n=== CANDIDATE FIX DESIGN ===\n{analysis}\n\n=== REPAIR CONTEXT ===\n{diagnostic_context}"
             );
@@ -158,8 +164,8 @@ impl<'a> Workflow for BLTWorkflow<'a> {
                 Err(result) => return WorkflowResult::LlmCallResult(result),
             };
 
-            println!("## [BLT] CRITIQUE RESULT {attempt}");
-            println!("{critique}");
+            self.debug(format!("## [BLT] CRITIQUE RESULT {attempt}"));
+            self.debug(&critique);
 
             let decision = match extract_standalone_keyword(&critique, &["ACCEPT", "REJECT"]).as_deref() {
                 Some("ACCEPT") => "ACCEPT",
@@ -184,7 +190,7 @@ impl<'a> Workflow for BLTWorkflow<'a> {
             );
         }
 
-        println!("## [BLT] SYNTHESIZE FIX");
+        self.debug("## [BLT] SYNTHESIZE FIX");
         let synthesis_request = format!(
             "=== DIAGNOSIS AND CONSTRAINTS ===\n{diagnosis}\n\n=== REPAIR CONTEXT ===\n{diagnostic_context}\n\n=== FIX DESIGN HISTORY ===\n{}",
             fix_history.join("\n\n")
@@ -204,10 +210,10 @@ impl<'a> Workflow for BLTWorkflow<'a> {
         };
         let final_plan = &fix_designs[choice - 1];
 
-        println!("## [BLT] FINAL FIX PLAN: DESIGN {choice}");
-        println!("{final_plan}");
+        self.debug(format!("## [BLT] FINAL FIX PLAN: DESIGN {choice}"));
+        self.debug(final_plan);
 
-        println!("## [BLT] APPLY FIX");
+        self.debug("## [BLT] APPLY FIX");
         self.llm_call.set_context(format!(
             "=== FINAL FIX PLAN ===\n{final_plan}\n\n\
              === APPLY INSTRUCTIONS ===\n\
@@ -219,7 +225,7 @@ impl<'a> Workflow for BLTWorkflow<'a> {
 
         let diagnostic = buildresult.limit_lines(100).to_string();
         let result = self.llm_call.run_fix_step(&diagnostic);
-        println!("## [BLT] APPLY RESULT: {result}");
+        self.debug(format!("## [BLT] APPLY RESULT: {result}"));
 
         if result.is_valid() {
             let completed_edits = self.llm_call.completed_edits();

@@ -309,6 +309,10 @@ impl<'a> LlmCall<'a> {
         self.config.max_try_count.max_workflow_fail
     }
 
+    pub fn debug_enabled(&self) -> bool {
+        self.dump
+    }
+
     pub fn set_context(&self, context: impl Into<String>) {
         self.messages.borrow_mut().context = context.into();
     }
