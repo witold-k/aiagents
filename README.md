@@ -31,15 +31,23 @@ Implemented workflows include:
 * generate and review documentation
 * generate initial test code
 * set up builds and transpile code
+* generate release documentation from Git history
 
 The runtime provides controlled file operations for loading, saving, replacing,
 listing, and scanning files and directories. File access is restricted by
 configured read/write filters and resolved paths are checked to prevent
 escaping those boundaries through symlinks.
 
-The iterative Build/Lint/Test repair flow is described in
-[BLT Execute Workflow](docs/blt_execute.md), including the boundary between
-LLM-driven repair decisions and deterministic validation.
+The Build/Lint/Test repair workflow is deliberately split into constrained
+steps. On a failure it selects relevant source context, diagnoses the problem,
+creates and critiques candidate repair designs, synthesizes a final plan, and
+only then applies edits. Deterministic build/lint/test execution remains the
+validation boundary. See [BLT Execute Workflow](docs/blt_execute.md).
+
+Release documentation is also implemented as a multi-step workflow. It derives
+context from Git history, by default since the latest tag, analyzes the changes,
+and writes generated release notes to `RELEASE_NOTES.md`. Explicit first/last
+revisions can be supplied when a different release range is needed.
 
 The project is usable for experiments today, but it is not intended to be a
 general-purpose autonomous coding platform or a security sandbox. The current
@@ -122,6 +130,7 @@ The current task system includes operations such as:
 * `write_module_doc`
 * `write_block_doc`
 * `setup_build`
+* `release_doc`
 
 Task descriptions are kept separate from the Rust implementation and are
 converted into generated Rust metadata during the build.
@@ -141,8 +150,11 @@ The following areas are therefore the current focus:
   3. post-documentation using an LLM and interactive Q/A with the developer,
      but without direct runtime interaction; communication happens through
      static text files
-  4. automatic summaries of Git history
+  4. generated release notes and Git-history summaries, with further
+     experiments around useful context and output quality
 * automatic tests, or at least initial test stubs
+* experiments with local indexing and retrieval for larger source/document
+  context
 
 Independent of these goals, automatic code-fix runs are already supported,
 but they are not the main objective.
@@ -155,4 +167,3 @@ but they are not the main objective.
 Future underlying component:
 
 * [TokenDB](https://github.com/witold-k/token_db)
-
