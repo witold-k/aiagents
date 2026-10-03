@@ -30,7 +30,7 @@ Implemented workflows include:
 * generate and review code
 * generate and review documentation
 * generate initial test code
-* set up builds and transpile code
+* set up builds
 * generate release documentation from Git history
 
 The runtime provides controlled file operations for loading, saving, replacing,
@@ -125,7 +125,7 @@ The current task system includes operations such as:
 * `write_test_code`
 * `review_code`
 * `review_doc`
-* `transpile_code`
+* `transpile_code` (task description exists; workflow not yet implemented)
 * `write_item_doc`
 * `write_module_doc`
 * `write_block_doc`

@@ -219,7 +219,7 @@ dependencies = [
 [[package]]
 name = "fsscanner"
 version = "0.4.0"
-source = "git+https://github.com/witold-k/fsscanner?rev=a5920ddf9354b18fa0bf82b8474f0872cbe19c85#a5920ddf9354b18fa0bf82b8474f0872cbe19c85"
+source = "git+https://github.com/witold-k/fsscanner?rev=57d24691489d5ccbb9b6587faca97ed8429055a5#57d24691489d5ccbb9b6587faca97ed8429055a5"
 dependencies = [
  "crossbeam-channel",
  "serde",
