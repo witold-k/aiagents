@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Witold Kaminski
 
 use serde::{Deserialize, Serialize};
+use crate::pathfragments::expand_current_path_fragments;
 use std::{
     env,
     fs,
@@ -308,6 +309,15 @@ impl Default for Config {
 }
 
 impl Config {
+    /// Expand configured filesystem roots for runtime use.
+    /// The original configuration file is not modified.
+    pub fn with_expanded_filters(mut self) -> Result<Self, String> {
+        for filter in self.writefilter.iter_mut().chain(self.readfilter.iter_mut()) {
+            *filter = expand_current_path_fragments(filter)?;
+        }
+        Ok(self)
+    }
+
     pub fn load(path: &Path) -> Result<Self, ConfigError> {
         let data = fs::read_to_string(path)
             .map_err(|source| ConfigError::Read {
@@ -323,7 +333,7 @@ impl Config {
 
         config.validate()?;
 
-        Ok(config)
+        config.with_expanded_filters().map_err(ConfigError::Invalid)
     }
 
     pub fn save(&self, path: &Path) -> Result<(), ConfigError> {
@@ -365,7 +375,7 @@ impl Config {
 
         if Self::ensure_exist(&path)? {
             println!("Created default config at {:?}", path);
-            Ok(Self::default())
+            Self::default().with_expanded_filters().map_err(ConfigError::Invalid)
         } else {
             Self::load(&path)
         }

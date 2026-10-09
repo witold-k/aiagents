@@ -18,6 +18,10 @@ Apache-2.0 (C) Witold Kaminski 2026
 Please follow the instructions in:
 [Quickstart](QUICKSTART.md)
 
+## Configuration
+
+See [Configuration reference](docs/README_CONFIG.md) for the JSON settings, file-access filters, and path placeholders.
+
 ## Current state
 
 `aifix` is a working experimental runtime for automated AI-assisted software
