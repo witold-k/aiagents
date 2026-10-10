@@ -9,10 +9,10 @@ build: config
 fix:
     git checkout -- .
     just config
-    aifix -l cpp -t fix_code -b {{target_dir}} -f {{current_dir}} -f {{current_dir}}/..
+    aifix -l cpp -t fix_code -m "Keep the Dummy constructor private and the factory API unchanged. Fix the outdated tests to call the factory, handle the optional result, and verify both successful and failed creation." -b {{target_dir}} -f {{current_dir}} -f {{current_dir}}/..
 fixd:
     git checkout -- .
     just config
-    aifix -d -l cpp -t fix_code -b {{target_dir}} -f {{current_dir}} -f {{current_dir}}/..
+    aifix -d -l cpp -t fix_code -m "Keep the Dummy constructor private and the factory API unchanged. Fix the outdated tests to call the factory, handle the optional result, and verify both successful and failed creation." -b {{target_dir}} -f {{current_dir}} -f {{current_dir}}/..
 clean:
     rm -rf {{target_dir}}
