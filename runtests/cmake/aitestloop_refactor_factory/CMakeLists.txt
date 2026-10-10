@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 4.0)
+project(aitestloop_refactor_factory LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 20)
+add_executable(factory_test tests/factory_test.cpp)
+target_include_directories(factory_test PRIVATE include)
+enable_testing()
+add_test(NAME factory_test COMMAND factory_test)

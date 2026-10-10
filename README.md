@@ -6,21 +6,22 @@
 
 ## aiagents::aifix - experimental agentic runtime
 
-A small Rust runtime for AI-assisted software engineering ... or maybe other
-tasks.
+A small, local-first Rust runtime for AI-assisted software engineering.
+It combines build/test feedback, constrained tool access and multi-step
+LLM workflows.
 
-## License
+## Getting started
 
-Apache-2.0 (C) Witold Kaminski 2026
+See the [Quickstart](QUICKSTART.md) for installation, configuration and
+running your first `aifix` task.
 
-## Quickstart
-
-Please follow the instructions in:
-[Quickstart](QUICKSTART.md)
+For deliberately broken end-to-end examples across Cargo, CMake, Meson and
+Maven, see the [runtime tests](runtests/README.md).
 
 ## Configuration
 
-See [Configuration reference](docs/README_CONFIG.md) for the JSON settings, file-access filters, and path placeholders.
+See the [configuration reference](docs/README_CONFIG.md) for JSON settings,
+file-access filters and path placeholders.
 
 ## Current state
 
@@ -78,21 +79,10 @@ every coding task.
 
 ## Security model
 
-### Simplicity
-
-Well, this is a security feature of its own.
-
-### General
-
-Except for file filters that restrict reading and writing arbitrary data,
-there are no additional security mechanisms. This is by design.
-
-The main design goal is to keep the runtime simple and small. If additional
-isolation is required, execute `aifix` inside Docker, Podman, a VM, or even on
-a dedicated isolated PC.
-
-`aifix` is a single binary without additional runtime libraries. It only needs
-HTTPS access to an LLM service.
+`aifix` provides file-access restrictions, but **is not a security sandbox**.
+Generated changes and build commands can execute code in the local environment.
+For untrusted repositories or stronger isolation, run it in a container, VM or
+other restricted environment. It requires access to a configured LLM endpoint.
 
 ### Repository access
 
@@ -115,8 +105,8 @@ then `.git` is automatically hidden from the execution environment.
 Git operations are therefore exposed only through controlled runtime
 functionality rather than by giving generated code direct access to `.git`.
 
-This prevents generated code from directly modifying Git metadata, hooks,
-refs, or objects.
+This restricts direct access to Git metadata through the exposed file tools;
+it does not protect against commands executed by build tools or other programs.
 
 ## Tasks
 
@@ -171,3 +161,7 @@ but they are not the main objective.
 Future underlying component:
 
 * [TokenDB](https://github.com/witold-k/token_db)
+
+## License
+
+Apache-2.0 © 2026 Witold Kaminski. See [LICENSE](LICENSE).

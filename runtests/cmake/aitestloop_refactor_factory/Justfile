@@ -1,0 +1,18 @@
+current_dir := justfile_directory()
+target_dir := current_dir / 'build'
+default: build
+config:
+    cmake -S {{current_dir}} -B {{target_dir}} -G Ninja
+build: config
+    cmake --build {{target_dir}}
+    ctest --test-dir {{target_dir}} --output-on-failure
+fix:
+    git checkout -- .
+    just config
+    aifix -l cpp -t fix_code -b {{target_dir}} -f {{current_dir}} -f {{current_dir}}/..
+fixd:
+    git checkout -- .
+    just config
+    aifix -d -l cpp -t fix_code -b {{target_dir}} -f {{current_dir}} -f {{current_dir}}/..
+clean:
+    rm -rf {{target_dir}}

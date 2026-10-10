@@ -1,0 +1,12 @@
+current_dir := justfile_directory()
+default: build
+build:
+    mvn test
+fix:
+    git checkout -- .
+    aifix -l java -t fix_code -f {{current_dir}} -f {{current_dir}}/..
+fixd:
+    git checkout -- .
+    aifix -d -l java -t fix_code -f {{current_dir}} -f {{current_dir}}/..
+clean:
+    mvn clean

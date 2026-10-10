@@ -1,0 +1,14 @@
+current_dir := justfile_directory()
+default: build
+build:
+    cargo build
+    cargo test
+    cargo clippy
+fix:
+    git checkout -- .
+    aifix -l rust -t fix_code -f {{current_dir}} -f {{current_dir}}/..
+fixd:
+    git checkout -- .
+    aifix -d -l rust -t fix_code -f {{current_dir}} -f {{current_dir}}/..
+clean:
+    cargo clean

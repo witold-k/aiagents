@@ -1,0 +1,18 @@
+current_dir := justfile_directory()
+target_dir := current_dir / 'build'
+default: build
+config:
+    meson setup {{target_dir}}
+build: config
+    meson compile -C {{target_dir}}
+    meson test -C {{target_dir}} --print-errorlogs
+fix:
+    git checkout -- .
+    just config
+    aifix -l cpp -t fix_code -b {{target_dir}} -f {{current_dir}} -f {{current_dir}}/..
+fixd:
+    git checkout -- .
+    just config
+    aifix -d -l cpp -t fix_code -b {{target_dir}} -f {{current_dir}} -f {{current_dir}}/..
+clean:
+    rm -rf {{target_dir}}
