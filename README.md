@@ -51,7 +51,6 @@ Implemented workflows include:
 * analyze, build, test, and fix code
 * generate and review code
 * generate and review documentation
-* generate initial test code
 * set up builds
 * generate release documentation from Git history
 
