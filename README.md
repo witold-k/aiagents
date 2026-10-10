@@ -18,6 +18,20 @@ running your first `aifix` task.
 For deliberately broken end-to-end examples across Cargo, CMake, Meson and
 Maven, see the [runtime tests](runtests/README.md).
 
+To provide additional instructions without creating a task-description file,
+pass `-m` (or `--message`) alongside `-t`. For example:
+
+```sh
+aifix -l rust -t fix_code \
+  -m "Keep the Dummy constructor private; update tests to use the factory and handle Option." \
+  -f "$(pwd)" -f "$(pwd)/.."
+```
+
+`-m` can be repeated. Its text is added to the task context like additional
+`-t <file>` arguments, but is taken literally rather than read from a file.
+It does not replace the selected task. Put `-m` before `-a/--args`, which
+consumes the remaining command-line arguments.
+
 ## Configuration
 
 See the [configuration reference](docs/README_CONFIG.md) for JSON settings,

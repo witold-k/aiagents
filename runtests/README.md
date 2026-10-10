@@ -50,6 +50,15 @@ just fix    # Invoke aifix to attempt the repair
 just build  # Check the result
 ```
 
+For the factory fixture, additional instructions can explicitly preserve the
+intended API:
+
+```sh
+aifix -l rust -t fix_code \
+  -m "Do not make the constructor public. Update the tests to use the factory and check both optional outcomes." \
+  -f "$(pwd)" -f "$(pwd)/.."
+```
+
 Each fixture has its own `Justfile` and normally supports `build`, `fix`,
 `fixd` (debug output), and `clean`. The original simple fixtures may also
 offer `fixws`, `doc`, or `fixfail`.

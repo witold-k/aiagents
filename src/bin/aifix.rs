@@ -201,6 +201,9 @@ pub fn main() {
         subtask_vec.push(data);
     };
 
+    // Inline messages use the same persistent subtask context as extra -t files.
+    subtask_vec.extend(args.message);
+
     let llm_call = LlmCall::new(
         &config,
         provider,

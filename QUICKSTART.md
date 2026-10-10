@@ -54,6 +54,17 @@ Change to the repository you want to work on and run, for example:
 aifix -l rust -t fix_code -f $(pwd) -f $(pwd)/..
 ```
 
+Add extra instructions directly with `-m` (repeatable), without a separate
+subtask file:
+
+```bash
+aifix -l rust -t fix_code -m "Keep the constructor private; fix callers to use the factory." -f "$(pwd)" -f "$(pwd)/.."
+```
+
+Alternatively, a second `-t path/to/instructions.md` loads additional task
+instructions from a file. `-m` accepts literal text instead. Place these
+options before `-a`, which consumes the remaining arguments.
+
 For C++, configure the project first and provide its build directory:
 
 ```bash

@@ -15,6 +15,7 @@ pub struct Args {
     pub task: String,
     pub taskdata: Option<FileEntry>,
     pub subtask: Vec<PathBuf>,
+    pub message: Vec<String>,
     pub task_args: Vec<String>,
     pub config: Option<String>,
     pub select: Vec<PathBuf>,
@@ -34,6 +35,8 @@ pub fn help() {
     -t --task [required, multiple possible invalid with -w switch]:
         - first -t selects task: one of: {}
         - following are paths to subtasks that enhance the task description
+    -m --message [optional, repeatable]: inline task instructions (quoted text),
+        appended to the task context like additional -t files
     -a --args [optional]: all following arguments are passed to the selected task
         task-specific arguments:
 {}
@@ -64,12 +67,17 @@ impl Args {
 }
 
 pub fn parse_args() -> Result<Args, String> {
-    let mut args = env::args().skip(1);
+    parse_args_from(env::args().skip(1))
+}
+
+pub fn parse_args_from(arguments: impl IntoIterator<Item = String>) -> Result<Args, String> {
+    let mut args = arguments.into_iter();
 
     let mut language: Option<String> = None;
     let mut task: Option<String> = None;
     let mut taskdata: Option<FileEntry> = None;
     let mut subtask: Vec<PathBuf> = Vec::new();
+    let mut message: Vec<String> = Vec::new();
     let mut task_args: Vec<String> = Vec::new();
     let mut select: Vec<PathBuf> = Vec::new();
     let mut config: Option<String> = None;
@@ -105,6 +113,13 @@ pub fn parse_args() -> Result<Args, String> {
                     };
                     subtask.push(file);
                }
+            }
+            "-m" | "--message" => {
+                let value = args.next().ok_or("Missing value for --message")?;
+                if value.is_empty() {
+                    return Err("Empty value for --message".into());
+                }
+                message.push(value);
             }
             "-a" | "--args" => {
                 task_args.extend(args.by_ref());
@@ -163,6 +178,7 @@ pub fn parse_args() -> Result<Args, String> {
             task: "".into(),
             taskdata,
             subtask,
+            message,
             task_args,
             config,
             select,
@@ -176,7 +192,7 @@ pub fn parse_args() -> Result<Args, String> {
     }
 
     // Required: --task
-    let lang_value = language.ok_or("Missing required argument --task")?;
+    let lang_value = language.ok_or("Missing required argument --lang")?;
 
     // Required: --task
     let task_value = task.ok_or("Missing required argument --task")?;
@@ -205,6 +221,7 @@ pub fn parse_args() -> Result<Args, String> {
         task: task_value,
         taskdata,
         subtask,
+        message,
         task_args,
         config,
         select,
