@@ -16,7 +16,10 @@ See the [Quickstart](QUICKSTART.md) for installation, configuration and
 running your first `aifix` task.
 
 For deliberately broken end-to-end examples across Cargo, CMake, Meson and
-Maven, see the [runtime tests](runtests/README.md).
+Maven, see the [runtime tests](runtests/README.md). All eight fixture
+projects have been reported successful in manual end-to-end tests with a
+locally configured Devstral model (October 2026); see that document for
+scope and limitations.
 
 To provide additional instructions without creating a task-description file,
 pass `-m` (or `--message`) alongside `-t`. For example:

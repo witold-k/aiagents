@@ -39,6 +39,16 @@ In Java, the factory is a nested `Dummy.Factory` class. The Java test is a
 plain class in `src/test/java`; Maven's test-compilation phase detects its
 invalid constructor call without a test framework.
 
+## Verified local model
+
+All currently documented runtime fixtures — both `aitestloop_simple` and
+`aitestloop_refactor_factory` across Cargo/Rust, CMake/C++, Meson/C++, and
+Maven/Java (eight fixture projects) — have been reported working with a
+**locally configured Devstral model** (manual end-to-end runs, October 2026).
+This is a user-reported validation, not a CI result or a guarantee for other
+models, model versions, or configurations. The exact Devstral variant and
+quantization were not recorded.
+
 ## Running a fixture
 
 From a fixture directory, for example:
@@ -75,5 +85,5 @@ constructor public). A build passing alone does not prove the intended
 refactoring was preserved; inspect the resulting diff.
 
 The examples are intentionally failing before repair. Results depend on
-the selected model and configuration, and are not claimed to be validated
-across all environments.
+the selected model and configuration; the local Devstral results above do not
+imply validation across other environments.
