@@ -64,7 +64,9 @@ just runtest
 ```
 
 Reports are written to `target/runtest-reports/results.json`,
-`results.md`, and per-fixture `.log` files. Override the location with
+`results.md`, and per-fixture `.log` files. The root `just runtest` recipe
+also copies `results.json` to `runtests/results.json` after execution,
+while preserving the runner's exit status. Override the location with
 `--report-dir PATH`. The runner exits unsuccessfully if any fixture fails.
 
 **Fixture-local reset:** `just fix` restores tracked files only within the
@@ -75,6 +77,37 @@ tracked changes inside a fixture will be discarded; untracked files remain.
 A PASS currently means that the fix and build commands returned success; it
 does **not** independently verify semantic requirements such as preservation
 of private constructors. This is a first baseline for automated evaluation.
+
+## Recorded automated results
+
+The committed [results.json](results.json) records one local end-to-end run
+with a configured Devstral model. The precise model variant and quantization
+were not captured. These are measured command times, not a reproducible
+benchmark across different hardware or model configurations.
+
+**8/8 passed; 0 failed; total fix + build command time: 227.05 s (3 min 47 s).**
+
+| Build system | Scenario | Fix (s) | Build (s) | Result |
+| --- | --- | ---: | ---: | --- |
+| Cargo / Rust | Factory refactor | 48.15 | 0.18 | PASS |
+| Cargo / Rust | Simple fix | 8.69 | 0.17 | PASS |
+| CMake / C++ | Factory refactor | 29.71 | 0.04 | PASS |
+| CMake / C++ | Simple fix | 8.49 | 0.36 | PASS |
+| Maven / Java | Factory refactor | 39.00 | 0.87 | PASS |
+| Maven / Java | Simple fix | 16.79 | 0.99 | PASS |
+| Meson / C++ | Factory refactor | 25.69 | 0.45 | PASS |
+| Meson / C++ | Simple fix | 46.96 | 0.52 | PASS |
+
+Both `fix` and `build` exited with code 0 for every fixture. This
+indicates command success; the runner does not yet independently check
+semantic invariants (such as constructor visibility). The JSON file is the
+source of truth; this table is a snapshot of the committed run.
+
+Running `just runtest` overwrites `runtests/results.json` with the
+latest run, even when some fixtures fail (provided the runner completes and
+writes its report). The detailed logs and Markdown report remain in
+`target/runtest-reports/`. Review the new results and update this summary
+table before committing a new benchmark snapshot.
 
 ## Running a fixture
 

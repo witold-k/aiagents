@@ -15,14 +15,6 @@ LLM workflows.
 See the [Quickstart](QUICKSTART.md) for installation, configuration and
 running your first `aifix` task.
 
-For deliberately broken end-to-end examples across Cargo, CMake, Meson and
-Maven, see the [runtime tests](runtests/README.md). All eight fixture
-projects have been reported successful in manual end-to-end tests with a
-locally configured Devstral model (October 2026); see that document for
-scope and limitations. Run the entire fixture matrix with
-`just runtest` from the repository root (see the runtime test README
-for the destructive reset warning and result reports).
-
 To provide additional instructions without creating a task-description file,
 pass `-m` (or `--message`) alongside `-t`. For example:
 
@@ -36,6 +28,40 @@ aifix -l rust -t fix_code \
 `-t <file>` arguments, but is taken literally rather than read from a file.
 It does not replace the selected task. Put `-m` before `-a/--args`, which
 consumes the remaining command-line arguments.
+
+## Runtime tests and results
+
+`aifix` is exercised against eight deliberately broken end-to-end fixtures
+covering Cargo/Rust, CMake/C++, Meson/C++, and Maven/Java. The tests include
+simple compilation fixes and factory API refactoring.
+
+A recorded run with a locally configured Devstral model passed **8 of 8
+fixtures**, with **227.05 seconds** total measured fix and build time.
+
+| Build system | Simple fix | Factory refactor |
+| --- | --- | --- |
+| Cargo / Rust | PASS (8.69 s fix) | PASS (48.15 s fix) |
+| CMake / C++ | PASS (8.49 s fix) | PASS (29.71 s fix) |
+| Meson / C++ | PASS (46.96 s fix) | PASS (25.69 s fix) |
+| Maven / Java | PASS (16.79 s fix) | PASS (39.00 s fix) |
+
+These are measured fix-command times; build times, per-fixture exit codes,
+the full results table, and limitations are documented in
+[runtests/README.md](runtests/README.md). The machine-readable snapshot is
+available as [runtests/results.json](runtests/results.json). The exact model
+variant and quantization were not recorded, and PASS currently means that
+fix and build commands succeeded, not that all API invariants were verified.
+
+Run the full suite from the repository root:
+
+```sh
+just runtest
+```
+
+The recipe updates `runtests/results.json` after the run, while detailed logs
+remain in `target/runtest-reports/`. It resets tracked changes within each
+test fixture; see the [runtime-test documentation](runtests/README.md) before
+running it.
 
 ## Configuration
 
