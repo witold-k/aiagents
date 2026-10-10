@@ -146,6 +146,36 @@ The current task system includes operations such as:
 Task descriptions are kept separate from the Rust implementation and are
 converted into generated Rust metadata during the build.
 
+## Before the first public preview
+
+The following capabilities are planned before the first broader presentation
+of the project. They are **not yet claimed as implemented or validated**.
+
+### Code generation from Markdown specifications
+
+Use Markdown specifications produced by **Minuru** as input to `aifix` code
+generation workflows. Two initial application areas are planned:
+
+* **Message catalogs:** generate serialization and deserialization code from
+  documented message definitions, including sequences of messages or fields.
+  Validate lengths, field constraints, optional values, and error handling
+  against the specification.
+* **Embedded register access:** generate register and bit-field access code
+  from Markdown hardware documentation, including addresses, access modes,
+  masks, and other documented constraints.
+
+The intended pipeline is **source documents → Minuru → Markdown → aiagents →
+generated code → build and tests**. The Markdown extraction pipeline uses Minuru via `pdf_to_text_wrapper` and
+already exists separately; generation and end-to-end verification remain planned.
+
+### Automated runtime-test runner
+
+Add a small test suite that runs all fixtures under `runtests/` and evaluates
+their outcomes. It should distinguish expected initial failures from successful
+repairs, capture logs, and report results by scenario, build system, and model.
+For API-refactoring cases, passing the build alone is insufficient: the suite
+should also verify that required API constraints remain intact.
+
 ## Direction
 
 Pure autonomous code fixing is not the main objective. Smaller local models
