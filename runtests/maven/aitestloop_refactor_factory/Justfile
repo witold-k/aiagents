@@ -3,10 +3,10 @@ default: build
 build:
     mvn test
 fix:
-    git checkout -- .
+    git -C {{current_dir}} restore --worktree -- .
     aifix -l java -t fix_code -m "Keep the Dummy constructor private and the factory API unchanged. Fix the outdated tests to call the factory, handle the optional result, and verify both successful and failed creation." -f {{current_dir}} -f {{current_dir}}/..
 fixd:
-    git checkout -- .
+    git -C {{current_dir}} restore --worktree -- .
     aifix -d -l java -t fix_code -m "Keep the Dummy constructor private and the factory API unchanged. Fix the outdated tests to call the factory, handle the optional result, and verify both successful and failed creation." -f {{current_dir}} -f {{current_dir}}/..
 clean:
     mvn clean

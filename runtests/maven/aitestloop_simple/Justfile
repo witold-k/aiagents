@@ -10,23 +10,23 @@ test:
 	mvn test
 
 fix:
-    git checkout .
+    git -C {{current_dir}} restore --worktree -- .
     aifix -l java -t fix_code -f {{current_dir}} -f {{current_dir}}/..
 
 fixd:
-    git checkout .
+    git -C {{current_dir}} restore --worktree -- .
     aifix -d -l java -t fix_code -f {{current_dir}} -f {{current_dir}}/..
 
 fixws:
-    git checkout .
+    git -C {{current_dir}} restore --worktree -- .
     aifix -l java -t fix_code -w ~/svn/_workspace -f {{current_dir}} -f {{current_dir}}/.. -f ~/svn/_workspace
 
 doc:
-    git checkout .
+    git -C {{current_dir}} restore --worktree -- .
     aifix -l java -t write_doc -w ~/svn/_workspace -f {{current_dir}} -f {{current_dir}}/..
 
 fixfail:
-    git checkout .
+    git -C {{current_dir}} restore --worktree -- .
     aifix -l java -t fix_code -f {{current_dir}}/target -f {{current_dir}}/..
 
 clean:

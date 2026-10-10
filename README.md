@@ -19,7 +19,9 @@ For deliberately broken end-to-end examples across Cargo, CMake, Meson and
 Maven, see the [runtime tests](runtests/README.md). All eight fixture
 projects have been reported successful in manual end-to-end tests with a
 locally configured Devstral model (October 2026); see that document for
-scope and limitations.
+scope and limitations. Run the entire fixture matrix with
+`just runtest` from the repository root (see the runtime test README
+for the destructive reset warning and result reports).
 
 To provide additional instructions without creating a task-description file,
 pass `-m` (or `--message`) alongside `-t`. For example:

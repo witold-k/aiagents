@@ -49,6 +49,33 @@ This is a user-reported validation, not a CI result or a guarantee for other
 models, model versions, or configurations. The exact Devstral variant and
 quantization were not recorded.
 
+## Automated end-to-end runner
+
+The separate `aifix_runtest` binary discovers all fixture directories containing a
+`Justfile` under `runtests/{cargo,cmake,meson,maven}/` and runs them
+**sequentially**. For each fixture it runs `just fix` (including the fixture's
+Git reset), then `just build` if fixing succeeds. It records fix/build exit
+codes, durations, full logs, and PASS/FAIL summaries.
+
+From the repository root:
+
+```sh
+just runtest
+```
+
+Reports are written to `target/runtest-reports/results.json`,
+`results.md`, and per-fixture `.log` files. Override the location with
+`--report-dir PATH`. The runner exits unsuccessfully if any fixture fails.
+
+**Fixture-local reset:** `just fix` restores tracked files only within the
+fixture directory. Changes elsewhere in the repository are not reset, and
+the runner does not require a globally clean working tree. Uncommitted
+tracked changes inside a fixture will be discarded; untracked files remain.
+
+A PASS currently means that the fix and build commands returned success; it
+does **not** independently verify semantic requirements such as preservation
+of private constructors. This is a first baseline for automated evaluation.
+
 ## Running a fixture
 
 From a fixture directory, for example:
@@ -73,9 +100,8 @@ Each fixture has its own `Justfile` and normally supports `build`, `fix`,
 `fixd` (debug output), and `clean`. The original simple fixtures may also
 offer `fixws`, `doc`, or `fixfail`.
 
-**Warning:** `just fix` uses `git checkout -- .` to reset tracked
-modifications. It can discard uncommitted changes in the fixture. Use a
-clean working tree or a disposable checkout.
+**Warning:** `just fix` restores tracked changes within the current fixture
+only. Keep any work you want to preserve outside the fixture or commit it.
 
 ## What a successful run means
 
