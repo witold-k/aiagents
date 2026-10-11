@@ -34,7 +34,7 @@ install:
 
 runtest *args:
     cargo build --bin aifix --bin aifix_runtest
-    {{target_dir}}/debug/aifix_runtest {{args}}; status=$?; case " {{args}} " in *" --all "*|*" -a "*) ;; *) if test -f {{target_dir}}/runtest-reports/results.json; then cp {{target_dir}}/runtest-reports/results.json {{current_dir}}/runtests/results.json; fi ;; esac; exit $status
+    {{target_dir}}/debug/aifix_runtest {{args}}
 
 fix:
     RUST_BACKTRACE=1 {{target_dir}}/debug/aifix -l rust -t fix_code -f {{current_dir}} -f {{current_dir}}/..

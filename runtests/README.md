@@ -39,114 +39,169 @@ In Java, the factory is a nested `Dummy.Factory` class. The Java test is a
 plain class in `src/test/java`; Maven's test-compilation phase detects its
 invalid constructor call without a test framework.
 
-## Verified local model
+## Recorded local comparison (October 2026)
 
-All currently documented runtime fixtures — both `aitestloop_simple` and
-`aitestloop_refactor_factory` across Cargo/Rust, CMake/C++, Meson/C++, and
-Maven/Java (eight fixture projects) — have been reported working with a
-**locally configured Devstral model** (manual end-to-end runs, October 2026).
-This is a user-reported validation, not a CI result or a guarantee for other
-models, model versions, or configurations. The exact Devstral variant and
-quantization were not recorded.
+The most recent reported `just runtest --all --runs 4` run tested four
+configured models across eight fixtures, four times each (128 attempts):
+
+| Provider | Model | PASS | FAIL |
+| --- | --- | ---: | ---: |
+| `qwen` | Qwen 2.5 Coder 14B, Q5_K_M | 32 | 0 |
+| `devs` | Devstral Small 2 24B, Q4_K_XL | 32 | 0 |
+| `qwen38q3` | Qwen3.8 27B, Q3_K_XL | 0 | 32 |
+| `qwen38q4` | Qwen3.8 27B, IQ4_XS | 0 | 32 |
+
+Qwen 2.5 Coder and Devstral passed every fixture in this run. Devstral's
+fix times varied considerably (one Meson factory-refactor attempt took
+244.67 seconds). Qwen3.8 Q3 returned HTTP 500 from the model endpoint,
+rather than producing a usable repair. Q4 also failed every attempt;
+its server behavior requires separate investigation. Neither Qwen3.8
+result establishes the model's underlying code-repair capability.
+
+These are **user-run local tests**, not CI results or reproducible performance
+benchmarks. A PASS currently means that the fix and build commands returned
+success; the runner does not independently verify all API invariants.
+There is also a known limitation: some fixture `just fix` recipes return
+exit code 0 despite an `aifix` request failure, so the subsequent build
+runs against still-broken code. This needs correction before treating
+`fix_exit` as a reliable indication of successful model interaction.
+
+### Fix-time statistics by fixture
+
+Measured `just fix` command duration in seconds (s), across four attempts per fixture. Values are rounded from the terminal log to 0.01 s; the generated JSON snapshots retain full precision. These times are **not** end-to-end server startup times. Qwen3.8 times are durations until the unsuccessful request returned, **not successful repair times**.
+
+#### Qwen 2.5 Coder (`qwen`, 32/32 PASS)
+
+| Fixture | Min (s) | Max (s) | Mean (s) | Median (s) |
+| --- | ---: | ---: | ---: | ---: |
+| cargo/aitestloop_refactor_factory | 20.50 | 61.52 | 37.02 | 33.02 |
+| cargo/aitestloop_simple | 3.18 | 4.17 | 3.76 | 3.84 |
+| cmake/aitestloop_refactor_factory | 13.63 | 50.56 | 23.13 | 14.16 |
+| cmake/aitestloop_simple | 9.18 | 13.99 | 10.40 | 9.21 |
+| maven/aitestloop_refactor_factory | 35.15 | 89.58 | 59.80 | 57.23 |
+| maven/aitestloop_simple | 19.11 | 20.78 | 19.77 | 19.60 |
+| meson/aitestloop_refactor_factory | 9.85 | 24.74 | 16.00 | 14.71 |
+| meson/aitestloop_simple | 6.03 | 15.50 | 9.93 | 9.09 |
+
+#### Devstral Small 2 (`devs`, 32/32 PASS)
+
+| Fixture | Min (s) | Max (s) | Mean (s) | Median (s) |
+| --- | ---: | ---: | ---: | ---: |
+| cargo/aitestloop_refactor_factory | 36.61 | 76.44 | 51.83 | 47.14 |
+| cargo/aitestloop_simple | 8.03 | 11.71 | 9.21 | 8.54 |
+| cmake/aitestloop_refactor_factory | 23.67 | 33.18 | 27.98 | 27.55 |
+| cmake/aitestloop_simple | 9.85 | 49.29 | 22.52 | 15.46 |
+| maven/aitestloop_refactor_factory | 27.95 | 65.36 | 39.98 | 33.31 |
+| maven/aitestloop_simple | 15.33 | 40.86 | 21.84 | 15.57 |
+| meson/aitestloop_refactor_factory | 17.81 | 244.67 | 80.22 | 29.20 |
+| meson/aitestloop_simple | 9.68 | 51.36 | 28.98 | 27.44 |
+
+#### Qwen3.8 Q3 (`qwen38q3`, 0/32 FAIL)
+
+| Fixture | Min (s) | Max (s) | Mean (s) | Median (s) |
+| --- | ---: | ---: | ---: | ---: |
+| cargo/aitestloop_refactor_factory | 13.84 | 14.26 | 13.98 | 13.90 |
+| cargo/aitestloop_simple | 13.88 | 14.20 | 13.99 | 13.95 |
+| cmake/aitestloop_refactor_factory | 13.76 | 14.41 | 14.07 | 14.06 |
+| cmake/aitestloop_simple | 14.14 | 14.67 | 14.34 | 14.27 |
+| maven/aitestloop_refactor_factory | 15.16 | 16.06 | 15.43 | 15.25 |
+| maven/aitestloop_simple | 15.34 | 15.56 | 15.44 | 15.43 |
+| meson/aitestloop_refactor_factory | 13.98 | 14.79 | 14.18 | 13.98 |
+| meson/aitestloop_simple | 14.24 | 14.79 | 14.38 | 14.25 |
+
+#### Qwen3.8 Q4 (`qwen38q4`, 0/32 FAIL)
+
+| Fixture | Min (s) | Max (s) | Mean (s) | Median (s) |
+| --- | ---: | ---: | ---: | ---: |
+| cargo/aitestloop_refactor_factory | 4.80 | 9.90 | 8.05 | 8.76 |
+| cargo/aitestloop_simple | 1.57 | 20.73 | 10.82 | 10.50 |
+| cmake/aitestloop_refactor_factory | 4.28 | 13.57 | 10.57 | 12.21 |
+| cmake/aitestloop_simple | 9.87 | 13.18 | 11.66 | 11.79 |
+| maven/aitestloop_refactor_factory | 5.07 | 28.21 | 14.25 | 11.85 |
+| maven/aitestloop_simple | 6.03 | 9.43 | 7.97 | 8.21 |
+| meson/aitestloop_refactor_factory | 2.48 | 22.26 | 12.04 | 11.71 |
+| meson/aitestloop_simple | 5.06 | 12.68 | 8.51 | 8.14 |
+
+Build/check times are separately recorded per attempt in each provider's `results.json`. The values above summarize the **fix phase only**, including failed model requests.
 
 ## Automated end-to-end runner
 
-The separate `aifix_runtest` binary discovers all fixture directories containing a
-`Justfile` under `runtests/{cargo,cmake,meson,maven}/` and runs them
-**sequentially**. For each fixture it runs `just fix` (including the fixture's
-Git reset), then `just build` if fixing succeeds. It records fix/build exit
-codes, durations, full logs, and PASS/FAIL summaries.
+The standalone `aifix_runtest` binary discovers fixture directories with
+a `Justfile` under `runtests/{cargo,cmake,meson,maven}/` and runs them
+sequentially. For each attempt it invokes `just fix`, then `just build`
+when the fix command exits successfully. It records exit codes, timings,
+full logs and PASS/FAIL results.
 
 From the repository root:
 
 ```sh
-just runtest --model devs --runs 5
-# Optional: just runtest --model qwen38q4 --runs 3 --config /path/to/config.json
+just runtest --model devs --runs 4
+just runtest --all --runs 4
+# Short form: just runtest -a --runs 4
+# Optional: just runtest --model qwen --runs 2 --config /path/to/config.json
 ```
 
-To compare all enabled providers, run:
+`--all` / `-a` selects providers with `"active": true` in configuration
+order; it cannot be combined with `--model`. Each provider gets its own
+server startup and shutdown, and failed providers do not prevent the remaining
+providers from being tested. The overall command exits unsuccessfully if
+any provider fails.
 
-```sh
-just runtest --all --runs 5
-# Short form: just runtest -a --runs 5
+With `--model`, the runner launches `aifix -r` for that provider, waits
+for the local health endpoint, and supplies `-p PROVIDER` to fixture calls.
+It refuses an already occupied endpoint rather than assuming that the
+existing server is the intended model. Server startup retries are bounded;
+the runner stops a provider early if its model server exits during testing.
+Without `--model`, it uses the configured default provider and expects
+the server to be running already.
+
+### Report layout
+
+After each **completed provider run**, the runner writes:
+
+```text
+runtests/results/
+  qwen/
+    results.json
+    results.md
+  devs/
+    results.json
+    results.md
+  qwen38q3/
+    results.json
+    results.md
+  qwen38q4/
+    results.json
+    results.md
+
+target/runtest-reports/
+  <provider>/
+    results.json
+    results.md
+    model-server.log
+    <fixture>_run<N>.log
 ```
 
-`--all` / `-a` selects only providers with `"active": true` from the
-loaded configuration, in configuration order. It cannot be combined with
-`--model`. Providers run sequentially, each with its own server startup
-and shutdown. Every provider gets separate `results.json`, `results.md`,
-`model-server.log`, and fixture logs under
-`target/runtest-reports/<provider>/`. Failed providers are reported and
-remaining active providers are still attempted. The command returns a
-failure exit status if any provider fails. In all-model mode the root
-Justfile does not overwrite the legacy `runtests/results.json`.
+The first tree contains compact, versionable snapshots. The second tree
+contains full diagnostic logs and is normally ignored by Git. Direct
+`aifix_runtest` execution and `just runtest` both publish snapshots;
+`--report-dir PATH` changes the diagnostic report location but not the
+snapshot directory. Single-provider runs publish under their provider name
+as well. Reports are overwritten for the same provider on subsequent runs.
+A provider that terminates before report generation may leave an older
+snapshot in place; check its timestamp before relying on it.
 
-`--model` selects a configured provider and starts it using `aifix -r`.
-The runner waits for the local server health endpoint, then invokes each
-fixture with `aifix -p PROVIDER` (and `-c PATH` if provided). It refuses
-to start when the endpoint port is already occupied, rather than assuming
-the existing server is the selected model. The runner terminates the server
-it started after the tests. Without `--model`, the configured default provider
-is used and an existing server is expected.
+`--runs N` repeats each fixture N times. Results contain per-attempt
+fix/build exit codes and times, plus min/max/mean/median statistics.
+Failed attempts count toward the pass rate and timing statistics. The
+JSON also records provider/model settings (excluding API keys).
+The runner restores tracked fixture files after each attempt.
 
-`--runs N` repeats every fixture N times. Each fixture resets tracked files
-before every attempt. Per-fixture results include pass counts, individual
-fix/build times, and fix-time min/max/mean/median; build-time statistics are
-also stored in JSON when a build was attempted. Failed attempts count toward
-the pass rate and retain their timing and logs. Fix-time statistics include
-all attempts, including failures; build statistics exclude skipped builds.
-The full model/provider settings are recorded in JSON (excluding API keys),
-while the root README contains a short summary. Results are overwritten on
-each run, as before; Git tracks snapshots when committed.
-
-The recorded 8/8 result below predates these additions and does not include
-verified model settings or repeated measurements.
-
-Reports are written to `target/runtest-reports/results.json`,
-`results.md`, and per-fixture `.log` files. The root `just runtest` recipe
-also copies `results.json` to `runtests/results.json` after execution,
-while preserving the runner's exit status. Override the location with
-`--report-dir PATH`. The runner exits unsuccessfully if any fixture fails.
-
-**Fixture-local reset:** `just fix` restores tracked files only within the
-fixture directory. Changes elsewhere in the repository are not reset, and
-the runner does not require a globally clean working tree. Uncommitted
-tracked changes inside a fixture will be discarded; untracked files remain.
-
-A PASS currently means that the fix and build commands returned success; it
-does **not** independently verify semantic requirements such as preservation
-of private constructors. This is a first baseline for automated evaluation.
-
-## Recorded automated results
-
-The committed [results.json](results.json) records one local end-to-end run
-with a configured Devstral model. The precise model variant and quantization
-were not captured. These are measured command times, not a reproducible
-benchmark across different hardware or model configurations.
-
-**8/8 passed; 0 failed; total fix + build command time: 227.05 s (3 min 47 s).**
-
-| Build system | Scenario | Fix (s) | Build (s) | Result |
-| --- | --- | ---: | ---: | --- |
-| Cargo / Rust | Factory refactor | 48.15 | 0.18 | PASS |
-| Cargo / Rust | Simple fix | 8.69 | 0.17 | PASS |
-| CMake / C++ | Factory refactor | 29.71 | 0.04 | PASS |
-| CMake / C++ | Simple fix | 8.49 | 0.36 | PASS |
-| Maven / Java | Factory refactor | 39.00 | 0.87 | PASS |
-| Maven / Java | Simple fix | 16.79 | 0.99 | PASS |
-| Meson / C++ | Factory refactor | 25.69 | 0.45 | PASS |
-| Meson / C++ | Simple fix | 46.96 | 0.52 | PASS |
-
-Both `fix` and `build` exited with code 0 for every fixture. This
-indicates command success; the runner does not yet independently check
-semantic invariants (such as constructor visibility). The JSON file is the
-source of truth; this table is a snapshot of the committed run.
-
-Running `just runtest` overwrites `runtests/results.json` with the
-latest run, even when some fixtures fail (provided the runner completes and
-writes its report). The detailed logs and Markdown report remain in
-`target/runtest-reports/`. Review the new results and update this summary
-table before committing a new benchmark snapshot.
+**Fixture-local reset:** The fixture's `just fix` recipe restores tracked
+files in its directory before testing. The runner restores them again after
+each attempt. This can discard uncommitted tracked changes in fixtures;
+untracked files remain. The runner currently executes against tracked
+fixture directories, not isolated copies.
 
 ## Running a fixture
 

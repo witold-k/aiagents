@@ -469,6 +469,13 @@ fn run() -> Result<bool, Box<dyn std::error::Error>> {
         md.push_str(&format!("| {} | {}/{} | {:.2} | {:.2} | {:.2} | {:.2} |\n", row.fixture, row.passed, runs, row.fix_seconds.min, row.fix_seconds.max, row.fix_seconds.mean, row.fix_seconds.median));
     }
     fs::write(reports.join("results.md"), md)?;
+    // Publish compact, versionable reports outside the ignored target tree.
+    // Keep verbose fixture and server logs in target/runtest-reports.
+    let snapshot_dir = root.join("runtests").join("results").join(&selected_name);
+    fs::create_dir_all(&snapshot_dir)?;
+    fs::copy(reports.join("results.json"), snapshot_dir.join("results.json"))?;
+    fs::copy(reports.join("results.md"), snapshot_dir.join("results.md"))?;
+    println!("Report snapshots: {}", snapshot_dir.display());
     println!("Results: {passed}/{total} passed; reports in {}", reports.display());
     if let Some(mut running) = service.take() {
         running.stop().map_err(|err| format!("Provider {selected_name}: {err}"))?;
