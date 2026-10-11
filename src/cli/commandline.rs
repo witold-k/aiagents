@@ -23,6 +23,7 @@ pub struct Args {
     pub builddir: Option<PathBuf>,
     pub workspace: Option<PathBuf>,
     pub start_service: Option<String>,
+    pub provider: Option<String>,
     pub debug: bool,
     pub help: bool,
 }
@@ -52,6 +53,7 @@ pub fn help() {
         - also task descripton is here and may be named like e.g.: `task.md`
     -d --debug [default = false]: dump debug
     -r --run [optional providername in config] run server; if set other settings will be ignored
+    -p --provider [optional providername in config]: select provider for normal tasks
     -h --help [default = false]: dump help
 "#
         , Languages::to_vec_str().join(", ")
@@ -85,6 +87,7 @@ pub fn parse_args_from(arguments: impl IntoIterator<Item = String>) -> Result<Ar
     let mut builddir: Option<PathBuf> = None;
     let mut workspace: Option<PathBuf> = None;
     let mut start_service: Option<String> = None;
+    let mut provider: Option<String> = None;
     let mut debug = false;
     let mut help = false;
 
@@ -154,6 +157,9 @@ pub fn parse_args_from(arguments: impl IntoIterator<Item = String>) -> Result<Ar
                 workspace = Some(PathBuf::from(value).canonicalize().unwrap());
             }
 
+            "-p" | "--provider" => {
+                provider = Some(args.next().ok_or("Missing value for --provider")?);
+            }
             "-r" | "--run" => {
                 let value = args.next().ok_or("Missing value for --run")?;
                 start_service = Some(value);
@@ -186,6 +192,7 @@ pub fn parse_args_from(arguments: impl IntoIterator<Item = String>) -> Result<Ar
             builddir,
             workspace,
             start_service,
+            provider,
             debug,
             help,
         });
@@ -229,6 +236,7 @@ pub fn parse_args_from(arguments: impl IntoIterator<Item = String>) -> Result<Ar
         builddir,
         workspace,
         start_service,
+        provider,
         debug,
         help,
     })

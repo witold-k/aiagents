@@ -55,8 +55,16 @@ fix and build commands succeeded, not that all API invariants were verified.
 Run the full suite from the repository root:
 
 ```sh
-just runtest
+just runtest --model devs --runs 5
 ```
+
+The runner starts the selected local model with `aifix -r`, passes `-p`
+to fixture calls, and records minimum, maximum, mean, and median fix times
+across repetitions. The detailed per-attempt measurements and provider
+settings are stored in [runtests/results.json](runtests/results.json) after
+the next run. Use `--config PATH` for a non-default configuration.
+
+The 8/8 figures above are a **single historical run**, not five repetitions.
 
 The recipe updates `runtests/results.json` after the run, while detailed logs
 remain in `target/runtest-reports/`. It resets tracked changes within each

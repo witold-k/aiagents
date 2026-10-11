@@ -1,9 +1,15 @@
 pub struct Dummy;
 
 impl Dummy {
-    fn new() -> Self { Self }
+    pub fn new() -> Self { Self }
 
     pub fn value(&self) -> i32 { 1 }
+}
+
+impl Default for Dummy {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 pub struct DummyFactory;

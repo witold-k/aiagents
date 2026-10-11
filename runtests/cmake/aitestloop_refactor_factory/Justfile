@@ -9,10 +9,10 @@ build: config
 fix:
     git -C {{current_dir}} restore --worktree -- .
     just config
-    aifix -l cpp -t fix_code -m "Keep the Dummy constructor private and the factory API unchanged. Fix the outdated tests to call the factory, handle the optional result, and verify both successful and failed creation." -b {{target_dir}} -f {{current_dir}} -f {{current_dir}}/..
+    aifix {{env_var_or_default("AIFIX_TEST_ARGS", "")}} -l cpp -t fix_code -m "Keep the Dummy constructor private and the factory API unchanged. Fix the outdated tests to call the factory, handle the optional result, and verify both successful and failed creation." -b {{target_dir}} -f {{current_dir}} -f {{current_dir}}/..
 fixd:
     git -C {{current_dir}} restore --worktree -- .
     just config
-    aifix -d -l cpp -t fix_code -m "Keep the Dummy constructor private and the factory API unchanged. Fix the outdated tests to call the factory, handle the optional result, and verify both successful and failed creation." -b {{target_dir}} -f {{current_dir}} -f {{current_dir}}/..
+    aifix {{env_var_or_default("AIFIX_TEST_ARGS", "")}} -d -l cpp -t fix_code -m "Keep the Dummy constructor private and the factory API unchanged. Fix the outdated tests to call the factory, handle the optional result, and verify both successful and failed creation." -b {{target_dir}} -f {{current_dir}} -f {{current_dir}}/..
 clean:
     rm -rf {{target_dir}}

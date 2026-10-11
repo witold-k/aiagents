@@ -10,23 +10,23 @@ build:
 
 fix:
     git -C {{current_dir}} restore --worktree -- .
-    @RUST_BACKTRACE=1 aifix -l rust -t fix_code -f {{current_dir}} -f {{current_dir}}/..
+    @RUST_BACKTRACE=1 aifix {{env_var_or_default("AIFIX_TEST_ARGS", "")}} -l rust -t fix_code -f {{current_dir}} -f {{current_dir}}/..
 
 fixd:
     git -C {{current_dir}} restore --worktree -- .
-    @RUST_BACKTRACE=1 aifix -d -l rust -t fix_code -f {{current_dir}} -f {{current_dir}}/..
+    @RUST_BACKTRACE=1 aifix {{env_var_or_default("AIFIX_TEST_ARGS", "")}} -d -l rust -t fix_code -f {{current_dir}} -f {{current_dir}}/..
 
 fixws:
     git -C {{current_dir}} restore --worktree -- .
-    @RUST_BACKTRACE=1 aifix -l rust -t fix_code -w ~/svn/_workspace -f {{current_dir}} -f {{current_dir}}/.. -f ~/svn/_workspace
+    @RUST_BACKTRACE=1 aifix {{env_var_or_default("AIFIX_TEST_ARGS", "")}} -l rust -t fix_code -w ~/svn/_workspace -f {{current_dir}} -f {{current_dir}}/.. -f ~/svn/_workspace
 
 doc:
     git -C {{current_dir}} restore --worktree -- .
-    @RUST_BACKTRACE=1 aifix -l rust -t write_doc -w ~/svn/_workspace -f {{current_dir}} -f {{current_dir}}/..
+    @RUST_BACKTRACE=1 aifix {{env_var_or_default("AIFIX_TEST_ARGS", "")}} -l rust -t write_doc -w ~/svn/_workspace -f {{current_dir}} -f {{current_dir}}/..
 
 fixfail:
     git -C {{current_dir}} restore --worktree -- .
-    @RUST_BACKTRACE=1 aifix -l rust -t fix_code -f {{current_dir}}/target -f {{current_dir}}/..
+    @RUST_BACKTRACE=1 aifix {{env_var_or_default("AIFIX_TEST_ARGS", "")}} -l rust -t fix_code -f {{current_dir}}/target -f {{current_dir}}/..
 
 clean:
     @cargo clean -p {{module_name}}

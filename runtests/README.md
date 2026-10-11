@@ -60,8 +60,30 @@ codes, durations, full logs, and PASS/FAIL summaries.
 From the repository root:
 
 ```sh
-just runtest
+just runtest --model devs --runs 5
+# Optional: just runtest --model qwen38q4 --runs 3 --config /path/to/config.json
 ```
+
+`--model` selects a configured provider and starts it using `aifix -r`.
+The runner waits for the local server health endpoint, then invokes each
+fixture with `aifix -p PROVIDER` (and `-c PATH` if provided). It refuses
+to start when the endpoint port is already occupied, rather than assuming
+the existing server is the selected model. The runner terminates the server
+it started after the tests. Without `--model`, the configured default provider
+is used and an existing server is expected.
+
+`--runs N` repeats every fixture N times. Each fixture resets tracked files
+before every attempt. Per-fixture results include pass counts, individual
+fix/build times, and fix-time min/max/mean/median; build-time statistics are
+also stored in JSON when a build was attempted. Failed attempts count toward
+the pass rate and retain their timing and logs. Fix-time statistics include
+all attempts, including failures; build statistics exclude skipped builds.
+The full model/provider settings are recorded in JSON (excluding API keys),
+while the root README contains a short summary. Results are overwritten on
+each run, as before; Git tracks snapshots when committed.
+
+The recorded 8/8 result below predates these additions and does not include
+verified model settings or repeated measurements.
 
 Reports are written to `target/runtest-reports/results.json`,
 `results.md`, and per-fixture `.log` files. The root `just runtest` recipe

@@ -187,9 +187,15 @@ pub fn main() {
         }
     };
 
-    let provider = match config.get_selected_provider() {
-        Some(provider) => provider,
-        None           => return,
+    let provider = match args.provider.as_deref() {
+        Some(name) => config.get_provider(name).unwrap_or_else(|| {
+            eprintln!("Unknown provider '{name}'");
+            std::process::exit(1);
+        }),
+        None => match config.get_selected_provider() {
+            Some(provider) => provider,
+            None => return,
+        },
     };
 
     let mut subtask_vec = Vec::<String>::with_capacity(args.subtask.len());

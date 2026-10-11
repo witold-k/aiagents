@@ -6,9 +6,9 @@ build:
     cargo clippy
 fix:
     git -C {{current_dir}} restore --worktree -- .
-    aifix -l rust -t fix_code -m "Keep the Dummy constructor private and the factory API unchanged. Fix the outdated tests to call the factory, handle the optional result, and verify both successful and failed creation." -f {{current_dir}} -f {{current_dir}}/..
+    aifix {{env_var_or_default("AIFIX_TEST_ARGS", "")}} -l rust -t fix_code -m "Keep the Dummy constructor private and the factory API unchanged. Fix the outdated tests to call the factory, handle the optional result, and verify both successful and failed creation." -f {{current_dir}} -f {{current_dir}}/..
 fixd:
     git -C {{current_dir}} restore --worktree -- .
-    aifix -d -l rust -t fix_code -m "Keep the Dummy constructor private and the factory API unchanged. Fix the outdated tests to call the factory, handle the optional result, and verify both successful and failed creation." -f {{current_dir}} -f {{current_dir}}/..
+    aifix {{env_var_or_default("AIFIX_TEST_ARGS", "")}} -d -l rust -t fix_code -m "Keep the Dummy constructor private and the factory API unchanged. Fix the outdated tests to call the factory, handle the optional result, and verify both successful and failed creation." -f {{current_dir}} -f {{current_dir}}/..
 clean:
     cargo clean
