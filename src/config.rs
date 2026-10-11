@@ -97,7 +97,7 @@ impl Default for Config {
                 AIProvider {
                     name: "qwen".into(),
                     active: true,
-                    comment: "works, but is not very useful".into(),
+                    comment: "works, tested on runtests".into(),
                     source: "https://huggingface.co/apto-as/Qwen2.5-Coder-14B-Instruct-Q5_K_M-GGUF/resolve/main/qwen2.5-coder-14b-instruct-q5_k_m.gguf".into(),
                     endpoint: "http://localhost:8080/v1/chat/completions".into(),
                     model: "qwen2.5-coder-14b-instruct-q5_k_m.gguf".into(),
@@ -136,8 +136,8 @@ impl Default for Config {
                 },
                 AIProvider {
                     name: "qwen38q3".into(),
-                    active: true,
-                    comment: "not tested, not tested with bigger problems".into(),
+                    active: false,
+                    comment: "model can not fix code with current aifix".into(),
                     source: "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/blob/main/Qwen3.8-27B-UD-Q3_K_XL.gguf".into(),
                     endpoint: "http://localhost:8080/v1/chat/completions".into(),
                     model: "Qwen3.8-27B-UD-Q3_K_XL.gguf".into(),
@@ -176,7 +176,7 @@ impl Default for Config {
                     ],
                 },
                 AIProvider {
-                    name: "qwen38q4".into(),
+                    name: "qwen38q4, tested on runtests".into(),
                     active: true,
                     comment: "works, not tested with bigger problems".into(),
                     source: "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/main/Qwen3.8-27B-UD-IQ4_XS.gguf".into(),
@@ -264,7 +264,7 @@ impl Default for Config {
                 AIProvider {
                     name: "devs".into(),
                     active: true,
-                    comment: "works, but small context. not tested with complex problems".into(),
+                    comment: "works, tested on runtests".into(),
                     source: "https://huggingface.co/unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF/resolve/main/Devstral-Small-2-24B-Instruct-2512-UD-Q4_K_XL.gguf".into(),
                     endpoint: "http://localhost:8080/v1/chat/completions".into(),
                     model: "Devstral-Small-2-24B-Instruct-2512-UD-Q4_K_XL.gguf".into(),
