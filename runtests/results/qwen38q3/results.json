@@ -1,0 +1,487 @@
+{
+  "elapsed_seconds": 476.72533940500006,
+  "failed": 32,
+  "model": {
+    "endpoint": "http://localhost:8080/v1/chat/completions",
+    "llmbin": "llama-server",
+    "llmparam": [
+      "--ctx-size",
+      "80000",
+      "--n-gpu-layers",
+      "999",
+      "--parallel",
+      "1",
+      "--port",
+      "8080",
+      "--host",
+      "127.0.0.1",
+      "--timeout",
+      "600",
+      "--flash-attn",
+      "on",
+      "--batch-size",
+      "2048",
+      "--ubatch-size",
+      "1024",
+      "--cache-type-k",
+      "q8_0",
+      "--cache-type-v",
+      "q8_0",
+      "--predict",
+      "8192",
+      "--reasoning-preserve",
+      "--load-mode",
+      "mmap"
+    ],
+    "model": "Qwen3.8-27B-UD-Q3_K_XL.gguf",
+    "note": "Model filename may encode quantization; no independent model identity verification",
+    "provider": "qwen38q3",
+    "source": "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/blob/main/Qwen3.8-27B-UD-Q3_K_XL.gguf"
+  },
+  "passed": 0,
+  "results": [
+    {
+      "attempts": [
+        {
+          "build_exit": 101,
+          "build_seconds": 0.095600418,
+          "fix_exit": 0,
+          "fix_seconds": 14.257561472,
+          "log": "cargo_aitestloop_refactor_factory_run1.log",
+          "passed": false,
+          "run": 1
+        },
+        {
+          "build_exit": 101,
+          "build_seconds": 0.056072092,
+          "fix_exit": 0,
+          "fix_seconds": 13.856255976,
+          "log": "cargo_aitestloop_refactor_factory_run2.log",
+          "passed": false,
+          "run": 2
+        },
+        {
+          "build_exit": 101,
+          "build_seconds": 0.056374841,
+          "fix_exit": 0,
+          "fix_seconds": 13.844863234,
+          "log": "cargo_aitestloop_refactor_factory_run3.log",
+          "passed": false,
+          "run": 3
+        },
+        {
+          "build_exit": 101,
+          "build_seconds": 0.056220061,
+          "fix_exit": 0,
+          "fix_seconds": 13.951043295,
+          "log": "cargo_aitestloop_refactor_factory_run4.log",
+          "passed": false,
+          "run": 4
+        }
+      ],
+      "build_seconds": {
+        "max": 0.095600418,
+        "mean": 0.06606685300000001,
+        "median": 0.056297451,
+        "min": 0.056072092
+      },
+      "failed": 4,
+      "fix_seconds": {
+        "max": 14.257561472,
+        "mean": 13.97743099425,
+        "median": 13.903649635499999,
+        "min": 13.844863234
+      },
+      "fixture": "cargo/aitestloop_refactor_factory",
+      "passed": 0
+    },
+    {
+      "attempts": [
+        {
+          "build_exit": 101,
+          "build_seconds": 0.05662715,
+          "fix_exit": 0,
+          "fix_seconds": 14.198068057,
+          "log": "cargo_aitestloop_simple_run1.log",
+          "passed": false,
+          "run": 1
+        },
+        {
+          "build_exit": 101,
+          "build_seconds": 0.040284245,
+          "fix_exit": 0,
+          "fix_seconds": 14.003928063,
+          "log": "cargo_aitestloop_simple_run2.log",
+          "passed": false,
+          "run": 2
+        },
+        {
+          "build_exit": 101,
+          "build_seconds": 0.041049533,
+          "fix_exit": 0,
+          "fix_seconds": 13.875187822000001,
+          "log": "cargo_aitestloop_simple_run3.log",
+          "passed": false,
+          "run": 3
+        },
+        {
+          "build_exit": 101,
+          "build_seconds": 0.039983865,
+          "fix_exit": 0,
+          "fix_seconds": 13.900102244,
+          "log": "cargo_aitestloop_simple_run4.log",
+          "passed": false,
+          "run": 4
+        }
+      ],
+      "build_seconds": {
+        "max": 0.05662715,
+        "mean": 0.04448619825,
+        "median": 0.040666889,
+        "min": 0.039983865
+      },
+      "failed": 4,
+      "fix_seconds": {
+        "max": 14.198068057,
+        "mean": 13.9943215465,
+        "median": 13.9520151535,
+        "min": 13.875187822000001
+      },
+      "fixture": "cargo/aitestloop_simple",
+      "passed": 0
+    },
+    {
+      "attempts": [
+        {
+          "build_exit": 1,
+          "build_seconds": 0.069609633,
+          "fix_exit": 0,
+          "fix_seconds": 14.325373829,
+          "log": "cmake_aitestloop_refactor_factory_run1.log",
+          "passed": false,
+          "run": 1
+        },
+        {
+          "build_exit": 1,
+          "build_seconds": 0.069967041,
+          "fix_exit": 0,
+          "fix_seconds": 14.413805448,
+          "log": "cmake_aitestloop_refactor_factory_run2.log",
+          "passed": false,
+          "run": 2
+        },
+        {
+          "build_exit": 1,
+          "build_seconds": 0.070906359,
+          "fix_exit": 0,
+          "fix_seconds": 13.756585416,
+          "log": "cmake_aitestloop_refactor_factory_run3.log",
+          "passed": false,
+          "run": 3
+        },
+        {
+          "build_exit": 1,
+          "build_seconds": 0.07056245,
+          "fix_exit": 0,
+          "fix_seconds": 13.788363695,
+          "log": "cmake_aitestloop_refactor_factory_run4.log",
+          "passed": false,
+          "run": 4
+        }
+      ],
+      "build_seconds": {
+        "max": 0.070906359,
+        "mean": 0.07026137075,
+        "median": 0.0702647455,
+        "min": 0.069609633
+      },
+      "failed": 4,
+      "fix_seconds": {
+        "max": 14.413805448,
+        "mean": 14.071032097,
+        "median": 14.056868762,
+        "min": 13.756585416
+      },
+      "fixture": "cmake/aitestloop_refactor_factory",
+      "passed": 0
+    },
+    {
+      "attempts": [
+        {
+          "build_exit": 1,
+          "build_seconds": 0.372708191,
+          "fix_exit": 0,
+          "fix_seconds": 14.668895435,
+          "log": "cmake_aitestloop_simple_run1.log",
+          "passed": false,
+          "run": 1
+        },
+        {
+          "build_exit": 1,
+          "build_seconds": 0.351188356,
+          "fix_exit": 0,
+          "fix_seconds": 14.340227728,
+          "log": "cmake_aitestloop_simple_run2.log",
+          "passed": false,
+          "run": 2
+        },
+        {
+          "build_exit": 1,
+          "build_seconds": 0.340420688,
+          "fix_exit": 0,
+          "fix_seconds": 14.1438822,
+          "log": "cmake_aitestloop_simple_run3.log",
+          "passed": false,
+          "run": 3
+        },
+        {
+          "build_exit": 1,
+          "build_seconds": 0.361753084,
+          "fix_exit": 0,
+          "fix_seconds": 14.204126889,
+          "log": "cmake_aitestloop_simple_run4.log",
+          "passed": false,
+          "run": 4
+        }
+      ],
+      "build_seconds": {
+        "max": 0.372708191,
+        "mean": 0.35651757975000004,
+        "median": 0.35647072,
+        "min": 0.340420688
+      },
+      "failed": 4,
+      "fix_seconds": {
+        "max": 14.668895435,
+        "mean": 14.339283063,
+        "median": 14.2721773085,
+        "min": 14.1438822
+      },
+      "fixture": "cmake/aitestloop_simple",
+      "passed": 0
+    },
+    {
+      "attempts": [
+        {
+          "build_exit": 1,
+          "build_seconds": 0.9434893,
+          "fix_exit": 0,
+          "fix_seconds": 16.064853661,
+          "log": "maven_aitestloop_refactor_factory_run1.log",
+          "passed": false,
+          "run": 1
+        },
+        {
+          "build_exit": 1,
+          "build_seconds": 0.925154688,
+          "fix_exit": 0,
+          "fix_seconds": 15.343419886,
+          "log": "maven_aitestloop_refactor_factory_run2.log",
+          "passed": false,
+          "run": 2
+        },
+        {
+          "build_exit": 1,
+          "build_seconds": 0.929846728,
+          "fix_exit": 0,
+          "fix_seconds": 15.159801051,
+          "log": "maven_aitestloop_refactor_factory_run3.log",
+          "passed": false,
+          "run": 3
+        },
+        {
+          "build_exit": 1,
+          "build_seconds": 0.91970921,
+          "fix_exit": 0,
+          "fix_seconds": 15.166428323,
+          "log": "maven_aitestloop_refactor_factory_run4.log",
+          "passed": false,
+          "run": 4
+        }
+      ],
+      "build_seconds": {
+        "max": 0.9434893,
+        "mean": 0.9295499815,
+        "median": 0.927500708,
+        "min": 0.91970921
+      },
+      "failed": 4,
+      "fix_seconds": {
+        "max": 16.064853661,
+        "mean": 15.43362573025,
+        "median": 15.254924104499999,
+        "min": 15.159801051
+      },
+      "fixture": "maven/aitestloop_refactor_factory",
+      "passed": 0
+    },
+    {
+      "attempts": [
+        {
+          "build_exit": 1,
+          "build_seconds": 0.912276995,
+          "fix_exit": 0,
+          "fix_seconds": 15.564445325,
+          "log": "maven_aitestloop_simple_run1.log",
+          "passed": false,
+          "run": 1
+        },
+        {
+          "build_exit": 1,
+          "build_seconds": 0.892027048,
+          "fix_exit": 0,
+          "fix_seconds": 15.44247708,
+          "log": "maven_aitestloop_simple_run2.log",
+          "passed": false,
+          "run": 2
+        },
+        {
+          "build_exit": 1,
+          "build_seconds": 0.874248476,
+          "fix_exit": 0,
+          "fix_seconds": 15.414666416,
+          "log": "maven_aitestloop_simple_run3.log",
+          "passed": false,
+          "run": 3
+        },
+        {
+          "build_exit": 1,
+          "build_seconds": 0.869740985,
+          "fix_exit": 0,
+          "fix_seconds": 15.338466233,
+          "log": "maven_aitestloop_simple_run4.log",
+          "passed": false,
+          "run": 4
+        }
+      ],
+      "build_seconds": {
+        "max": 0.912276995,
+        "mean": 0.887073376,
+        "median": 0.883137762,
+        "min": 0.869740985
+      },
+      "failed": 4,
+      "fix_seconds": {
+        "max": 15.564445325,
+        "mean": 15.4400137635,
+        "median": 15.428571748,
+        "min": 15.338466233
+      },
+      "fixture": "maven/aitestloop_simple",
+      "passed": 0
+    },
+    {
+      "attempts": [
+        {
+          "build_exit": 1,
+          "build_seconds": 0.356772583,
+          "fix_exit": 0,
+          "fix_seconds": 14.789120366,
+          "log": "meson_aitestloop_refactor_factory_run1.log",
+          "passed": false,
+          "run": 1
+        },
+        {
+          "build_exit": 1,
+          "build_seconds": 0.356503623,
+          "fix_exit": 0,
+          "fix_seconds": 13.977622894,
+          "log": "meson_aitestloop_refactor_factory_run2.log",
+          "passed": false,
+          "run": 2
+        },
+        {
+          "build_exit": 1,
+          "build_seconds": 0.357817681,
+          "fix_exit": 0,
+          "fix_seconds": 13.976351035,
+          "log": "meson_aitestloop_refactor_factory_run3.log",
+          "passed": false,
+          "run": 3
+        },
+        {
+          "build_exit": 1,
+          "build_seconds": 0.358953268,
+          "fix_exit": 0,
+          "fix_seconds": 13.980497173,
+          "log": "meson_aitestloop_refactor_factory_run4.log",
+          "passed": false,
+          "run": 4
+        }
+      ],
+      "build_seconds": {
+        "max": 0.358953268,
+        "mean": 0.35751178875,
+        "median": 0.35729513199999996,
+        "min": 0.356503623
+      },
+      "failed": 4,
+      "fix_seconds": {
+        "max": 14.789120366,
+        "mean": 14.180897867,
+        "median": 13.9790600335,
+        "min": 13.976351035
+      },
+      "fixture": "meson/aitestloop_refactor_factory",
+      "passed": 0
+    },
+    {
+      "attempts": [
+        {
+          "build_exit": 1,
+          "build_seconds": 0.653540513,
+          "fix_exit": 0,
+          "fix_seconds": 14.790926626,
+          "log": "meson_aitestloop_simple_run1.log",
+          "passed": false,
+          "run": 1
+        },
+        {
+          "build_exit": 1,
+          "build_seconds": 0.649526401,
+          "fix_exit": 0,
+          "fix_seconds": 14.242856731,
+          "log": "meson_aitestloop_simple_run2.log",
+          "passed": false,
+          "run": 2
+        },
+        {
+          "build_exit": 1,
+          "build_seconds": 0.6551266,
+          "fix_exit": 0,
+          "fix_seconds": 14.241722502,
+          "log": "meson_aitestloop_simple_run3.log",
+          "passed": false,
+          "run": 3
+        },
+        {
+          "build_exit": 1,
+          "build_seconds": 0.649568571,
+          "fix_exit": 0,
+          "fix_seconds": 14.249782623,
+          "log": "meson_aitestloop_simple_run4.log",
+          "passed": false,
+          "run": 4
+        }
+      ],
+      "build_seconds": {
+        "max": 0.6551266,
+        "mean": 0.65194052125,
+        "median": 0.651554542,
+        "min": 0.649526401
+      },
+      "failed": 4,
+      "fix_seconds": {
+        "max": 14.790926626,
+        "mean": 14.3813221205,
+        "median": 14.246319676999999,
+        "min": 14.241722502
+      },
+      "fixture": "meson/aitestloop_simple",
+      "passed": 0
+    }
+  ],
+  "runs": 4,
+  "timestamp_unix": 1791709708,
+  "total": 32
+}
