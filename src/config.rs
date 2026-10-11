@@ -13,6 +13,7 @@ use std::{
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct AIProvider {
     pub name: String,
+    pub active: bool,
     pub comment: String,
     pub source: String,
     pub endpoint: String,
@@ -60,6 +61,7 @@ impl Default for Config {
             providerlist: vec![
                 AIProvider {
                     name: "qwen".into(),
+                    active: true,
                     comment: "works, but is not very useful".into(),
                     source: "https://huggingface.co/apto-as/Qwen2.5-Coder-14B-Instruct-Q5_K_M-GGUF/resolve/main/qwen2.5-coder-14b-instruct-q5_k_m.gguf".into(),
                     endpoint: "http://localhost:8080/v1/chat/completions".into(),
@@ -97,8 +99,9 @@ impl Default for Config {
                         "mmap".into(),
                     ],
                 },
-                AIProvider { // just as an example - this does not work properly
+                AIProvider {
                     name: "qwen38q3".into(),
+                    active: true,
                     comment: "not tested, not tested with bigger problems".into(),
                     source: "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/blob/main/Qwen3.8-27B-UD-Q3_K_XL.gguf".into(),
                     endpoint: "http://localhost:8080/v1/chat/completions".into(),
@@ -137,8 +140,9 @@ impl Default for Config {
                         "mmap".into(),
                     ],
                 },
-                AIProvider { // just as an example - this does not work properly
+                AIProvider {
                     name: "qwen38q4".into(),
+                    active: true,
                     comment: "works, not tested with bigger problems".into(),
                     source: "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/main/Qwen3.8-27B-UD-IQ4_XS.gguf".into(),
                     endpoint: "http://localhost:8080/v1/chat/completions".into(),
@@ -180,6 +184,7 @@ impl Default for Config {
                 AIProvider { // just as an example - is very slow with 16GB VRAM
                              // => CPU offloading
                     name: "qwen38q5".into(),
+                    active: false,
                     comment: "not useful, ca 2tok/s needs CPU offloading".into(),
                     source: "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/main/Qwen3.8-27B-UD-Q5_K_M.gguf".into(),
                     endpoint: "http://localhost:8080/v1/chat/completions".into(),
@@ -223,6 +228,7 @@ impl Default for Config {
 
                 AIProvider {
                     name: "devs".into(),
+                    active: true,
                     comment: "works, but small context. not tested with complex problems".into(),
                     source: "https://huggingface.co/unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF/resolve/main/Devstral-Small-2-24B-Instruct-2512-UD-Q4_K_XL.gguf".into(),
                     endpoint: "http://localhost:8080/v1/chat/completions".into(),
