@@ -1,12 +1,8 @@
-use aitestloop_refactor_factory::DummyFactory;
+use aitestloop_refactor_factory::Dummy;
 
 #[test]
 fn factory_refactoring() {
-    // Test successful creation
-    let dummy = DummyFactory::create(true).expect("Failed to create Dummy");
+    // Outdated test: use DummyFactory and handle successful/failed creation.
+    let dummy = Dummy::new();
     assert_eq!(dummy.value(), 1);
-    
-    // Test failed creation
-    let dummy = DummyFactory::create(false);
-    assert!(dummy.is_none());
 }
