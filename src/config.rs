@@ -10,46 +10,81 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// Model API provider configuration, including optional local-server startup settings.
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct AIProvider {
+    /// Unique name used to identify this provider.
     pub name: String,
+    /// Whether this provider is enabled for selection.
     pub active: bool,
+    /// Human-readable notes about the provider; informational only.
     pub comment: String,
+    /// Source URL for obtaining or identifying the model; informational metadata.
     pub source: String,
+    /// URL of the model inference API, typically an OpenAI-compatible chat endpoint.
     pub endpoint: String,
+    /// Model identifier used by the provider, often the local model filename.
     pub model: String,
+    /// Authentication key for API requests; may be empty for local servers.
     pub api_key: String,
+    /// Allow insecure TLS verification for HTTPS connections to this provider.
     pub insecure: bool,
+    /// Executable used to start a local model server, e.g. `llama-server`.
     pub llmbin: String,
+    /// Directory containing the model file used by the local server.
     pub llmmodeldir: PathBuf,
+    /// Additional command-line arguments passed to the local server executable.
     pub llmparam: Vec<String>,
 }
 
+/// Per-task override for provider selection and model sampling temperature.
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct AITaskProvider {
+    /// Identifier of the task to which this override applies.
     pub task: String,
+    /// Name of the provider assigned to this task.
     pub provider: String,
+    /// Sampling temperature used when running the task.
     pub temperature: f32,
 }
 
+/// Failure limits applied while running an agent workflow.
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct Boundaries {
+    /// Maximum allowed workflow-level failures.
     pub max_workflow_fail: usize,
+    /// Maximum allowed tool-call failures.
     pub max_tool_call_fail: usize,
 }
 
-/// Specifies which provider and temperature to use for a given task.
+/// Main configuration for model providers, execution limits, scanning, and file access.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Config {
+    /// Name of the default provider.
     pub provider: String,
+    /// Configured model providers available to the application.
     pub providerlist: Vec<AIProvider>,
+    /// Optional task-specific provider and temperature settings.
     pub taskproviderlist: Vec<AITaskProvider>,
+    /// Failure limits for workflows and tool calls.
     pub max_try_count: Boundaries,
+    /// Maximum number of entries retained in the message/history queue.
     pub queue_length_max: usize,
+    /// Number of recent queue entries preserved when the queue is trimmed.
     pub queue_length_save: usize,
+    /// Filename suffixes accepted by source scanning (e.g. `.rs`, `.cpp`).
+    /// Matches file endings, unlike `scanfullfilter`, which lists exact filenames.
+    /// This controls scan selection, not read/write permissions.
     pub scanendfilter: Vec<String>,
+    /// Complete filenames accepted by source scanning (e.g. `Cargo.toml`).
+    /// Useful for build/configuration files without a common source-code suffix.
+    /// This controls scan selection, not read/write permissions.
     pub scanfullfilter: Vec<String>,
+    /// Filesystem roots within which agent write operations are permitted.
+    /// Path fragments such as `{{projectdir}}` are expanded when loading.
     pub writefilter: Vec<String>,
+    /// Filesystem roots within which agent read operations are permitted.
+    /// Path fragments such as `{{projectdir}}` are expanded when loading.
     pub readfilter: Vec<String>,
 }
 
