@@ -64,6 +64,23 @@ just runtest --model devs --runs 5
 # Optional: just runtest --model qwen38q4 --runs 3 --config /path/to/config.json
 ```
 
+To compare all enabled providers, run:
+
+```sh
+just runtest --all --runs 5
+# Short form: just runtest -a --runs 5
+```
+
+`--all` / `-a` selects only providers with `"active": true` from the
+loaded configuration, in configuration order. It cannot be combined with
+`--model`. Providers run sequentially, each with its own server startup
+and shutdown. Every provider gets separate `results.json`, `results.md`,
+`model-server.log`, and fixture logs under
+`target/runtest-reports/<provider>/`. Failed providers are reported and
+remaining active providers are still attempted. The command returns a
+failure exit status if any provider fails. In all-model mode the root
+Justfile does not overwrite the legacy `runtests/results.json`.
+
 `--model` selects a configured provider and starts it using `aifix -r`.
 The runner waits for the local server health endpoint, then invokes each
 fixture with `aifix -p PROVIDER` (and `-c PATH` if provided). It refuses
