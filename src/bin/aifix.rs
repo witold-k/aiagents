@@ -111,9 +111,16 @@ pub fn main() {
         return;
     }
 
-    let filter = Pathfilter::new(
-        args.pathfilter.iter().map(PathBuf::from).collect::<Vec<_>>()
-    );
+    let filter_paths: Vec<PathBuf> = if args.pathfilter.is_empty() {
+        config.writefilter.iter().chain(config.readfilter.iter()).map(PathBuf::from).collect()
+    } else {
+        args.pathfilter.clone()
+    };
+    if filter_paths.is_empty() {
+        eprintln!("No path filter configured; specify -f/--pathfilter or config.writefilter/config.readfilter");
+        std::process::exit(1);
+    }
+    let filter = Pathfilter::new(filter_paths);
 
     let src_path = std::env::current_dir().unwrap_or_else(|err| {
         eprintln!("failed to determine current directory: {err}");

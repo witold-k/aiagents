@@ -62,3 +62,17 @@ fn buildsystem_language_mapping() {
     assert_eq!(Buildsystem::Make.inferred_language(), None);
     assert_eq!(Buildsystem::None.inferred_language(), None);
 }
+
+#[test]
+fn pathfilter_is_optional_at_parse_time() {
+    let args = parse(&[]).unwrap();
+    assert!(args.pathfilter.is_empty());
+    assert_eq!(args.task, "fix_code");
+}
+
+#[test]
+fn explicit_pathfilter_is_preserved() {
+    let cwd = std::env::current_dir().unwrap();
+    let args = parse(&["-f", cwd.to_str().unwrap()]).unwrap();
+    assert_eq!(args.pathfilter, vec![cwd]);
+}

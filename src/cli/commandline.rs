@@ -42,12 +42,21 @@ pub fn help() {
         task-specific arguments:
 {}
     -s --select [optional, multiple possible]: one or more files or dirs,
-        - if task needs a file to operate and none is given a random file will be choosen
     -c --config [optional]: load config from path
         - default config will be generated in path if no config availabe
         - default config path is ~/.config/aifix/config.json
-    -f --pathfilter [multiple, required at least once]: directory list
-    -b --builddir [default = target(rust) or build(other)]: set builddir
+    -f --pathfilter [optional, repeatable]: directories aifix can scan and access
+        - first -f path: read and write access
+        - subsequent -f paths: read-only access
+        - if omitted, config.writefilter supplies the first path,
+          followed by read-only paths from config.readfilter
+        - explicit -f paths replace the configured paths
+        - paths must exist; relative paths are resolved from the current directory
+        - example: aifix -f src -f tests (src read/write, tests read-only)
+    -b --builddir [optional]: override the build output directory
+        - default: target (Cargo/Rust, Maven/Java, Just)
+        - default: build (CMake, Meson, Make)
+        - default: current directory if no build system is detected
     -w --workspace [optional]: running in workspace (mode): path to workspace
         - llm does not load files, all files are loaded at once from current workspace,
         - also task descripton is here and may be named like e.g.: `task.md`
@@ -199,11 +208,6 @@ pub fn parse_args_from(arguments: impl IntoIterator<Item = String>) -> Result<Ar
     }
 
     let task_value = task.unwrap_or_else(|| "fix_code".to_string());
-
-    // Required: at least one --pathfilter
-    if pathfilter.is_empty() {
-        return Err("Missing required argument --pathfilter (must be provided at least once)".into());
-    }
 
     // Validate task: must be known OR a valid path
     let known_tasks = Tasks::to_vec_str();
