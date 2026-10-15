@@ -137,7 +137,7 @@ impl Default for Config {
                 AIProvider {
                     name: "qwen38q3".into(),
                     active: false,
-                    comment: "model can not fix code with current aifix".into(),
+                    comment: "model produces garbage".into(),
                     source: "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/blob/main/Qwen3.8-27B-UD-Q3_K_XL.gguf".into(),
                     endpoint: "http://localhost:8080/v1/chat/completions".into(),
                     model: "Qwen3.8-27B-UD-Q3_K_XL.gguf".into(),
@@ -178,7 +178,7 @@ impl Default for Config {
                 AIProvider {
                     name: "qwen38q4, tested on runtests".into(),
                     active: true,
-                    comment: "works, not tested with bigger problems".into(),
+                    comment: "model produces garbage with gpu, works with cpu".into(),
                     source: "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/main/Qwen3.8-27B-UD-IQ4_XS.gguf".into(),
                     endpoint: "http://localhost:8080/v1/chat/completions".into(),
                     model: "Qwen3.8-27B-UD-IQ4_XS.gguf".into(),
