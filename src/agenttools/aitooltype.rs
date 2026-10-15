@@ -17,6 +17,7 @@ pub enum AIToolType {
     ListDir,
     LoadFile,
     LoadFilePart,
+    LoadFileBySymbol,
     SaveFile,
     SaveFilePart,
     ScanDir,
@@ -60,7 +61,7 @@ impl AIToolType {
     }
 
     pub fn is_load(self) -> bool {
-        matches!(self, AIToolType::LoadFile | AIToolType::LoadFilePart)
+        matches!(self, AIToolType::LoadFile | AIToolType::LoadFilePart | AIToolType::LoadFileBySymbol)
     }
 
     pub fn is_done(self) -> bool {
@@ -88,6 +89,7 @@ pub static TOOLS: phf::Map<&'static str, AIToolType> = phf_map! {
     "list_dir" => AIToolType::ListDir,
     "load_file" => AIToolType::LoadFile,
     "load_file_part" => AIToolType::LoadFilePart,
+    "load_file_by_symbol" => AIToolType::LoadFileBySymbol,
     "save_file" => AIToolType::SaveFile,
     "save_file_part" => AIToolType::SaveFilePart,
     "set_focus" => AIToolType::SetFocus,

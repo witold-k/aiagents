@@ -15,6 +15,7 @@ use crate::agenttools::{
     list_dir::*,
     load_file::*,
     load_file_part::*,
+    load_file_by_symbol::*,
     save_file::*,
     save_file_replace_part::*,
     scan_dir::*,
@@ -34,6 +35,7 @@ pub enum ToolOutput {
     ListDir(Result<ListDirResult, ListDirError>),
     LoadFile(Result<LoadFileResult, LoadFileError>),
     LoadFilePart(Result<LoadFilePartResult, LoadFilePartError>),
+    LoadFileBySymbol(Result<LoadFileBySymbolResult, LoadFileBySymbolError>),
     SaveFile(Result<SaveFileResult, SaveFileError>),
     SaveFilePart(Result<SaveFilePartResult, SaveFilePartError>),
     ScanDir(Result<ScanDirResult, ScanDirError>),
@@ -52,6 +54,7 @@ impl ToolOutput {
             ToolOutput::ListDir(r)  => r.is_valid(),
             ToolOutput::LoadFile(r) => r.is_valid(),
             ToolOutput::LoadFilePart(r) => r.is_valid(),
+            ToolOutput::LoadFileBySymbol(r) => r.is_valid(),
             ToolOutput::SaveFile(r) => r.is_valid(),
             ToolOutput::SaveFilePart(r) => r.is_valid(),
             ToolOutput::ScanDir(r)  => r.is_valid(),
@@ -77,6 +80,7 @@ impl ToolOutput {
             ToolOutput::ListDir(_)  => AIToolType::ListDir,
             ToolOutput::LoadFile(_) => AIToolType::LoadFile,
             ToolOutput::LoadFilePart(_) => AIToolType::LoadFilePart,
+            ToolOutput::LoadFileBySymbol(_) => AIToolType::LoadFileBySymbol,
             ToolOutput::SaveFile(_) => AIToolType::SaveFile,
             ToolOutput::SaveFilePart(_) => AIToolType::SaveFilePart,
             ToolOutput::ScanDir(_)  => AIToolType::ScanDir,
@@ -94,6 +98,7 @@ impl ToolOutput {
             ToolOutput::ListDir(r)  => r.to_json(message_id),
             ToolOutput::LoadFile(r) => r.to_json(message_id),
             ToolOutput::LoadFilePart(r) => r.to_json(message_id),
+            ToolOutput::LoadFileBySymbol(r) => r.to_json(message_id),
             ToolOutput::SaveFile(r) => r.to_json(message_id),
             ToolOutput::SaveFilePart(r) => r.to_json(message_id),
             ToolOutput::ScanDir(r)  => r.to_json(message_id),
@@ -111,6 +116,7 @@ impl ToolOutput {
             ToolOutput::ListDir(r)  => r.to_msg_string(message_id),
             ToolOutput::LoadFile(r) => r.to_msg_string(message_id),
             ToolOutput::LoadFilePart(r) => r.to_msg_string(message_id),
+            ToolOutput::LoadFileBySymbol(r) => r.to_msg_string(message_id),
             ToolOutput::SaveFile(r) => r.to_msg_string(message_id),
             ToolOutput::SaveFilePart(r) => r.to_msg_string(message_id),
             ToolOutput::ScanDir(r)  => r.to_msg_string(message_id),
@@ -133,6 +139,7 @@ impl fmt::Display for ToolOutput {
             ToolOutput::ListDir(r) => fmt::Debug::fmt(r, f),
             ToolOutput::LoadFile(r) => fmt::Debug::fmt(r, f),
             ToolOutput::LoadFilePart(r) => fmt::Debug::fmt(r, f),
+            ToolOutput::LoadFileBySymbol(r) => fmt::Debug::fmt(r, f),
             ToolOutput::SaveFile(r) => fmt::Debug::fmt(r, f),
             ToolOutput::SaveFilePart(r) => fmt::Debug::fmt(r, f),
             ToolOutput::ScanDir(r) => fmt::Debug::fmt(r, f),
@@ -173,6 +180,12 @@ pub fn execute_tool<'a>(
             match LoadFilePart::from_json(projroot, filter, payload) {
                 Ok(obj)  => ToolOutput::LoadFilePart(obj.execute()),
                 Err(err) => ToolOutput::Failed(Failed::from_string(format!("{}", err)).execute())
+            }
+        },
+        Some(AIToolType::LoadFileBySymbol) => {
+            match LoadFileBySymbol::from_json(projroot, filter, payload) {
+                Ok(obj) => ToolOutput::LoadFileBySymbol(obj.execute()),
+                Err(err) => ToolOutput::LoadFileBySymbol(Err(err)),
             }
         },
         Some(AIToolType::SaveFile)  => {

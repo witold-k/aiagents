@@ -15,6 +15,9 @@ ureq = { version = "3.3", features = ["json"] }
 struct_extractors = { version = "0.1.0", git = "https://github.com/witold-k/struct_extractors", rev = "8e769e7ee7dfbf447ef5e3a768bd6b666d09334b" }
 fsscanner = { version = "0.4.0", git = "https://github.com/witold-k/fsscanner", rev = "cb034d15865d20b5102c6ec5a12f8944e2e11058" }
 
+# -- symbol lookup
+symbol_to_source_resolver = { git = "https://github.com/witold-k/symbol_to_source_resolver" }
+
 # -- process
 ctrlc = "3.5.2"
 libc = "0.2"
