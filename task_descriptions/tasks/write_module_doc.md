@@ -14,7 +14,7 @@ The injected module-level block must cover exactly three aspects using language-
 ## 2.3. Mandatory Header/Type Discovery (Context Resolution)
 * **The Split-Context Protocol:** If the current file contains implementations (e.g., a C++ `.cpp` file or a Rust sub-module) whose core data layouts, fields, or class definitions are declared in a corresponding header/definition file (e.g., a `.h`, `.hpp`, or a parent module file):
   1. **Identify the Source of Truth:** Read the top-level `#include` or `use` statements to find the primary definition file.
-  2. **Fetch the Missing Puzzle Piece:** Before writing any documentation, execute exactly one `load_file` call for that external definition/header file to inspect the true data layouts, structural invariants, and private fields.
+  2. **Fetch the Missing Puzzle Piece:** Before writing any documentation, execute a `load_file` call for that external definition/header file, or `load_file_by_symbol` when only the symbol name is known to inspect the true data layouts, structural invariants, and private fields.
   3. **Synergize:** Once the framework returns the external file content, use that complete structural knowledge to synthesize the macro-level overview for the implementation file.
 * **Prohibition:** Zero guessing or fuzzy deduction of state layouts from method signatures. If definitions are external, you MUST load them first.
 

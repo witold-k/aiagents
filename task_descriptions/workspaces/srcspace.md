@@ -10,7 +10,7 @@
 - Do NOT apply the raw-text syntax to normal fields such as `action`, `file`, `index`, or `note`.
 
 ## 1.2. Allowed Tools
-The ONLY allowed tools are: `load_file`, `save_file`, `save_file_part`, `done`, `failed`.
+The ONLY allowed tools are: `load_file`, `load_file_by_symbol`, `save_file`, `save_file_part`, `done`, `failed`.
 
 ## 1.3. Duplicate Loads
 * If a file is loaded twice in the same step, the tool returns the previous `tool_call_id`.
@@ -26,6 +26,20 @@ The ONLY allowed tools are: `load_file`, `save_file`, `save_file_part`, `done`, 
 }
 ```
 * **Rule:** Replace placeholder with the real file path. Never output literal template strings.
+
+### load_file_by_symbol
+
+```json
+{
+  "action": "load_file_by_symbol",
+  "symbol": "SYMBOL_NAME"
+}
+```
+* Look up and load source files associated with a named symbol, such as a function, class, struct, enum, trait, or interface (subject to backend support).
+* Qualified names are supported where the resolver understands them, for example `module::Symbol` in Rust/C++ or `org.example.Symbol` in Java.
+* The result may contain several candidate source files; inspect their file paths before editing.
+* Lookup is read-only and respects the configured file-access filter. A symbol that is not found is not proof that it does not exist.
+* Use `load_file` when the exact path is already known, when symbol lookup does not find the needed source, or to refresh content before an edit.
 
 ### save_file
 ```json

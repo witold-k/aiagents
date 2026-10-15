@@ -97,7 +97,10 @@ impl<'a> Workflow for BLTWorkflow<'a> {
 
         self.debug("## [BLT] SELECT SOURCE CONTEXT");
         let selection = match self.llm_call.run_context_step_limited_with_temperature(
-            WorkflowSteps::CodeFixSelectFiles.get_prompt(),
+            &format!(
+                "{}\n\nIf the diagnostic identifies a symbol but its source path is unknown, output a line exactly 'SYMBOL: qualified_symbol_name' instead of guessing a path. Known source paths may be returned as usual, one per line. Use symbol lookup only for declarations relevant to the failure.",
+                WorkflowSteps::CodeFixSelectFiles.get_prompt()
+            ),
             &diagnostic,
             512,
             0.1,

@@ -51,7 +51,7 @@ Do not waste tokens on conversational framing or meta-commentary inside the JSON
 
 # 2.4. TERMINATION AND TOOL USAGE LOGIC
 
-You must use `list_dir`, `load_file`, `ast`, and `save_file` to perform your task, and conclude via the `done` tool.
+You must use `list_dir`, `load_file` (or `load_file_by_symbol` for named declarations), `ast`, and `save_file` to perform your task, and conclude via the `done` tool.
 
 ### THE TEST GENERATION PATH (Systematic Execution)
 For the provided source files:

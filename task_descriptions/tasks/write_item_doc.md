@@ -19,7 +19,7 @@ Scan the file from top to bottom and target exactly one item based on this stric
 * **Mandatory Action Sequence:**
   1. Identify the parent type or struct from the function signature or implementation block header.
   2. Locate the file containing the definition of this type (using the provided file list or include/import paths).
-  3. Execute exactly one `load_file` call for that definition file to read the fields, constraints, and structural invariants.
+  3. Execute a `load_file` call for that definition file, or `load_file_by_symbol` when only the symbol name is known to read the fields, constraints, and structural invariants.
   4. *Rule:* Only after the framework returns the type definition context, proceed to synthesize the architectural documentation.
 
 ## 2.4. What to Document (Conceptual Insight)

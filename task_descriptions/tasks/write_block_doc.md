@@ -14,7 +14,7 @@
 ## 2.3. Mandatory Layout Discovery (Split-Block Rule)
 * **The Context Dilemma:** If you choose to place the overview documentation block above an implementation header (e.g., `impl MyStruct` or a C++ method block) but the underlying data layout, private fields, or structural invariants are declared in a separate file (e.g., a `.h` header or a central module file):
   1. **Locate the Definition Host:** Check the project includes or import paths to find where the `struct`, `class`, or `enum` fields are physically declared.
-  2. **Fetch the Layout:** Execute exactly one `load_file` call for that definition file. You are strictly forbidden from writing a high-level block summary while blind to the component's internal field layouts.
+  2. **Fetch the Layout:** Execute a `load_file` call for that definition file, or `load_file_by_symbol` when only the symbol name is known. You are strictly forbidden from writing a high-level block summary while blind to the component's internal field layouts.
   3. **Apply the Knowledge:** Once the framework returns the raw type definition, use the discovered invariants to synthesize the high-utility architectural documentation above your target block header.
 
 ## 2.4. Documentation Rules & Blueprint

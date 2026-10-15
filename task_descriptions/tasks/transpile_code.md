@@ -54,12 +54,12 @@ You must NOT:
 
 # 2.4. TERMINATION AND TOOL USAGE LOGIC
 
-You have exactly TWO primary ways to interact with the project structure. You must use `list_dir`, `load_file`, and `save_file` to perform the work, and conclude via the `done` tool.
+You have exactly TWO primary ways to interact with the project structure. You must use `list_dir`, `load_file` (or `load_file_by_symbol` for named declarations), and `save_file` to perform the work, and conclude via the `done` tool.
 
 ### THE TRANSLATION PATH (Systematic Execution)
 Use this path to explore, read, and write the project files.
 1. **Explore:** Call `list_dir` to map out the contents and directory tree of the input project.
-2. **Read:** Call `load_file` to read the semantics, definitions, and logic of a source file.
+2. **Read:** Call `load_file` or `load_file_by_symbol` to read the semantics, definitions, and logic of a source file.
 3. **Write:** Formulate the comprehensive translation, and call `save_file`. Your `"content"` field must use the exact raw block format (`RAW_TEXT_BEGIN>>...<<RAW_TEXT_END`) containing the valid, fully translated code.
 
 ### THE COMPLETION PATH (The `done` Tool)

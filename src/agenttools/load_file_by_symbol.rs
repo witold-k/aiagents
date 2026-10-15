@@ -42,7 +42,7 @@ impl<'a> LoadFileBySymbol<'a> {
         })
     }
 
-    pub fn execute(&self) -> Result<LoadFileBySymbolResult, LoadFileBySymbolError> {
+    pub fn resolve_paths(&self) -> Result<Vec<PathBuf>, LoadFileBySymbolError> {
         let backend = match (
             self.project_dir.join("Cargo.toml").exists(),
             self.project_dir.join("pom.xml").exists(),
@@ -59,7 +59,6 @@ impl<'a> LoadFileBySymbol<'a> {
 
         // The resolver returns candidate file paths; it does not provide line ranges.
         // Access is checked before reading, including symlink resolution.
-        let mut content = String::new();
         let candidates = match backend {
             Backend::CargoRust => {
                 symbol_to_source_resolver::cargo_rust::CargoRustResolver::new(&self.project_dir)
@@ -83,12 +82,23 @@ impl<'a> LoadFileBySymbol<'a> {
                     .resolve_files(&self.symbol)
             }
         };
+        let mut readable = Vec::new();
         for path in candidates {
             let path = path.canonicalize()
                 .map_err(|err| LoadFileBySymbolError(format!("{}: {err}", path.display())))?;
             if !can_read_resolved(self.filter, &path) {
                 continue;
             }
+            if !readable.contains(&path) {
+                readable.push(path);
+            }
+        }
+        Ok(readable)
+    }
+
+    pub fn execute(&self) -> Result<LoadFileBySymbolResult, LoadFileBySymbolError> {
+        let mut content = String::new();
+        for path in self.resolve_paths()? {
             let data = std::fs::read_to_string(&path)
                 .map_err(|err| LoadFileBySymbolError(format!("{}: {err}", path.display())))?;
             content.push_str(&format!("=== {} ===\n{}\n", path.display(), data));

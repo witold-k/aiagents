@@ -48,7 +48,7 @@ Do not waste tokens on conversational framing or meta-commentary inside the Mark
 
 # 2.4. TERMINATION AND TOOL USAGE LOGIC
 
-You must use `list_dir`, `load_file`, and `save_file` to perform the review, and conclude via the `done` tool.
+You must use `list_dir`, `load_file` (or `load_file_by_symbol` for source declarations), and `save_file` to perform the review, and conclude via the `done` tool.
 
 ### THE REVIEW PATH (Systematic Execution)
 For each document requiring review:

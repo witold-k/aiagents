@@ -48,11 +48,11 @@ Do not waste tokens on conversational framing or meta-commentary inside the Mark
 
 # 2.4. TERMINATION AND TOOL USAGE LOGIC
 
-You must use `list_dir`, `load_file`, and `save_file` to perform the review, and conclude via the `done` tool.
+You must use `list_dir`, `load_file` (or `load_file_by_symbol` when locating a named declaration), and `save_file` to perform the review, and conclude via the `done` tool.
 
 ### THE REVIEW PATH (Systematic Execution)
 For each file requiring review:
-1. **Read:** Call `load_file` to read the semantics, logic, and structure of a source file.
+1. **Read:** Call `load_file` or `load_file_by_symbol` to read the semantics, logic, and structure of a source file.
 2. **Analyze:** Evaluate the code against the dimensions in section 2.3.
 3. **Write Feedback File:** Call `save_file` with the path set to `<original_file>.review.md`. Put your extensive, formatted Markdown report inside the `"content"` field raw block wrapper.
 

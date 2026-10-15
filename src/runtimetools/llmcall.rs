@@ -15,6 +15,7 @@ use fsscanner::{
 use crate::agenttools::{
     all_tools::{execute_tool, ToolOutput},
     aitooltype::AIToolType,
+    load_file_by_symbol::LoadFileBySymbol,
     failed::*,
     save_file_replace_part::{SaveFilePartError, SaveFilePartErrorType},
 };
@@ -402,10 +403,49 @@ impl<'a> LlmCall<'a> {
 
         let mut messages = self.messages.borrow_mut();
         let selected_paths = extract_known_paths(selection, &messages.filelist, max_files);
+        let mut paths: Vec<PathBuf> = selected_paths.into_iter()
+            .map(|relative| normalize_path(&self.projdir.join(relative)))
+            .collect();
+
+        // A source-selection step may return SYMBOL: <name> when the diagnostic
+        // names a declaration but does not identify its source file.
+        // Explicit paths take priority; symbol lookup fills only remaining slots.
+        for line in selection.lines() {
+            if paths.len() >= max_files {
+                break;
+            }
+            let Some(symbol) = line.trim().strip_prefix("SYMBOL:") else {
+                continue;
+            };
+            let symbol = symbol.trim();
+            if symbol.is_empty() {
+                continue;
+            }
+            let payload = serde_json::json!({"symbol": symbol});
+            let resolver = match LoadFileBySymbol::from_json(&self.projdir, self.filter, &payload) {
+                Ok(resolver) => resolver,
+                Err(err) => {
+                    if self.dump { eprintln!("## [LLM] SYMBOL SELECT: {err}"); }
+                    continue;
+                }
+            };
+            match resolver.resolve_paths() {
+                Ok(candidates) => {
+                    for path in candidates {
+                        if paths.len() >= max_files { break; }
+                        if !paths.contains(&path) {
+                            paths.push(path);
+                        }
+                    }
+                }
+                Err(err) => {
+                    if self.dump { eprintln!("## [LLM] SYMBOL SELECT: {err}"); }
+                }
+            }
+        }
         let mut loaded = 0;
 
-        for relative_path in selected_paths {
-            let path = normalize_path(&self.projdir.join(&relative_path));
+        for path in paths {
 
             if messages.files.iter().any(|file| file.path == path) {
                 continue;
@@ -414,7 +454,7 @@ impl<'a> LlmCall<'a> {
             let mut entry = FileEntry::from_path(&path)?;
             entry.load()?;
             if self.dump {
-                println!("## [LLM] SOURCE SELECT loaded: {}", relative_path.display());
+                println!("## [LLM] SOURCE SELECT loaded: {}", path.display());
             }
             messages.files.push(entry);
             self.transient_source_files.borrow_mut().push(path);
