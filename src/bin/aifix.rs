@@ -115,8 +115,31 @@ pub fn main() {
         args.pathfilter.iter().map(PathBuf::from).collect::<Vec<_>>()
     );
 
+    let src_path = std::env::current_dir().unwrap_or_else(|err| {
+        eprintln!("failed to determine current directory: {err}");
+        std::process::exit(1);
+    });
+    let ws_path = args.workspace.clone().unwrap_or_else(|| src_path.clone());
+    let bs = {
+        let detected = if is_workspace {
+            Buildsystem::from_dir(&ws_path)
+        } else {
+            Buildsystem::from_dir(&src_path)
+        };
+        if detected.is_none() {
+            Buildsystem::from_versioned_project(&src_path)
+        } else {
+            detected
+        }
+    };
+
     let task_name = args.task.clone();
-    let lang_name = args.language.clone();
+    let lang_name = args.language.clone().unwrap_or_else(|| {
+        bs.inferred_language().unwrap_or_else(|| {
+            eprintln!("Cannot infer language from build system '{}'; specify -l/--lang", bs.as_str());
+            std::process::exit(1);
+        }).as_str().to_string()
+    });
     let task_opt = Tasks::parse(&task_name);
     let lang_opt = Languages::parse(&lang_name);
 
@@ -155,29 +178,6 @@ pub fn main() {
     let combined_task = format!("{}\n{}\n{}", lang_str, task_str, ws_str);
 
     let task = task_opt.unwrap_or(Tasks::FixCode);
-    let src_path = std::env::current_dir().unwrap_or_else(|err| {
-        eprintln!("failed to determine current directory: {err}");
-        std::process::exit(1);
-    });
-    let ws_path = {
-        if is_workspace {
-            args.workspace.clone().unwrap()
-        }
-        else {
-            src_path.clone()
-        }
-    };
-
-    let bs = {
-        if is_workspace {
-            let bs = Buildsystem::from_dir(&ws_path);
-            if bs.is_none() { Buildsystem::from_versioned_project(&src_path) } else { bs }
-        }
-        else {
-            let bs = Buildsystem::from_current_dir();
-            if bs.is_none() { Buildsystem::from_versioned_project(&src_path) } else { bs }
-        }
-    };
     let target_path: PathBuf = {
         match args.builddir {
             Some(bd) => bd,

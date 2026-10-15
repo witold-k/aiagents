@@ -33,3 +33,32 @@ fn inline_messages_work_with_help() {
     assert_eq!(args.message, ["Some instruction"]);
     assert!(args.help);
 }
+
+#[test]
+fn defaults_to_fix_code_without_language() {
+    let cwd = std::env::current_dir().unwrap();
+    let args = parse(&["-f", cwd.to_str().unwrap()]).unwrap();
+    assert_eq!(args.task, "fix_code");
+    assert_eq!(args.language, None);
+}
+
+#[test]
+fn explicit_language_and_task_take_precedence() {
+    let cwd = std::env::current_dir().unwrap();
+    let args = parse(&["-l", "rust", "-t", "build", "-f", cwd.to_str().unwrap()]).unwrap();
+    assert_eq!(args.language.as_deref(), Some("rust"));
+    assert_eq!(args.task, "build");
+}
+
+#[test]
+fn buildsystem_language_mapping() {
+    use aiagents::runtimetools::buildsystem::Buildsystem;
+    use aiagents::generated_languages::Languages;
+    assert_eq!(Buildsystem::Cargo.inferred_language(), Some(Languages::Rust));
+    assert_eq!(Buildsystem::Meson.inferred_language(), Some(Languages::Cpp));
+    assert_eq!(Buildsystem::Cmake.inferred_language(), Some(Languages::Cpp));
+    assert_eq!(Buildsystem::Maven.inferred_language(), Some(Languages::Java));
+    assert_eq!(Buildsystem::Just.inferred_language(), None);
+    assert_eq!(Buildsystem::Make.inferred_language(), None);
+    assert_eq!(Buildsystem::None.inferred_language(), None);
+}

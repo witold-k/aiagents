@@ -3,6 +3,7 @@
 
 use std::path::{ Path, PathBuf };
 use std::process::Command;
+use crate::generated_languages::Languages;
 
 #[derive(Default, Debug, Clone)]
 pub struct Buildcommand {
@@ -68,6 +69,16 @@ impl Buildsystem {
 
     pub fn to_vec_str() -> Vec<&'static str> {
         ALL_BUILDSYSTEMS.iter().map(|t| t.as_str()).collect()
+    }
+
+    /// Language prompt associated with an unambiguous build system.
+    pub fn inferred_language(&self) -> Option<Languages> {
+        match self {
+            Buildsystem::Cargo => Some(Languages::Rust),
+            Buildsystem::Cmake | Buildsystem::Meson => Some(Languages::Cpp),
+            Buildsystem::Maven => Some(Languages::Java),
+            Buildsystem::None | Buildsystem::Just | Buildsystem::Make => None,
+        }
     }
 
     pub fn is_cargo(&self) -> bool {

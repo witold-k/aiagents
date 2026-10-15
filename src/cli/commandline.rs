@@ -11,7 +11,7 @@ use crate::generated_task_argument_help::TASK_ARGUMENT_HELP;
 
 #[derive(Debug)]
 pub struct Args {
-    pub language: String,
+    pub language: Option<String>,
     pub task: String,
     pub taskdata: Option<FileEntry>,
     pub subtask: Vec<PathBuf>,
@@ -31,9 +31,9 @@ pub struct Args {
 
 pub fn help() {
     println!(r#"aifix [option]+
-    -l --lang [required, invalid with -w switch]: select task: one of: {}
+    -l --lang [optional, detected from build system if omitted]: language: one of: {}
             or provide path to taskdesciption
-    -t --task [required, multiple possible invalid with -w switch]:
+    -t --task [optional, default = fix_code, multiple possible invalid with -w switch]:
         - first -t selects task: one of: {}
         - following are paths to subtasks that enhance the task description
     -m --message [optional, repeatable]: inline task instructions (quoted text),
@@ -180,8 +180,8 @@ pub fn parse_args_from(arguments: impl IntoIterator<Item = String>) -> Result<Ar
     // help, start_serice bypasses validation
     if help || start_service.is_some() {
         return Ok(Args {
-            language: "".into(),
-            task: "".into(),
+            language: None,
+            task: "fix_code".into(),
             taskdata,
             subtask,
             message,
@@ -198,11 +198,7 @@ pub fn parse_args_from(arguments: impl IntoIterator<Item = String>) -> Result<Ar
         });
     }
 
-    // Required: --task
-    let lang_value = language.ok_or("Missing required argument --lang")?;
-
-    // Required: --task
-    let task_value = task.ok_or("Missing required argument --task")?;
+    let task_value = task.unwrap_or_else(|| "fix_code".to_string());
 
     // Required: at least one --pathfilter
     if pathfilter.is_empty() {
@@ -224,7 +220,7 @@ pub fn parse_args_from(arguments: impl IntoIterator<Item = String>) -> Result<Ar
     }
 
     Ok(Args {
-        language: lang_value,
+        language,
         task: task_value,
         taskdata,
         subtask,
