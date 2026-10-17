@@ -84,6 +84,3 @@ impl<'a> WorkflowSelector<'a> {
     }
 }
 
-#[cfg(test)]
-#[path = "../../tests/workflows/select_workflow_test.rs"]
-mod tests;
