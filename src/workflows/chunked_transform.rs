@@ -37,7 +37,11 @@ struct ExtractionCheckpoint {
 fn extraction_fingerprint(source: &str, prompts: &[&str]) -> String {
     let mut hash = 0xcbf29ce484222325_u64;
     for bytes in std::iter::once(source.as_bytes()).chain(prompts.iter().map(|p| p.as_bytes())) {
-        for byte in (bytes.len() as u64).to_le_bytes().iter().chain(bytes.iter()) {
+        for byte in (bytes.len() as u64)
+            .to_le_bytes()
+            .iter()
+            .chain(bytes.iter())
+        {
             hash ^= u64::from(*byte);
             hash = hash.wrapping_mul(0x100000001b3);
         }
@@ -328,10 +332,8 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             WorkflowSteps::ChunkedTransformMerge.get_prompt()
         );
         let checkpoint_file = checkpoint_path(&output);
-        let fingerprint = extraction_fingerprint(
-            &source,
-            &[&extract_prompt, &validate_prompt, &merge_prompt],
-        );
+        let fingerprint =
+            extraction_fingerprint(&source, &[&extract_prompt, &validate_prompt, &merge_prompt]);
         let mut checkpoint = match load_checkpoint(&checkpoint_file, &fingerprint, parts.len()) {
             Ok(Some(checkpoint)) => {
                 println!(
