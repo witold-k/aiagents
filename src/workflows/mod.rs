@@ -27,6 +27,7 @@
 
 pub mod build;
 pub mod build_lint_test;
+pub mod chunked_transform;
 pub mod doc;
 pub mod endless;
 pub mod release_doc;
