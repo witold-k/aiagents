@@ -83,12 +83,17 @@ fn parse_file_records(response: &str) -> Result<Vec<(String, String)>, String> {
     let mut current_path: Option<String> = None;
     let mut content = String::new();
     for line in response.lines() {
-        if let Some(path) = line.strip_prefix("=== FILE: ").and_then(|s| s.strip_suffix(" ===")) {
+        if let Some(path) = line
+            .strip_prefix("=== FILE: ")
+            .and_then(|s| s.strip_suffix(" ==="))
+        {
             if current_path.is_some() {
                 return Err("Nested FILE record in model response".into());
             }
             if !valid_spec_path(path) {
-                return Err(format!("Invalid specification path in model response: {path}"));
+                return Err(format!(
+                    "Invalid specification path in model response: {path}"
+                ));
             }
             current_path = Some(path.to_owned());
             content.clear();
@@ -119,28 +124,47 @@ fn valid_spec_path(path: &str) -> bool {
     if matches!(path, "general.md" | "infrastructure.md") {
         return true;
     }
-    let Some(slug) = path.strip_prefix("messages/").and_then(|s| s.strip_suffix(".md")) else {
+    let Some(slug) = path
+        .strip_prefix("messages/")
+        .and_then(|s| s.strip_suffix(".md"))
+    else {
         return false;
     };
     !slug.is_empty()
-        && slug.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+        && slug
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
 }
 
 /// Stage all output files in a fresh sibling directory and publish only after
 /// every file has been written. Refuse to overwrite an existing specification.
-fn write_spec_directory(output: &Path, files: &BTreeMap<String, String>, source: &Path) -> Result<(), String> {
+fn write_spec_directory(
+    output: &Path,
+    files: &BTreeMap<String, String>,
+    source: &Path,
+) -> Result<(), String> {
     if output.exists() {
-        return Err(format!("Output directory already exists: {}", output.display()));
+        return Err(format!(
+            "Output directory already exists: {}",
+            output.display()
+        ));
     }
-    let name = output.file_name().and_then(|s| s.to_str()).ok_or("Invalid output directory name")?;
+    let name = output
+        .file_name()
+        .and_then(|s| s.to_str())
+        .ok_or("Invalid output directory name")?;
     let stage = output.with_file_name(format!(".{name}.tmp-{}", std::process::id()));
     fs::create_dir(&stage).map_err(|e| format!("Cannot stage output: {e}"))?;
     let result = (|| {
         fs::create_dir(stage.join("messages")).map_err(|e| e.to_string())?;
         for (path, body) in files {
-            fs::write(stage.join(path), format!("{body}\n")).map_err(|e| format!("Cannot write {path}: {e}"))?;
+            fs::write(stage.join(path), format!("{body}\n"))
+                .map_err(|e| format!("Cannot write {path}: {e}"))?;
         }
-        let mut readme = format!("# Extracted Message Specifications\n\nSource: `{}`\n\n", source.display());
+        let mut readme = format!(
+            "# Extracted Message Specifications\n\nSource: `{}`\n\n",
+            source.display()
+        );
         readme.push_str("## Shared specifications\n\n- [General protocol rules](general.md)\n- [Infrastructure contracts](infrastructure.md)\n\n## Messages\n\n");
         for path in files.keys().filter(|p| p.starts_with("messages/")) {
             readme.push_str(&format!("- [{path}]({path})\n"));
@@ -255,7 +279,10 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 part.text
             );
             let draft = match self.llm_call.run_text_step_limited_with_temperature(
-                &extract_prompt, &context, MAX_TOKENS, 0.2,
+                &extract_prompt,
+                &context,
+                MAX_TOKENS,
+                0.2,
             ) {
                 Ok(text) => text,
                 Err(err) => return WorkflowResult::LlmCallResult(err),
@@ -263,7 +290,10 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             let review_context = format!("{context}\n\n=== EXTRACTED DRAFT ===\n{draft}");
             println!("## [CHUNKED] VALIDATE {}/{}", index + 1, parts.len());
             let checked = match self.llm_call.run_text_step_limited_with_temperature(
-                &validate_prompt, &review_context, MAX_TOKENS, 0.1,
+                &validate_prompt,
+                &review_context,
+                MAX_TOKENS,
+                0.1,
             ) {
                 Ok(text) => text,
                 Err(err) => return WorkflowResult::LlmCallResult(err),
@@ -284,7 +314,10 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                     }
                     println!("## [CHUNKED] MERGE {path}");
                     let merged = match self.llm_call.run_text_step_limited_with_temperature(
-                        &merge_prompt, &merge_context, MAX_TOKENS, 0.1,
+                        &merge_prompt,
+                        &merge_context,
+                        MAX_TOKENS,
+                        0.1,
                     ) {
                         Ok(text) => text,
                         Err(err) => return WorkflowResult::LlmCallResult(err),
@@ -302,7 +335,9 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         if files.is_empty() {
             return WorkflowResult::Error("No protocol specifications were extracted".into());
         }
-        files.entry("general.md".into()).or_insert_with(|| "# General Protocol Rules\n\nNo shared rules were established from the source.".into());
+        files.entry("general.md".into()).or_insert_with(|| {
+            "# General Protocol Rules\n\nNo shared rules were established from the source.".into()
+        });
         files.entry("infrastructure.md".into()).or_insert_with(|| "# Infrastructure Contracts\n\nNo helper contracts were established from the source.".into());
         match write_spec_directory(&output, &files, &input) {
             Ok(()) => {
@@ -402,5 +437,4 @@ mod tests {
         assert!(parse_file_records("garbage").is_err());
         assert!(parse_file_records("=== FILE: general.md ===\nfoo").is_err());
     }
-
 }
