@@ -91,7 +91,9 @@ mod tests {
 
     #[test]
     fn chunked_text_transformation_does_not_require_language() {
-        assert!(!WorkflowSelector::requires_language(Tasks::ExtractMessageTables));
+        assert!(!WorkflowSelector::requires_language(
+            Tasks::ExtractMessageTables
+        ));
     }
 
     #[test]
