@@ -2,7 +2,6 @@
 // Copyright (c) 2026 Witold Kaminski
 
 pub mod aimessage;
-pub mod airequest;
 pub mod buildresult;
 pub mod buildsystem;
 pub mod generic_work_step;

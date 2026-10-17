@@ -13,7 +13,6 @@ use crate::config::AIProvider;
 use crate::config::Config;
 use crate::generated_tasks::Tasks;
 use crate::runtimetools::aimessage::{AIMessageList, AIMessageListData, AIMessageType};
-use crate::runtimetools::airequest::{AIRequest, AIRequestResult};
 use crate::utils::{
     ast::get_ast_string,
     scan_dir::scan_with_suffix_and_filter,
@@ -23,6 +22,7 @@ use fsscanner::{
     fileentry::FileEntry, fsscanner_base::collect_files_all, pathfilter::Pathfilter,
     pathutils::normalize_path,
 };
+use llmhttpclient::{AIRequest, AIRequestResult};
 use serde_json::Value;
 use std::cell::RefCell;
 use std::fmt;
