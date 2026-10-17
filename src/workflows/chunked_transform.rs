@@ -105,6 +105,8 @@ pub fn parse_file_records(response: &str) -> Result<Vec<(String, String)>, Strin
             }
             records.push((path, content.trim().to_owned()));
             content.clear();
+        } else if current_path.is_none() && line.trim() == EMPTY_MARKER {
+            return Err("Model mixed NO_MESSAGE_DEFINITIONS with FILE records".into());
         } else if current_path.is_some() {
             content.push_str(line);
             content.push('\n');
