@@ -85,20 +85,5 @@ impl<'a> WorkflowSelector<'a> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::WorkflowSelector;
-    use crate::generated_tasks::Tasks;
-
-    #[test]
-    fn chunked_text_transformation_does_not_require_language() {
-        assert!(!WorkflowSelector::requires_language(
-            Tasks::ExtractMessageTables
-        ));
-    }
-
-    #[test]
-    fn code_workflows_require_language() {
-        assert!(WorkflowSelector::requires_language(Tasks::FixCode));
-        assert!(WorkflowSelector::requires_language(Tasks::GenCode));
-    }
-}
+#[path = "../../tests/workflows/select_workflow_test.rs"]
+mod tests;
