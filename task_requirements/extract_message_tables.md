@@ -112,7 +112,24 @@ Keep it independent of any build system or programming language.
 - Report unresolved ambiguities honestly; do not label unverified output as
   fully validated.
 
-### Stage 5 — Write specification directory
+### Stage 5 — Iterative whole-knowledge audit
+
+- After initial per-chunk extraction, independent review, and file-level merge,
+  audit the **assembled** specifications again against bounded source evidence.
+- Verify both missing facts and unsupported or redundant generated facts.
+  Especially audit generic infrastructure: every helper must be justified by
+  a concrete message dependency or documented shared protocol requirement.
+- Cross-check message specifications, shared protocol rules, and infrastructure
+  contracts. Missing helper contracts are as important as speculative ones.
+- Reconcile corrections incrementally and repeat the audit until a complete
+  pass yields no changes, subject to a finite pass limit. Never report
+  success if the audit has not converged.
+- Preserve source traceability and unresolved contradictions. Do not turn
+  plausible conventions into documented requirements.
+- Keep each audit call bounded; never send the complete original document
+  or complete generated directory in one model request.
+
+### Stage 6 — Write specification directory
 
 - Write `<input_stem>_messages/` only after successful assembly and required
   checks. Stage files in a temporary directory and publish as one directory.
@@ -139,12 +156,16 @@ Keep it independent of any build system or programming language.
 11. Build, tests, Clippy, and formatting checks pass.
 12. Errors in reading, parsing, model responses, merging, validation, or
     writing are reported rather than silently producing a success result.
+13. Assembled specifications undergo iterative evidence-based audits for
+    missing and unsupported facts, including unnecessary generic helpers.
+14. Audit convergence is required; reaching the iteration limit is an error.
 
 ## Implementation note
 
 The feature-branch implementation uses overlapping character windows and
 per-file incremental merging. It still needs comprehensive integration tests,
 robust cross-window identity resolution, hierarchical merge for oversized
-single-message specifications, and independent verification of the final
-merged files against all contributing source ranges. Do not describe the
+single-message specifications, and efficient, comprehensive verification of the final
+merged files against all contributing source ranges. The current audit is
+bounded per call but may require many model calls on large documents. Do not describe the
 current implementation as fully validated.
