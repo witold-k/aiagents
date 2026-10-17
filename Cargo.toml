@@ -16,7 +16,7 @@ struct_extractors = { version = "0.1.0", git = "https://github.com/witold-k/stru
 fsscanner = { version = "0.4.0", git = "https://github.com/witold-k/fsscanner", rev = "cb034d15865d20b5102c6ec5a12f8944e2e11058" }
 
 # -- symbol lookup
-symbol_to_source_resolver = { git = "https://github.com/witold-k/symbol_to_source_resolver" }
+symbol_to_source_resolver = { git = "https://github.com/witold-k/symbol_to_source_resolver", rev = "24781cb7f1b5c0b26101ce50c8921311efd8e385" }
 
 # -- process
 ctrlc = "3.5.2"
