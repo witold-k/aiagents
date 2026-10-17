@@ -1,26 +1,31 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Witold Kaminski
 
-use std::path::{ Path, PathBuf };
-use std::process::Command;
 use crate::generated_languages::Languages;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 #[derive(Default, Debug, Clone)]
 pub struct Buildcommand {
     pub setup: Vec<String>,
     pub build: Vec<String>,
-    pub lint:  Vec<String>,
-    pub test:  Vec<String>,
+    pub lint: Vec<String>,
+    pub test: Vec<String>,
 }
 
 impl Buildcommand {
     pub fn new(
         setup: Vec<String>,
         build: Vec<String>,
-        lint:  Vec<String>,
-        test:  Vec<String>,
+        lint: Vec<String>,
+        test: Vec<String>,
     ) -> Self {
-        Self { setup, build, lint, test }
+        Self {
+            setup,
+            build,
+            lint,
+            test,
+        }
     }
 }
 
@@ -46,15 +51,14 @@ pub const ALL_BUILDSYSTEMS: &[Buildsystem] = &[
 ];
 
 impl Buildsystem {
-
     pub fn as_str(&self) -> &'static str {
         match self {
             Buildsystem::None => "None",
             Buildsystem::Cargo => "Cargo",
             Buildsystem::Cmake => "Cmake",
-            Buildsystem::Just  => "Just",
+            Buildsystem::Just => "Just",
             Buildsystem::Maven => "Maven",
-            Buildsystem::Make  => "Make",
+            Buildsystem::Make => "Make",
             Buildsystem::Meson => "Meson",
         }
     }
@@ -94,8 +98,8 @@ impl Buildsystem {
             Buildsystem::None => PathBuf::from("."),
             Buildsystem::Cargo => PathBuf::from("target"),
             Buildsystem::Cmake => PathBuf::from("build"),
-            Buildsystem::Just  => PathBuf::from("target"),
-            Buildsystem::Make  => PathBuf::from("build"),
+            Buildsystem::Just => PathBuf::from("target"),
+            Buildsystem::Make => PathBuf::from("build"),
             Buildsystem::Maven => PathBuf::from("target"),
             Buildsystem::Meson => PathBuf::from("build"),
         }
@@ -108,8 +112,8 @@ impl Buildsystem {
         static MAP: &[(&str, Buildsystem)] = &[
             ("cargo", Buildsystem::Cargo),
             ("cmake", Buildsystem::Cmake),
-            ("just",  Buildsystem::Just),
-            ("make",  Buildsystem::Make),
+            ("just", Buildsystem::Just),
+            ("make", Buildsystem::Make),
             ("maven", Buildsystem::Maven),
             ("meson", Buildsystem::Meson),
         ];
@@ -161,10 +165,7 @@ impl Buildsystem {
             return;
         };
 
-        let _ = Command::new(cmd)
-            .args(args)
-            .current_dir(projdir)
-            .status();
+        let _ = Command::new(cmd).args(args).current_dir(projdir).status();
     }
 
     pub fn build_cmd(&self, projdir: &Path, targetdir: &Path) -> Buildcommand {
@@ -181,7 +182,6 @@ impl Buildsystem {
         let sdir = projdir.to_string_lossy().to_string();
         let tdir = targetdir.to_string_lossy().to_string();
 
-
         match self {
             Buildsystem::Cargo => {
                 let t = ["--target-dir".into(), tdir.clone()];
@@ -193,65 +193,62 @@ impl Buildsystem {
                 )
             }
 
-            Buildsystem::Cmake => {
-                Buildcommand::new(
-                    vec!["cmake".into(), "-S".into(), sdir.clone(), "-B".into(), tdir.clone(), "-G".into(), "Ninja".into()],
-                    vec!["cmake".into(), "--build".into(), tdir.clone()],
-                    vec![],
-                    vec!["cmake".into(), "--build".into(), tdir.clone(), "--target".into(), "test".into()],
-                )
-            }
+            Buildsystem::Cmake => Buildcommand::new(
+                vec![
+                    "cmake".into(),
+                    "-S".into(),
+                    sdir.clone(),
+                    "-B".into(),
+                    tdir.clone(),
+                    "-G".into(),
+                    "Ninja".into(),
+                ],
+                vec!["cmake".into(), "--build".into(), tdir.clone()],
+                vec![],
+                vec![
+                    "cmake".into(),
+                    "--build".into(),
+                    tdir.clone(),
+                    "--target".into(),
+                    "test".into(),
+                ],
+            ),
 
             Buildsystem::Just => {
-                Buildcommand::new(
-                    vec![],
-                    vec!["just".into(), "build".into()],
-                    vec![],
-                    vec![],
-                )
+                Buildcommand::new(vec![], vec!["just".into(), "build".into()], vec![], vec![])
             }
 
-            Buildsystem::Meson => {
-                Buildcommand::new(
-                    vec!["meson".into(), "setup".into(), tdir.clone()],
-                    vec!["meson".into(), "compile".into(), "-C".into(), tdir.clone()],
-                    vec![],
-                    vec!["meson".into(), "test".into(), "-C".into(), tdir.clone()],
-                )
-            }
+            Buildsystem::Meson => Buildcommand::new(
+                vec!["meson".into(), "setup".into(), tdir.clone()],
+                vec!["meson".into(), "compile".into(), "-C".into(), tdir.clone()],
+                vec![],
+                vec!["meson".into(), "test".into(), "-C".into(), tdir.clone()],
+            ),
 
             Buildsystem::Make => {
-                Buildcommand::new(
-                    vec![],
-                    vec!["make".into(), "build".into()],
-                    vec![],
-                    vec![],
-                )
+                Buildcommand::new(vec![], vec!["make".into(), "build".into()], vec![], vec![])
             }
 
-            Buildsystem::Maven => {
-                Buildcommand::new(
-                    vec![
-                        "mvn".into(),
-                        "clean".into(),
-                        format!("-DoutputDirectory={tdir}"),
-                    ],
-                    vec![
-                        "mvn".into(),
-                        "package".into(),
-                        format!("-DoutputDirectory={tdir}"),
-                    ],
-                    vec![],
-                    vec![
-                        "mvn".into(),
-                        "test".into(),
-                        format!("-DoutputDirectory={tdir}"),
-                    ],
-                )
-            }
+            Buildsystem::Maven => Buildcommand::new(
+                vec![
+                    "mvn".into(),
+                    "clean".into(),
+                    format!("-DoutputDirectory={tdir}"),
+                ],
+                vec![
+                    "mvn".into(),
+                    "package".into(),
+                    format!("-DoutputDirectory={tdir}"),
+                ],
+                vec![],
+                vec![
+                    "mvn".into(),
+                    "test".into(),
+                    format!("-DoutputDirectory={tdir}"),
+                ],
+            ),
 
             Buildsystem::None => Buildcommand::default(),
         }
     }
 }
-

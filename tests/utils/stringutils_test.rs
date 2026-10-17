@@ -7,7 +7,6 @@ mod tests {
     use aiagents::utils::stringutils::strip_code_fences;
     use aiagents::utils::stringutils::strip_outer_markdown_fence;
 
-
     #[test]
     fn iter_fenced_blocks_finds_single_block_without_language() {
         let input = "before\n```\nhello\n```\nafter";
@@ -100,7 +99,8 @@ mod tests {
 
     #[test]
     fn strip_code_fences_prefers_json() {
-        let input = "```rust\nnot the preferred block\n```\n\n```json\n{\n  \"name\": \"test\"\n}\n```";
+        let input =
+            "```rust\nnot the preferred block\n```\n\n```json\n{\n  \"name\": \"test\"\n}\n```";
 
         let result = strip_code_fences(input);
 
@@ -137,13 +137,19 @@ mod tests {
     #[test]
     fn strip_outer_markdown_fence_preserves_first_plaintext_line() {
         let input = "```cpp/src/OpenResult.hpp\ncpp/src/Shmem.hpp\n```";
-        assert_eq!(strip_outer_markdown_fence(input), "cpp/src/OpenResult.hpp\ncpp/src/Shmem.hpp");
+        assert_eq!(
+            strip_outer_markdown_fence(input),
+            "cpp/src/OpenResult.hpp\ncpp/src/Shmem.hpp"
+        );
     }
 
     #[test]
     fn strip_outer_markdown_fence_returns_raw_text_without_fence() {
         let input = "  cpp/src/OpenResult.hpp\ncpp/src/Shmem.hpp  ";
-        assert_eq!(strip_outer_markdown_fence(input), "cpp/src/OpenResult.hpp\ncpp/src/Shmem.hpp");
+        assert_eq!(
+            strip_outer_markdown_fence(input),
+            "cpp/src/OpenResult.hpp\ncpp/src/Shmem.hpp"
+        );
     }
 
     #[test]
@@ -166,10 +172,7 @@ mod tests {
 
     #[test]
     fn extract_known_paths_prefers_longest_match_and_ignores_duplicates() {
-        let known = vec![
-            "src/OpenResult.hpp".into(),
-            "cpp/src/OpenResult.hpp".into(),
-        ];
+        let known = vec!["src/OpenResult.hpp".into(), "cpp/src/OpenResult.hpp".into()];
         let input = "`/project/cpp/src/OpenResult.hpp`\ncpp/src/OpenResult.hpp";
 
         assert_eq!(
@@ -193,7 +196,10 @@ mod tests {
         assert_eq!(extract_standalone_choice("4", 3), None);
         assert_eq!(extract_standalone_choice("Design 4", 3), None);
         assert_eq!(extract_standalone_choice("I prefer Design 2", 3), None);
-        assert_eq!(extract_standalone_choice("Design 2 because it is simpler", 3), None);
+        assert_eq!(
+            extract_standalone_choice("Design 2 because it is simpler", 3),
+            None
+        );
     }
 
     #[test]
@@ -229,7 +235,9 @@ mod tests {
 
         let result = raw_fence_to_string(input);
 
-        assert_eq!(result, "{\"first\": \"hello\\n\", \"second\": \"world\\n\"}");
+        assert_eq!(
+            result,
+            "{\"first\": \"hello\\n\", \"second\": \"world\\n\"}"
+        );
     }
 }
-

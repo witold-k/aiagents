@@ -3,18 +3,15 @@
 
 // This file contains functions for building, linting, and testing a project.
 
-use std::path::Path;
 use crate::config::Config;
 use crate::runtimetools::{
-    llmcall::LlmCall,
     buildresult::Buildresult,
-    buildsystem::{Buildsystem, Buildcommand},
+    buildsystem::{Buildcommand, Buildsystem},
     generic_work_step::run_cmd,
+    llmcall::LlmCall,
 };
-use crate::workflows::{
-    workflow::Workflow,
-    workflow::WorkflowResult,
-};
+use crate::workflows::{workflow::Workflow, workflow::WorkflowResult};
+use std::path::Path;
 
 #[expect(dead_code)]
 pub struct WorkspaceWorkflow<'a> {
@@ -27,7 +24,7 @@ pub struct WorkspaceWorkflow<'a> {
 }
 
 impl<'a> WorkspaceWorkflow<'a> {
-    pub fn new (
+    pub fn new(
         config: &'a Config,
         llm_call: LlmCall<'a>,
         bs: Buildsystem,
@@ -35,7 +32,14 @@ impl<'a> WorkspaceWorkflow<'a> {
         workspacedir: &'a Path,
         targetdir: &'a Path,
     ) -> Self {
-        WorkspaceWorkflow { config, llm_call, bc: bs.build_cmd(workspacedir, targetdir), projdir, workspacedir, targetdir  }
+        WorkspaceWorkflow {
+            config,
+            llm_call,
+            bc: bs.build_cmd(workspacedir, targetdir),
+            projdir,
+            workspacedir,
+            targetdir,
+        }
     }
 
     /// returns build error, if any
@@ -61,9 +65,7 @@ impl<'a> WorkspaceWorkflow<'a> {
 }
 
 impl<'a> Workflow for WorkspaceWorkflow<'a> {
-    fn execute(
-        &self,
-    ) -> WorkflowResult {
+    fn execute(&self) -> WorkflowResult {
         self.execute_build_llm(&self.build(), &self.llm_call)
     }
 }

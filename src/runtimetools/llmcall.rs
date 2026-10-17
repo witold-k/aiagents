@@ -1,35 +1,33 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Witold Kaminski
 
+use crate::agenttools::{
+    aitooltype::AIToolType,
+    all_tools::{ToolOutput, execute_tool},
+    failed::*,
+    load_file_by_symbol::LoadFileBySymbol,
+    save_file_replace_part::{SaveFilePartError, SaveFilePartErrorType},
+};
+use crate::aimessageid::AIMessageId;
+use crate::config::AIProvider;
+use crate::config::Config;
+use crate::generated_tasks::Tasks;
+use crate::runtimetools::aimessage::{AIMessageList, AIMessageListData, AIMessageType};
+use crate::runtimetools::airequest::{AIRequest, AIRequestResult};
+use crate::utils::{
+    ast::get_ast_string,
+    scan_dir::scan_with_suffix_and_filter,
+    stringutils::{extract_known_paths, raw_fence_to_string, strip_code_fences},
+};
+use fsscanner::{
+    fileentry::FileEntry, fsscanner_base::collect_files_all, pathfilter::Pathfilter,
+    pathutils::normalize_path,
+};
 use serde_json::Value;
 use std::cell::RefCell;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
-use fsscanner::{
-    fileentry::FileEntry,
-    fsscanner_base::collect_files_all,
-    pathfilter::Pathfilter,
-    pathutils::normalize_path,
-};
-use crate::agenttools::{
-    all_tools::{execute_tool, ToolOutput},
-    aitooltype::AIToolType,
-    load_file_by_symbol::LoadFileBySymbol,
-    failed::*,
-    save_file_replace_part::{SaveFilePartError, SaveFilePartErrorType},
-};
-use crate::aimessageid::AIMessageId;
-use crate::config::AIProvider;
-use crate::runtimetools::aimessage::{AIMessageList, AIMessageType, AIMessageListData};
-use crate::runtimetools::airequest::{AIRequest, AIRequestResult};
-use crate::utils:: {
-    ast::get_ast_string,
-    scan_dir::scan_with_suffix_and_filter,
-    stringutils::{extract_known_paths, strip_code_fences, raw_fence_to_string},
-};
-use crate::config::Config;
-use crate::generated_tasks::Tasks;
 
 #[expect(dead_code)]
 #[derive(Clone)]
@@ -51,7 +49,7 @@ pub enum LlmCallResult {
     RetryFailed,
     ToolResult(ToolOutput),
     RequestError(Box<AIRequestResult>),
-    ToolError(ToolOutput)
+    ToolError(ToolOutput),
 }
 
 impl LlmCallResult {
@@ -97,7 +95,7 @@ impl<'a> LlmCall<'a> {
     ) -> Self {
         let data = AIMessageListData {
             messages: Vec::new(),
-            message_id: AIMessageId {val: 1},
+            message_id: AIMessageId { val: 1 },
             depth: config.queue_length_max,
             task_id,
             task_description,
@@ -106,8 +104,14 @@ impl<'a> LlmCall<'a> {
             context: String::new(),
             filelist: Self::create_file_list(config, &projdir, filter),
             files: Self::create_files_info(
-                config, &projdir, workspacedir.as_deref(), task_id, filter, selected
-            ).unwrap_or_else(|err| {
+                config,
+                &projdir,
+                workspacedir.as_deref(),
+                task_id,
+                filter,
+                selected,
+            )
+            .unwrap_or_else(|err| {
                 eprintln!("Failed to load initial file context: {err}");
                 Vec::new()
             }),
@@ -115,7 +119,10 @@ impl<'a> LlmCall<'a> {
             faults: None,
         };
         if dump {
-            println!("## [LLM] PROJECT DIR: {}", normalize_path(&projdir).display());
+            println!(
+                "## [LLM] PROJECT DIR: {}",
+                normalize_path(&projdir).display()
+            );
             println!("## [LLM] FILE LIST COUNT: {}", data.filelist.len());
         }
 
@@ -192,10 +199,7 @@ impl<'a> LlmCall<'a> {
             matching_roots
         };
 
-        let mut structure_targets = selected_roots
-            .into_iter()
-            .cloned()
-            .collect::<Vec<_>>();
+        let mut structure_targets = selected_roots.into_iter().cloned().collect::<Vec<_>>();
 
         if let Ok(entries) = fs::read_dir(&self.projdir) {
             for entry in entries.flatten() {
@@ -209,7 +213,12 @@ impl<'a> LlmCall<'a> {
                 };
 
                 if diagnostic.contains(filename)
-                    && self.messages.borrow().filelist.iter().any(|listed| listed == Path::new(filename))
+                    && self
+                        .messages
+                        .borrow()
+                        .filelist
+                        .iter()
+                        .any(|listed| listed == Path::new(filename))
                 {
                     structure_targets.push(path);
                 }
@@ -225,11 +234,7 @@ impl<'a> LlmCall<'a> {
         self.messages.borrow_mut().structureinfo = structureinfo;
     }
 
-    pub fn create_file_list(
-        config: &Config,
-        projdir: &Path,
-        filter: &Pathfilter,
-    ) -> Vec<PathBuf> {
+    pub fn create_file_list(config: &Config, projdir: &Path, filter: &Pathfilter) -> Vec<PathBuf> {
         let projdir = normalize_path(projdir);
         let build_path = projdir.join("build");
         let target_path = projdir.join("target");
@@ -264,13 +269,24 @@ impl<'a> LlmCall<'a> {
         for sel in selected {
             collect_files_all(sel, &mut selected_paths);
         }
-        let mut selected_entries = FileEntry::vec_from_filtered_pathbufvec(None, selected_paths.to_vec())?;
+        let mut selected_entries =
+            FileEntry::vec_from_filtered_pathbufvec(None, selected_paths.to_vec())?;
         selected_entries.retain(|entry| {
             let path = entry.to_string();
-            let Some(filename) = entry.path.file_name().and_then(|f| f.to_str()).map(String::from) else {
+            let Some(filename) = entry
+                .path
+                .file_name()
+                .and_then(|f| f.to_str())
+                .map(String::from)
+            else {
                 return false;
             };
-            let Some(suffix) = entry.path.extension().and_then(|s| s.to_str()).map(String::from) else {
+            let Some(suffix) = entry
+                .path
+                .extension()
+                .and_then(|s| s.to_str())
+                .map(String::from)
+            else {
                 return false;
             };
 
@@ -284,25 +300,17 @@ impl<'a> LlmCall<'a> {
             Some(ws) => {
                 let mut all_entries = Vec::<FileEntry>::with_capacity(128);
 
-                for path in scan_with_suffix_and_filter(
-                    ws,
-                    &[".md", ".txt"],
-                    filter,
-                ) {
+                for path in scan_with_suffix_and_filter(ws, &[".md", ".txt"], filter) {
                     all_entries.push(FileEntry::from_path(&path)?);
                 }
 
-                for path in scan_with_suffix_and_filter(
-                    ws,
-                    &[],
-                    filter,
-                ) {
+                for path in scan_with_suffix_and_filter(ws, &[], filter) {
                     all_entries.push(FileEntry::from_path(&path)?);
                 }
                 all_entries.append(&mut selected_entries);
                 Ok(all_entries)
-            },
-            None => Ok(selected_entries)
+            }
+            None => Ok(selected_entries),
         }
     }
 
@@ -330,7 +338,9 @@ impl<'a> LlmCall<'a> {
         let file = json.get("file").and_then(Value::as_str)?;
         let original = json.get("original").and_then(Value::as_str)?;
         let content = json.get("content").and_then(Value::as_str)?;
-        Some(format!("File: {file}\nBEFORE:\n{original}\nAFTER:\n{content}"))
+        Some(format!(
+            "File: {file}\nBEFORE:\n{original}\nAFTER:\n{content}"
+        ))
     }
 
     fn record_completed_edit(messages: &mut AIMessageList, json: &Value) {
@@ -353,7 +363,9 @@ impl<'a> LlmCall<'a> {
         );
 
         if let Some(pos) = messages.context.rfind(&reverse_edit) {
-            messages.context.replace_range(pos..pos + reverse_edit.len(), "");
+            messages
+                .context
+                .replace_range(pos..pos + reverse_edit.len(), "");
             return;
         }
 
@@ -403,7 +415,8 @@ impl<'a> LlmCall<'a> {
 
         let mut messages = self.messages.borrow_mut();
         let selected_paths = extract_known_paths(selection, &messages.filelist, max_files);
-        let mut paths: Vec<PathBuf> = selected_paths.into_iter()
+        let mut paths: Vec<PathBuf> = selected_paths
+            .into_iter()
             .map(|relative| normalize_path(&self.projdir.join(relative)))
             .collect();
 
@@ -425,28 +438,33 @@ impl<'a> LlmCall<'a> {
             let resolver = match LoadFileBySymbol::from_json(&self.projdir, self.filter, &payload) {
                 Ok(resolver) => resolver,
                 Err(err) => {
-                    if self.dump { eprintln!("## [LLM] SYMBOL SELECT: {err}"); }
+                    if self.dump {
+                        eprintln!("## [LLM] SYMBOL SELECT: {err}");
+                    }
                     continue;
                 }
             };
             match resolver.resolve_paths() {
                 Ok(candidates) => {
                     for path in candidates {
-                        if paths.len() >= max_files { break; }
+                        if paths.len() >= max_files {
+                            break;
+                        }
                         if !paths.contains(&path) {
                             paths.push(path);
                         }
                     }
                 }
                 Err(err) => {
-                    if self.dump { eprintln!("## [LLM] SYMBOL SELECT: {err}"); }
+                    if self.dump {
+                        eprintln!("## [LLM] SYMBOL SELECT: {err}");
+                    }
                 }
             }
         }
         let mut loaded = 0;
 
         for path in paths {
-
             if messages.files.iter().any(|file| file.path == path) {
                 continue;
             }
@@ -575,10 +593,7 @@ impl<'a> LlmCall<'a> {
 
             let json = messages.to_json();
             if self.dump && keep_source_context {
-                println!(
-                    "## [LLM] ANALYZE REQUEST: {} bytes",
-                    json.to_string().len()
-                );
+                println!("## [LLM] ANALYZE REQUEST: {} bytes", json.to_string().len());
             }
             json
         };
@@ -695,15 +710,15 @@ impl<'a> LlmCall<'a> {
                             break;
                         }
                     }
-                },
+                }
                 LlmCallResult::Done if !applied_edit => {
                     final_result = LlmCallResult::RetryFailed;
                     break;
-                },
+                }
                 _ => {
                     final_result = result;
                     break;
-                },
+                }
             }
         }
 
@@ -758,15 +773,11 @@ impl<'a> LlmCall<'a> {
     }
 
     // called by self.workflow => see workflows
-    pub fn analyze(
-        &self,
-        air: &mut AIRequest,
-        request: &str,
-    ) -> LlmCallResult {
+    pub fn analyze(&self, air: &mut AIRequest, request: &str) -> LlmCallResult {
         {
-           let mut messages = self.messages.borrow_mut();
-           messages.cut_to_depth();
-           messages.faults = Some(format!("=== PROBLEM ===\n{}", request));
+            let mut messages = self.messages.borrow_mut();
+            messages.cut_to_depth();
+            messages.faults = Some(format!("=== PROBLEM ===\n{}", request));
         }
         for _ in 0..self.config.max_try_count.max_tool_call_fail {
             let response = {
@@ -774,7 +785,11 @@ impl<'a> LlmCall<'a> {
                 let json_messages = messages.to_json();
                 if self.dump {
                     println!("### SEND");
-                    println!("[process_tool_chain] {}", serde_json::to_string_pretty(&json_messages).unwrap_or("failed to decode json".to_string()));
+                    println!(
+                        "[process_tool_chain] {}",
+                        serde_json::to_string_pretty(&json_messages)
+                            .unwrap_or("failed to decode json".to_string())
+                    );
                     println!("### END");
                 }
 
@@ -786,22 +801,26 @@ impl<'a> LlmCall<'a> {
 
             if self.dump {
                 println!("### RESPONSE");
-                println!("{}", serde_json::to_string_pretty(&response).unwrap_or("failed to decode json".to_string()));
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&response)
+                        .unwrap_or("failed to decode json".to_string())
+                );
             }
 
             let choices = response.get("choices").and_then(|v| v.get(0));
 
             if let Some(choice) = choices {
-/*
-                let tool_calls = choice.get("tool_calls");
-                if let Some(tc) = tool_calls {
-                    let result = self.handle_native_tool_calls(tc);
-                    if result.is_valid() {
-                        return result;
-                    }
-                    continue;
-                }
-*/
+                /*
+                                let tool_calls = choice.get("tool_calls");
+                                if let Some(tc) = tool_calls {
+                                    let result = self.handle_native_tool_calls(tc);
+                                    if result.is_valid() {
+                                        return result;
+                                    }
+                                    continue;
+                                }
+                */
                 let content = choice
                     .get("message")
                     .and_then(|m| m.get("content"))
@@ -831,40 +850,40 @@ impl<'a> LlmCall<'a> {
         }
         LlmCallResult::RetryFailed
     }
-/*
-    pub fn handle_native_tool_calls(&self, tool_calls: &Value) -> ToolBridgeResult {
-        let mut rng = self.rng.borrow_mut();
-        for call in tool_calls.as_array().unwrap_or(&vec![]) {
-            let args = &call["function"]["arguments"];
-            let real_id = call["id"].to_string();
-            let result = execute_toolbridge_payload(&real_id, args.clone(), self.filter);
-            let mut messages = self.messages.borrow_mut();
+    /*
+        pub fn handle_native_tool_calls(&self, tool_calls: &Value) -> ToolBridgeResult {
+            let mut rng = self.rng.borrow_mut();
+            for call in tool_calls.as_array().unwrap_or(&vec![]) {
+                let args = &call["function"]["arguments"];
+                let real_id = call["id"].to_string();
+                let result = execute_toolbridge_payload(&real_id, args.clone(), self.filter);
+                let mut messages = self.messages.borrow_mut();
 
-            if result.is_valid() {
-                if result.tooltype.is_save() {
-                    messages.clear();
-                    messages.files = Self::create_files_info(
-                        &self.config, self.projdir, self.workspacedir,
-                        messages.task_id, self.filter, &mut rng
-                    );
+                if result.is_valid() {
+                    if result.tooltype.is_save() {
+                        messages.clear();
+                        messages.files = Self::create_files_info(
+                            &self.config, self.projdir, self.workspacedir,
+                            messages.task_id, self.filter, &mut rng
+                        );
+                        return result;
+                    }
+                    if result.tooltype.is_note() {
+                        messages.note = result.toolresult["content"].to_string();
+                    }
+                    messages.append(&real_id, AIMessageType::Tool, result.tooltype, result.toolresult);
+                } else {
+                    messages.append(&real_id, AIMessageType::Tool, result.tooltype, json!({
+                        "role": "tool",
+                        "tool_call_id": call["id"],
+                        "content": format!("Error occurred: {}", result.valueerror.clone().expect("REASON"))
+                    }));
                     return result;
                 }
-                if result.tooltype.is_note() {
-                    messages.note = result.toolresult["content"].to_string();
-                }
-                messages.append(&real_id, AIMessageType::Tool, result.tooltype, result.toolresult);
-            } else {
-                messages.append(&real_id, AIMessageType::Tool, result.tooltype, json!({
-                    "role": "tool",
-                    "tool_call_id": call["id"],
-                    "content": format!("Error occurred: {}", result.valueerror.clone().expect("REASON"))
-                }));
-                return result;
             }
+            ToolBridgeResult::new_valid()
         }
-        ToolBridgeResult::new_valid()
-    }
-*/
+    */
     pub fn handle_text_action(&self, content: &str) -> ToolOutput {
         let mut messages = self.messages.borrow_mut();
         let fake_id = messages.inc_messageid();
@@ -879,9 +898,15 @@ impl<'a> LlmCall<'a> {
                 // Chat templates that require alternating roles would otherwise see
                 // consecutive user messages on the retry.
                 messages.append(
-                    fake_id, AIMessageType::Model, AIToolType::Failed, &cleancode
+                    fake_id,
+                    AIMessageType::Model,
+                    AIToolType::Failed,
+                    &cleancode,
                 );
-                eprintln!("[handle_text_action] JSON parse error: {}\n>>>>CODE:\n{}\n<<<<", e, cleancode);
+                eprintln!(
+                    "[handle_text_action] JSON parse error: {}\n>>>>CODE:\n{}\n<<<<",
+                    e, cleancode
+                );
                 messages.append(
                     fake_id, AIMessageType::Tool, AIToolType::Failed,
                     &format!("Error occurred: JSON parse error, this should contain a valid JSON block: {}\n>>>>CODE:\n{}\n<<<<", e, cleancode)
@@ -929,9 +954,9 @@ impl<'a> LlmCall<'a> {
                 messages.clear();
 
                 let transient_source_files = self.transient_source_files.borrow();
-                messages.files.retain(|file| {
-                    !transient_source_files.contains(&file.path)
-                });
+                messages
+                    .files
+                    .retain(|file| !transient_source_files.contains(&file.path));
                 drop(transient_source_files);
                 self.transient_source_files.borrow_mut().clear();
 
@@ -939,23 +964,24 @@ impl<'a> LlmCall<'a> {
                 if let Err(err) = messages.update() {
                     eprintln!("Failed to refresh file context: {err}");
                 }
-            }
-            else {
+            } else {
                 if result.to_base().is_failed() {
                     println!("TOOL: {}", result.to_msg_string(fake_id));
                 }
-                messages.append(fake_id, AIMessageType::Tool, result.to_base(), &result.to_msg_string(fake_id));
+                messages.append(
+                    fake_id,
+                    AIMessageType::Tool,
+                    result.to_base(),
+                    &result.to_msg_string(fake_id),
+                );
             }
-        }
-        else {
+        } else {
             let original_mismatch = matches!(
                 &result,
                 ToolOutput::SaveFilePart(Err(err)) if err.is_original_mismatch()
             );
             let error = format!("Error occurred: {}", result.to_json(fake_id));
-            messages.append(
-                fake_id, AIMessageType::Tool, result.to_base(), &error
-            );
+            messages.append(fake_id, AIMessageType::Tool, result.to_base(), &error);
 
             if original_mismatch {
                 self.reload_mismatched_save_file(&mut messages, &json);

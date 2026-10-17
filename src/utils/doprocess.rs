@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Witold Kaminski
 
+use std::env;
+use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::io::{BufRead, BufReader};
-use std::env;
 
 pub struct DoProcess {
     cmd: Vec<String>,
@@ -77,7 +77,6 @@ impl DoProcess {
         (code, out_lines.clone(), err_lines.clone())
     }
 
-
     /// Runs the process and collects stdout/stderr into line buffers.
     /// Returns (exit_code, stdout_lines, stderr_lines)
     pub fn run_to_lines_combined(&self, lines: &mut Vec<String>) -> (i32, Vec<String>) {
@@ -120,19 +119,13 @@ impl DoProcess {
         // Read stdout in a thread
         let out_handle = std::thread::spawn(move || {
             let reader = BufReader::new(stdout);
-            reader
-                .lines()
-                .map(|l| l.unwrap())
-                .collect::<Vec<String>>()
+            reader.lines().map(|l| l.unwrap()).collect::<Vec<String>>()
         });
 
         // Read stderr in a thread
         let err_handle = std::thread::spawn(move || {
             let reader = BufReader::new(stderr);
-            reader
-                .lines()
-                .map(|l| l.unwrap())
-                .collect::<Vec<String>>()
+            reader.lines().map(|l| l.unwrap()).collect::<Vec<String>>()
         });
 
         let out_lines = out_handle.join().unwrap();
@@ -152,6 +145,4 @@ impl DoProcess {
 
         (code, lines.clone())
     }
-
 }
-

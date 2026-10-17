@@ -1,28 +1,15 @@
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
-    use aiagents::aimessageid::AIMessageId;
-    use aiagents::runtimetools::aimessage::{
-        AIMessage,
-        AIMessageList,
-        AIMessageListData,
-        AIMessageType,
-    };
     use aiagents::agenttools::aitooltype::AIToolType;
+    use aiagents::aimessageid::AIMessageId;
     use aiagents::generated_tasks::Tasks;
+    use aiagents::runtimetools::aimessage::{
+        AIMessage, AIMessageList, AIMessageListData, AIMessageType,
+    };
+    use serde_json::json;
 
-    fn message(
-        id: usize,
-        msgtype: AIMessageType,
-        tooltype: AIToolType,
-        data: &str,
-    ) -> AIMessage {
-        AIMessage::new(
-            AIMessageId { val: id },
-            msgtype,
-            tooltype,
-            data.to_string(),
-        )
+    fn message(id: usize, msgtype: AIMessageType, tooltype: AIToolType, data: &str) -> AIMessage {
+        AIMessage::new(AIMessageId { val: id }, msgtype, tooltype, data.to_string())
     }
 
     fn empty_list() -> AIMessageList {
@@ -79,12 +66,7 @@ mod tests {
 
     #[test]
     fn message_constructor() {
-        let msg = message(
-            42,
-            AIMessageType::User,
-            AIToolType::LoadFile,
-            "hello",
-        );
+        let msg = message(42, AIMessageType::User, AIToolType::LoadFile, "hello");
 
         assert_eq!(msg.message_id, AIMessageId { val: 42 });
         assert_eq!(msg.msgtype, AIMessageType::User);
@@ -94,45 +76,15 @@ mod tests {
 
     #[test]
     fn is_user_only_returns_true_for_user_messages() {
-        assert!(message(
-            1,
-            AIMessageType::User,
-            AIToolType::LoadFile,
-            "hello",
-        )
-        .is_user());
+        assert!(message(1, AIMessageType::User, AIToolType::LoadFile, "hello",).is_user());
 
-        assert!(!message(
-            1,
-            AIMessageType::System,
-            AIToolType::LoadFile,
-            "hello",
-        )
-        .is_user());
+        assert!(!message(1, AIMessageType::System, AIToolType::LoadFile, "hello",).is_user());
 
-        assert!(!message(
-            1,
-            AIMessageType::Model,
-            AIToolType::LoadFile,
-            "hello",
-        )
-        .is_user());
+        assert!(!message(1, AIMessageType::Model, AIToolType::LoadFile, "hello",).is_user());
 
-        assert!(!message(
-            1,
-            AIMessageType::Tool,
-            AIToolType::LoadFile,
-            "hello",
-        )
-        .is_user());
+        assert!(!message(1, AIMessageType::Tool, AIToolType::LoadFile, "hello",).is_user());
 
-        assert!(!message(
-            1,
-            AIMessageType::Build,
-            AIToolType::LoadFile,
-            "hello",
-        )
-        .is_user());
+        assert!(!message(1, AIMessageType::Build, AIToolType::LoadFile, "hello",).is_user());
     }
 
     #[test]
@@ -155,12 +107,7 @@ mod tests {
 
     #[test]
     fn user_message_to_json() {
-        let msg = message(
-            2,
-            AIMessageType::User,
-            AIToolType::LoadFile,
-            "user prompt",
-        );
+        let msg = message(2, AIMessageType::User, AIToolType::LoadFile, "user prompt");
 
         assert_eq!(
             msg.to_json(),
@@ -229,12 +176,7 @@ mod tests {
 
     #[test]
     fn message_to_short_string() {
-        let msg = message(
-            7,
-            AIMessageType::User,
-            AIToolType::LoadFile,
-            "hello world",
-        );
+        let msg = message(7, AIMessageType::User, AIToolType::LoadFile, "hello world");
 
         let result = msg.to_short_string();
 
@@ -251,14 +193,12 @@ mod tests {
     #[test]
     fn list_new_copies_data_and_initializes_note() {
         let data = AIMessageListData {
-            messages: vec![
-                message(
-                    1,
-                    AIMessageType::User,
-                    AIToolType::LoadFile,
-                    "hello",
-                ),
-            ],
+            messages: vec![message(
+                1,
+                AIMessageType::User,
+                AIToolType::LoadFile,
+                "hello",
+            )],
             message_id: AIMessageId { val: 10 },
             depth: 5,
             task_id: Tasks::FixCode,
@@ -661,10 +601,7 @@ mod tests {
     fn list_to_json_includes_subtasks() {
         let mut list = empty_list();
         list.task_description = "Main task".to_string();
-        list.subtask = vec![
-            "Subtask A".to_string(),
-            "Subtask B".to_string(),
-        ];
+        list.subtask = vec!["Subtask A".to_string(), "Subtask B".to_string()];
 
         let result = list.to_json();
 
@@ -877,10 +814,7 @@ mod tests {
     fn list_to_short_string_includes_subtasks() {
         let mut list = empty_list();
 
-        list.subtask = vec![
-            "subtask A".to_string(),
-            "subtask B".to_string(),
-        ];
+        list.subtask = vec!["subtask A".to_string(), "subtask B".to_string()];
 
         let result = list.to_short_string();
 
@@ -948,8 +882,7 @@ mod tests {
         let id = AIMessageId { val: 123 };
 
         let serialized = serde_json::to_string(&id).unwrap();
-        let deserialized: AIMessageId =
-            serde_json::from_str(&serialized).unwrap();
+        let deserialized: AIMessageId = serde_json::from_str(&serialized).unwrap();
 
         assert_eq!(deserialized, id);
     }
@@ -964,8 +897,7 @@ mod tests {
             AIMessageType::Model,
         ] {
             let serialized = serde_json::to_string(&msgtype).unwrap();
-            let deserialized: AIMessageType =
-                serde_json::from_str(&serialized).unwrap();
+            let deserialized: AIMessageType = serde_json::from_str(&serialized).unwrap();
 
             assert_eq!(deserialized, msgtype);
         }
@@ -973,16 +905,10 @@ mod tests {
 
     #[test]
     fn message_serializes_and_deserializes() {
-        let original = message(
-            42,
-            AIMessageType::Model,
-            AIToolType::LoadFile,
-            "hello",
-        );
+        let original = message(42, AIMessageType::Model, AIToolType::LoadFile, "hello");
 
         let serialized = serde_json::to_string(&original).unwrap();
-        let deserialized: AIMessage =
-            serde_json::from_str(&serialized).unwrap();
+        let deserialized: AIMessage = serde_json::from_str(&serialized).unwrap();
 
         assert_eq!(deserialized.message_id, original.message_id);
         assert_eq!(deserialized.msgtype, original.msgtype);
@@ -990,4 +916,3 @@ mod tests {
         assert_eq!(deserialized.data, original.data);
     }
 }
-

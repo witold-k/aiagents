@@ -4,10 +4,7 @@
 use std::{fs, path::Path};
 
 use crate::generated_workflowsteps::WorkflowSteps;
-use crate::runtimetools::{
-    llmcall::LlmCall,
-    releasedoc::ReleaseDocContext,
-};
+use crate::runtimetools::{llmcall::LlmCall, releasedoc::ReleaseDocContext};
 use crate::vc::git::Git;
 use crate::workflows::workflow::{Workflow, WorkflowResult};
 
@@ -93,10 +90,10 @@ impl<'a> Workflow for ReleaseDocWorkflow<'a> {
             Err(result) => return WorkflowResult::LlmCallResult(result),
         };
 
-        let release_notes = match self.llm_call.run_text_step(
-            WorkflowSteps::ReleaseDocWrite.get_prompt(),
-            &analysis,
-        ) {
+        let release_notes = match self
+            .llm_call
+            .run_text_step(WorkflowSteps::ReleaseDocWrite.get_prompt(), &analysis)
+        {
             Ok(release_notes) => release_notes,
             Err(result) => return WorkflowResult::LlmCallResult(result),
         };
@@ -104,10 +101,9 @@ impl<'a> Workflow for ReleaseDocWorkflow<'a> {
         let output = self.projdir.join("RELEASE_NOTES.md");
         match fs::write(&output, release_notes) {
             Ok(()) => WorkflowResult::Ok,
-            Err(err) => WorkflowResult::Error(format!(
-                "Failed to write {}: {err}",
-                output.display()
-            )),
+            Err(err) => {
+                WorkflowResult::Error(format!("Failed to write {}: {err}", output.display()))
+            }
         }
     }
 }

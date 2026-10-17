@@ -25,9 +25,6 @@ mod tests {
         let tree = TempTree::new("scan-decode");
         let filter = Pathfilter::new(vec![tree.root().to_path_buf()]);
 
-        assert!(
-            ScanDir::from_json(tree.root(), &filter, &json!({})).is_err()
-        );
+        assert!(ScanDir::from_json(tree.root(), &filter, &json!({})).is_err());
     }
-
 }

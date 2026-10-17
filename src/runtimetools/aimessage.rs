@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Witold Kaminski
 
-use serde::{Serialize, Deserialize};
-use serde_json::{json, Value};
 use fsscanner::fileentry::FileEntry;
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 use std::path::PathBuf;
 //use std::fmt::{Display, Formatter};
-use crate::aimessageid::AIMessageId;
 use crate::agenttools::aitooltype::AIToolType;
+use crate::aimessageid::AIMessageId;
 use crate::generated_tasks::Tasks;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -22,9 +22,9 @@ pub enum AIMessageType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AIMessage {
     pub message_id: AIMessageId,
-    pub msgtype:    AIMessageType,
-    pub tooltype:   AIToolType, // in case AIMessageType::Tool
-    pub data:       String,
+    pub msgtype: AIMessageType,
+    pub tooltype: AIToolType, // in case AIMessageType::Tool
+    pub data: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,32 +36,32 @@ pub struct AIFileinfo {
 pub struct AIMessageList {
     pub messages: Vec<AIMessage>,
     pub message_id: AIMessageId,
-    pub depth:      usize,
-    pub task_id:    Tasks,
+    pub depth: usize,
+    pub task_id: Tasks,
     pub task_description: String,
-    pub subtask:       Vec<String>,
+    pub subtask: Vec<String>,
     pub structureinfo: String,
-    pub context:       String,
-    pub files:  Vec<FileEntry>,
+    pub context: String,
+    pub files: Vec<FileEntry>,
     pub filelist: Vec<PathBuf>,
-    pub note:   String,
-    pub focus:  String,
+    pub note: String,
+    pub focus: String,
     pub faults: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AIMessageListData {
-    pub messages:   Vec<AIMessage>,
+    pub messages: Vec<AIMessage>,
     pub message_id: AIMessageId,
-    pub depth:      usize,
-    pub task_id:    Tasks,
+    pub depth: usize,
+    pub task_id: Tasks,
     pub task_description: String,
-    pub subtask:          Vec<String>,
-    pub structureinfo:    String,
-    pub context:          String,
-    pub files:  Vec<FileEntry>,
+    pub subtask: Vec<String>,
+    pub structureinfo: String,
+    pub context: String,
+    pub files: Vec<FileEntry>,
     pub filelist: Vec<PathBuf>,
-    pub focus:  String,
+    pub focus: String,
     pub faults: Option<String>,
 }
 
@@ -74,10 +74,10 @@ impl AIMessageType {
     pub fn to_str(&self) -> &str {
         match self {
             AIMessageType::System => "system",
-            AIMessageType::User   => "user",
-            AIMessageType::Build  => "build",
-            AIMessageType::Tool   => "tool",
-            AIMessageType::Model  => "assistant",
+            AIMessageType::User => "user",
+            AIMessageType::Build => "build",
+            AIMessageType::Tool => "tool",
+            AIMessageType::Model => "assistant",
         }
     }
 }
@@ -86,11 +86,16 @@ impl AIMessage {
     #[inline(always)]
     pub fn new(
         message_id: AIMessageId,
-        msgtype:    AIMessageType,
-        tooltype:   AIToolType,
-        data:       String
+        msgtype: AIMessageType,
+        tooltype: AIToolType,
+        data: String,
     ) -> Self {
-        Self { message_id, msgtype, tooltype, data }
+        Self {
+            message_id,
+            msgtype,
+            tooltype,
+            data,
+        }
     }
 
     #[inline(always)]
@@ -138,7 +143,8 @@ impl AIMessage {
     }
 
     pub fn to_short_string(&self) -> String {
-        format!("id: {}, role: {}, tooltype: {:?}, content: {}",
+        format!(
+            "id: {}, role: {}, tooltype: {:?}, content: {}",
             self.message_id,
             self.msgtype.to_str(),
             self.tooltype,
@@ -150,19 +156,19 @@ impl AIMessage {
 impl AIMessageList {
     pub fn new(data: AIMessageListData) -> Self {
         Self {
-            messages:   data.messages,
+            messages: data.messages,
             message_id: data.message_id,
-            depth:      data.depth,
-            task_id:    data.task_id,
+            depth: data.depth,
+            task_id: data.task_id,
             task_description: data.task_description,
-            subtask:       data.subtask,
+            subtask: data.subtask,
             structureinfo: data.structureinfo,
-            context:       data.context,
-            files:         data.files,
-            filelist:      data.filelist,
-            note:       "".into(),
-            focus:      data.focus,
-            faults:     data.faults,
+            context: data.context,
+            files: data.files,
+            filelist: data.filelist,
+            note: "".into(),
+            focus: data.focus,
+            faults: data.faults,
         }
     }
 
@@ -176,23 +182,24 @@ impl AIMessageList {
         message_id: AIMessageId,
         msgtype: AIMessageType,
         tooltype: AIToolType,
-        data: &str
+        data: &str,
     ) {
-        self.messages.push(AIMessage::new(message_id, msgtype, tooltype, data.to_string()));
+        self.messages.push(AIMessage::new(
+            message_id,
+            msgtype,
+            tooltype,
+            data.to_string(),
+        ));
         if (AIToolType::LoadFile == tooltype) || (AIToolType::Ast == tooltype) {
-            let filename      = data;
+            let filename = data;
             let mut req_found = false;
             for message in &mut self.messages {
-                if
-                    (AIMessageType::Model == message.msgtype) &&
-                    (tooltype == message.tooltype)
-                {
+                if (AIMessageType::Model == message.msgtype) && (tooltype == message.tooltype) {
                     let content = &message.data;
                     if content == filename {
                         req_found = true;
                     }
-                }
-                else {
+                } else {
                     if req_found {
                         message.data = ["REF: ", &message_id.to_string()].concat();
                         req_found = false;
@@ -219,7 +226,7 @@ impl AIMessageList {
     }
 
     pub fn to_json(&self) -> serde_json::Value {
-        use serde_json::{json, Value};
+        use serde_json::{Value, json};
 
         let mut arr = Vec::<Value>::new();
         let mut content = String::with_capacity(10 * 1024);
@@ -298,7 +305,10 @@ impl AIMessageList {
             content.push('\n');
         }
 
-        let prepend_user = self.messages.first().is_some_and(|m| m.serializes_as_user());
+        let prepend_user = self
+            .messages
+            .first()
+            .is_some_and(|m| m.serializes_as_user());
         if prepend_user {
             let mut first = self.messages[0].clone();
             content.push_str(&first.data);
@@ -307,8 +317,7 @@ impl AIMessageList {
             for entry in self.messages.iter().skip(1) {
                 arr.push(entry.to_json());
             }
-        }
-        else {
+        } else {
             arr.push(json!({
                 "role": "user",
                 "content": content
@@ -371,7 +380,10 @@ impl AIMessageList {
             content.push('\n');
         }
 
-        let prepend_user = self.messages.first().is_some_and(|m| m.serializes_as_user());
+        let prepend_user = self
+            .messages
+            .first()
+            .is_some_and(|m| m.serializes_as_user());
         if prepend_user {
             let mut first = self.messages[0].clone();
             content.push_str(&first.data);
@@ -384,8 +396,7 @@ impl AIMessageList {
                 content.push_str(&entry.to_short_string());
                 content.push('\n');
             }
-        }
-        else {
+        } else {
             for entry in &self.messages {
                 content.push_str("==2= ");
                 content.push_str(&entry.to_short_string());
@@ -407,4 +418,3 @@ impl AIMessageList {
         self.messages.retain(|m| m.msgtype != t);
     }
 }
-

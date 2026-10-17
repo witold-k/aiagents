@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Witold Kaminski
 
-use serde::{Deserialize, Serialize};
 use crate::pathfragments::expand_current_path_fragments;
+use serde::{Deserialize, Serialize};
 use std::{
-    env,
-    fs,
-    io,
+    env, fs, io,
     path::{Path, PathBuf},
 };
 
@@ -353,24 +351,26 @@ impl Config {
     /// Expand configured filesystem roots for runtime use.
     /// The original configuration file is not modified.
     pub fn with_expanded_filters(mut self) -> Result<Self, String> {
-        for filter in self.writefilter.iter_mut().chain(self.readfilter.iter_mut()) {
+        for filter in self
+            .writefilter
+            .iter_mut()
+            .chain(self.readfilter.iter_mut())
+        {
             *filter = expand_current_path_fragments(filter)?;
         }
         Ok(self)
     }
 
     pub fn load(path: &Path) -> Result<Self, ConfigError> {
-        let data = fs::read_to_string(path)
-            .map_err(|source| ConfigError::Read {
-                path: path.to_path_buf(),
-                source,
-            })?;
+        let data = fs::read_to_string(path).map_err(|source| ConfigError::Read {
+            path: path.to_path_buf(),
+            source,
+        })?;
 
-        let config = serde_json::from_str::<Self>(&data)
-            .map_err(|source| ConfigError::Parse {
-                path: path.to_path_buf(),
-                source,
-            })?;
+        let config = serde_json::from_str::<Self>(&data).map_err(|source| ConfigError::Parse {
+            path: path.to_path_buf(),
+            source,
+        })?;
 
         config.validate()?;
 
@@ -378,22 +378,19 @@ impl Config {
     }
 
     pub fn save(&self, path: &Path) -> Result<(), ConfigError> {
-        let json = serde_json::to_string_pretty(self)
-            .map_err(ConfigError::Serialize)?;
+        let json = serde_json::to_string_pretty(self).map_err(ConfigError::Serialize)?;
 
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|source| ConfigError::CreateDirectory {
-                    path: parent.to_path_buf(),
-                    source,
-                })?;
-        }
-
-        fs::write(path, json)
-            .map_err(|source| ConfigError::Write {
-                path: path.to_path_buf(),
+            fs::create_dir_all(parent).map_err(|source| ConfigError::CreateDirectory {
+                path: parent.to_path_buf(),
                 source,
             })?;
+        }
+
+        fs::write(path, json).map_err(|source| ConfigError::Write {
+            path: path.to_path_buf(),
+            source,
+        })?;
 
         Ok(())
     }
@@ -416,7 +413,9 @@ impl Config {
 
         if Self::ensure_exist(&path)? {
             println!("Created default config at {:?}", path);
-            Self::default().with_expanded_filters().map_err(ConfigError::Invalid)
+            Self::default()
+                .with_expanded_filters()
+                .map_err(ConfigError::Invalid)
         } else {
             Self::load(&path)
         }
@@ -424,11 +423,10 @@ impl Config {
 
     pub fn default_path() -> PathBuf {
         if let Ok(xdg) = env::var("XDG_CONFIG_HOME")
-            && !xdg.is_empty() {
-                return PathBuf::from(xdg)
-                    .join("aifix")
-                    .join("config.json");
-            }
+            && !xdg.is_empty()
+        {
+            return PathBuf::from(xdg).join("aifix").join("config.json");
+        }
 
         // we really need that => just abort here
         let home = env::var("HOME").expect("HOME not set");
@@ -442,11 +440,8 @@ impl Config {
     pub fn get_provider(&self, name: &str) -> Option<&AIProvider> {
         if name == "default" {
             self.get_selected_provider()
-        }
-        else {
-            self.providerlist
-                .iter()
-                .find(|entry| entry.name == name)
+        } else {
+            self.providerlist.iter().find(|entry| entry.name == name)
         }
     }
 
@@ -469,8 +464,7 @@ impl Config {
 
         if self.queue_length_save > self.queue_length_max {
             return Err(ConfigError::Invalid(
-                "queue_length_save cannot be greater than queue_length_max"
-                    .to_string(),
+                "queue_length_save cannot be greater than queue_length_max".to_string(),
             ));
         }
 
@@ -482,8 +476,7 @@ impl Config {
             {
                 return Err(ConfigError::Invalid(format!(
                     "task '{}' references unknown provider '{}'",
-                    task_provider.task,
-                    task_provider.provider,
+                    task_provider.task, task_provider.provider,
                 )));
             }
 
@@ -532,4 +525,3 @@ pub enum ConfigError {
 
     Invalid(String),
 }
-

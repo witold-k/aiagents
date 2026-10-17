@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Witold Kaminski
 
-use std::fmt;
-use serde_json::{json, Value};
-use crate::agenttools::aitooltype::{ ResultToString, ResultToJson, Validatable };
+use crate::agenttools::aitooltype::{ResultToJson, ResultToString, Validatable};
 use crate::aimessageid::AIMessageId;
+use serde_json::{Value, json};
+use std::fmt;
 
 #[derive(Debug)]
 pub struct FailedResult {
@@ -13,12 +13,11 @@ pub struct FailedResult {
 
 // Dummy, just to keep structure intact
 #[derive(Clone, Debug)]
-pub struct FailedError {
-}
+pub struct FailedError {}
 
 #[derive(Clone, Debug, Default)]
 pub struct Failed {
-    pub data: String
+    pub data: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -33,7 +32,7 @@ impl Failed {
     pub fn from_json(payload: &Value) -> Self {
         let note = match payload.get("failed") {
             Some(note) => note.to_string(),
-            None       => "".to_string()
+            None => "".to_string(),
         };
         Failed { data: note }
     }
@@ -117,4 +116,3 @@ impl Validatable for Result<FailedResult, FailedError> {
         false
     }
 }
-

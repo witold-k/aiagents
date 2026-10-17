@@ -3,21 +3,18 @@
 
 // This file contains functions for building, linting, and testing a project.
 
-use std::cell::RefCell;
-use std::path::Path;
 use crate::config::Config;
 use crate::generated_workflowsteps::WorkflowSteps;
-use crate::utils::stringutils::{extract_standalone_choice, extract_standalone_keyword};
 use crate::runtimetools::{
-    llmcall::{LlmCall, LlmCallResult},
     buildresult::Buildresult,
-    buildsystem::{Buildsystem, Buildcommand},
+    buildsystem::{Buildcommand, Buildsystem},
     generic_work_step::run_cmd,
+    llmcall::{LlmCall, LlmCallResult},
 };
-use crate::workflows::{
-    workflow::Workflow,
-    workflow::WorkflowResult,
-};
+use crate::utils::stringutils::{extract_standalone_choice, extract_standalone_keyword};
+use crate::workflows::{workflow::Workflow, workflow::WorkflowResult};
+use std::cell::RefCell;
+use std::path::Path;
 
 #[expect(dead_code)]
 pub struct BLTWorkflow<'a> {
@@ -76,9 +73,7 @@ impl<'a> BLTWorkflow<'a> {
 }
 
 impl<'a> Workflow for BLTWorkflow<'a> {
-    fn execute(
-        &self,
-    ) -> WorkflowResult {
+    fn execute(&self) -> WorkflowResult {
         let buildresult = self.build();
         if !buildresult.has_error() {
             return WorkflowResult::Ok;
@@ -113,7 +108,7 @@ impl<'a> Workflow for BLTWorkflow<'a> {
             Ok(count) => self.debug(format!("## [BLT] SOURCE CONTEXT: {count} files loaded")),
             Err(err) => {
                 eprintln!("## [BLT] SOURCE CONTEXT ERROR: {err}");
-            },
+            }
         }
 
         self.debug("## [BLT] DIAGNOSE FIX");
@@ -149,7 +144,6 @@ impl<'a> Workflow for BLTWorkflow<'a> {
                 Err(result) => return WorkflowResult::LlmCallResult(result),
             };
 
-
             self.debug(format!("## [BLT] FIX DESIGN {attempt}"));
             self.debug(&analysis);
 
@@ -170,14 +164,15 @@ impl<'a> Workflow for BLTWorkflow<'a> {
             self.debug(format!("## [BLT] CRITIQUE RESULT {attempt}"));
             self.debug(&critique);
 
-            let decision = match extract_standalone_keyword(&critique, &["ACCEPT", "REJECT"]).as_deref() {
-                Some("ACCEPT") => "ACCEPT",
-                Some("REJECT") => "REJECT",
-                _ => {
-                    println!("## [BLT] CRITIQUE INVALID RESPONSE");
-                    return WorkflowResult::LlmCallResult(LlmCallResult::RetryFailed);
-                },
-            };
+            let decision =
+                match extract_standalone_keyword(&critique, &["ACCEPT", "REJECT"]).as_deref() {
+                    Some("ACCEPT") => "ACCEPT",
+                    Some("REJECT") => "REJECT",
+                    _ => {
+                        println!("## [BLT] CRITIQUE INVALID RESPONSE");
+                        return WorkflowResult::LlmCallResult(LlmCallResult::RetryFailed);
+                    }
+                };
 
             fix_designs.push(analysis.clone());
             fix_history.push(format!(
@@ -247,4 +242,3 @@ impl<'a> Workflow for BLTWorkflow<'a> {
         }
     }
 }
-

@@ -24,8 +24,7 @@ mod tests {
         let filter = Pathfilter::new(vec![tree.root().to_path_buf()]);
         let payload = json!({"file": "missing.txt"});
 
-        let err =
-            LoadFile::from_json(tree.root(), &filter, &payload).unwrap_err();
+        let err = LoadFile::from_json(tree.root(), &filter, &payload).unwrap_err();
         assert!(err.to_string().starts_with("NotFound:"));
     }
     #[test]
@@ -33,9 +32,6 @@ mod tests {
         let tree = TempTree::new("load-decode");
         let filter = Pathfilter::new(vec![tree.root().to_path_buf()]);
 
-        assert!(
-            LoadFile::from_json(tree.root(), &filter, &json!({})).is_err()
-        );
+        assert!(LoadFile::from_json(tree.root(), &filter, &json!({})).is_err());
     }
-
 }

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Witold Kaminski
 
-use std::fmt;
-use serde_json::{json, Value};
-use crate::agenttools::aitooltype::{ AIToolType, ResultToString, ResultToJson, Validatable };
+use crate::agenttools::aitooltype::{AIToolType, ResultToJson, ResultToString, Validatable};
 use crate::aimessageid::AIMessageId;
+use serde_json::{Value, json};
+use std::fmt;
 
 #[derive(Debug)]
 pub struct DoneResult {
@@ -13,12 +13,11 @@ pub struct DoneResult {
 
 // Dummy, just to keep structure intact
 #[derive(Debug)]
-pub struct DoneError {
-}
+pub struct DoneError {}
 
 #[derive(Debug, Default)]
 pub struct Done {
-    pub data: String
+    pub data: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -29,7 +28,7 @@ impl Done {
     pub fn from_json(payload: &Value) -> Self {
         let note = match payload.get("note") {
             Some(note) => note.to_string(),
-            None       => "".to_string()
+            None => "".to_string(),
         };
         Done { data: note }
     }
@@ -107,4 +106,3 @@ impl Validatable for Result<DoneResult, DoneError> {
         true
     }
 }
-

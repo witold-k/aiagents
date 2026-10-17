@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Witold Kaminski
 
+use crate::generated_languages::Languages;
+use crate::generated_task_argument_help::TASK_ARGUMENT_HELP;
+use crate::generated_tasks::Tasks;
+use fsscanner::fileentry::FileEntry;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use fsscanner::fileentry::FileEntry;
-use crate::generated_tasks::Tasks;
-use crate::generated_languages::Languages;
-use crate::generated_task_argument_help::TASK_ARGUMENT_HELP;
 
 #[derive(Debug)]
 pub struct Args {
@@ -28,9 +28,9 @@ pub struct Args {
     pub help: bool,
 }
 
-
 pub fn help() {
-    println!(r#"aifix [option]+
+    println!(
+        r#"aifix [option]+
     -l --lang [optional, detected from build system if omitted]: language: one of: {}
             or provide path to taskdesciption
     -t --task [optional, default = fix_code, multiple possible invalid with -w switch]:
@@ -64,10 +64,10 @@ pub fn help() {
     -r --run [optional providername in config] run server; if set other settings will be ignored
     -p --provider [optional providername in config]: select provider for normal tasks
     -h --help [default = false]: dump help
-"#
-        , Languages::to_vec_str().join(", ")
-        , Tasks::to_vec_str().join(", ")
-        , TASK_ARGUMENT_HELP
+"#,
+        Languages::to_vec_str().join(", "),
+        Tasks::to_vec_str().join(", "),
+        TASK_ARGUMENT_HELP
     );
 }
 
@@ -102,14 +102,14 @@ pub fn parse_args_from(arguments: impl IntoIterator<Item = String>) -> Result<Ar
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
-             "-l" | "--lang" => {
+            "-l" | "--lang" => {
                 let value = args.next().ok_or("Missing value for --lang")?;
                 language = Some(value);
             }
             "-t" | "--task" => {
                 let value = args.next().ok_or("Missing value for --task")?;
                 if task.is_none() {
-                     if let Some((before, after)) = value.split_once(':') {
+                    if let Some((before, after)) = value.split_once(':') {
                         task = Some(before.to_string());
                         let entry = FileEntry::from_str(after);
                         taskdata = Some(entry.unwrap());
@@ -117,14 +117,13 @@ pub fn parse_args_from(arguments: impl IntoIterator<Item = String>) -> Result<Ar
                         // Kein Doppelpunkt vorhanden: Der gesamte Wert ist taskdata
                         task = Some(value);
                     }
-                }
-                else {
+                } else {
                     let file = match PathBuf::from(value).canonicalize() {
                         Ok(p) => p,
                         Err(_) => return Err("Invalid path for --task".into()),
                     };
                     subtask.push(file);
-               }
+                }
             }
             "-m" | "--message" => {
                 let value = args.next().ok_or("Missing value for --message")?;
@@ -241,4 +240,3 @@ pub fn parse_args_from(arguments: impl IntoIterator<Item = String>) -> Result<Ar
         help,
     })
 }
-

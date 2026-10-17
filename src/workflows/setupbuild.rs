@@ -3,16 +3,10 @@
 
 // This file contains functions for building, linting, and testing a project.
 
-use std::path::Path;
 use crate::config::Config;
-use crate::runtimetools::{
-    llmcall::LlmCall,
-    buildsystem::Buildsystem,
-};
-use crate::workflows::{
-    workflow::Workflow,
-    workflow::WorkflowResult,
-};
+use crate::runtimetools::{buildsystem::Buildsystem, llmcall::LlmCall};
+use crate::workflows::{workflow::Workflow, workflow::WorkflowResult};
+use std::path::Path;
 
 #[expect(dead_code)]
 pub struct SetupBuildWorkflow<'a> {
@@ -42,9 +36,7 @@ impl<'a> SetupBuildWorkflow<'a> {
 }
 
 impl<'a> Workflow for SetupBuildWorkflow<'a> {
-    fn execute(
-        &self,
-    ) -> WorkflowResult {
+    fn execute(&self) -> WorkflowResult {
         self.bs.setupbuild(self.projdir, self.targetdir);
         WorkflowResult::Ok
     }

@@ -1,23 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Witold Kaminski
 
-use std::fmt;
-use std::path::{Path, PathBuf};
-use serde_json::{json, Value};
+use crate::agenttools::aitooltype::{ResultToJson, ResultToString, Validatable};
+use crate::agenttools::pathguard::can_read_resolved;
+use crate::aimessageid::AIMessageId;
 use fsscanner::{
     pathfilter::Pathfilter,
     pathutils::{normalize_path, resolve_relaxed_path},
 };
-use crate::agenttools::aitooltype::{ ResultToString, ResultToJson, Validatable };
-use crate::aimessageid::AIMessageId;
-use crate::agenttools::pathguard::can_read_resolved;
+use serde_json::{Value, json};
+use std::fmt;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
 pub struct LoadFilePart<'a> {
     filter: &'a Pathfilter,
     path: PathBuf,
     start: usize,
-    count: usize
+    count: usize,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -38,7 +38,7 @@ pub struct LoadFilePartError {
 pub struct LoadFilePartResult {
     pub data: String,
     pub start: usize,
-    pub count: usize
+    pub count: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -51,7 +51,11 @@ impl<'a> LoadFilePart<'a> {
         filter: &'a Pathfilter,
         payload: &Value,
     ) -> Result<LoadFilePart<'a>, LoadFilePartError> {
-        let file = match payload.get("file").and_then(|v| v.as_str()).map(PathBuf::from) {
+        let file = match payload
+            .get("file")
+            .and_then(|v| v.as_str())
+            .map(PathBuf::from)
+        {
             Some(file) => file,
             None => {
                 return Err(LoadFilePartError {
@@ -139,17 +143,22 @@ impl<'a> LoadFilePart<'a> {
         let path = &self.path;
 
         if !can_read_resolved(self.filter, path) {
-            return Err(LoadFilePartError::new(LoadFilePartErrorType::Forbidden, path));
+            return Err(LoadFilePartError::new(
+                LoadFilePartErrorType::Forbidden,
+                path,
+            ));
         }
 
         if !path.exists() {
-            return Err(LoadFilePartError::new(LoadFilePartErrorType::NotFound, path));
+            return Err(LoadFilePartError::new(
+                LoadFilePartErrorType::NotFound,
+                path,
+            ));
         }
 
         // Read file
-        let data = std::fs::read_to_string(path).map_err(|_| {
-            LoadFilePartError::new(LoadFilePartErrorType::ReadFailed, path)
-        })?;
+        let data = std::fs::read_to_string(path)
+            .map_err(|_| LoadFilePartError::new(LoadFilePartErrorType::ReadFailed, path))?;
 
         let lines_to_return = data
             .lines()
@@ -157,9 +166,14 @@ impl<'a> LoadFilePart<'a> {
             .chain(std::iter::repeat("\n".to_owned()))
             .skip(self.start)
             .take(self.count)
-            .collect::<Vec<_>>().join("\n");
+            .collect::<Vec<_>>()
+            .join("\n");
 
-        Ok(LoadFilePartResult { data: lines_to_return, start: self.start, count: self.count })
+        Ok(LoadFilePartResult {
+            data: lines_to_return,
+            start: self.start,
+            count: self.count,
+        })
     }
 }
 
@@ -203,17 +217,22 @@ impl LoadFilePartError {
 
     pub fn to_json(&self, message_id: AIMessageId) -> Value {
         let msg = match self.err_type {
-            LoadFilePartErrorType::DecodeError =>
-                format!("[load_file_part] ERROR: decode error: {}", self.err_info),
+            LoadFilePartErrorType::DecodeError => {
+                format!("[load_file_part] ERROR: decode error: {}", self.err_info)
+            }
 
-            LoadFilePartErrorType::Forbidden =>
-                format!("[load_file_part] ERROR: not allowed to read: {}", self.err_info),
+            LoadFilePartErrorType::Forbidden => format!(
+                "[load_file_part] ERROR: not allowed to read: {}",
+                self.err_info
+            ),
 
-            LoadFilePartErrorType::NotFound =>
-                format!("[load_file_part] ERROR: file not found: {}", self.err_info),
+            LoadFilePartErrorType::NotFound => {
+                format!("[load_file_part] ERROR: file not found: {}", self.err_info)
+            }
 
-            LoadFilePartErrorType::ReadFailed =>
-                format!("[load_file_part] ERROR: read failed: {}", self.err_info),
+            LoadFilePartErrorType::ReadFailed => {
+                format!("[load_file_part] ERROR: read failed: {}", self.err_info)
+            }
         };
 
         json!({
@@ -252,4 +271,3 @@ impl Validatable for Result<LoadFilePartResult, LoadFilePartError> {
         self.is_ok()
     }
 }
-

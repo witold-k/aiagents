@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Witold Kaminski
 
-use serde::{Serialize, Deserialize};
-use serde_json::Value;
-use phf::phf_map;
-use struct_extractors::base_entries;
 use crate::aimessageid::AIMessageId;
+use phf::phf_map;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use struct_extractors::base_entries;
 
 #[base_entries(AIToolType)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -61,7 +61,10 @@ impl AIToolType {
     }
 
     pub fn is_load(self) -> bool {
-        matches!(self, AIToolType::LoadFile | AIToolType::LoadFilePart | AIToolType::LoadFileBySymbol)
+        matches!(
+            self,
+            AIToolType::LoadFile | AIToolType::LoadFilePart | AIToolType::LoadFileBySymbol
+        )
     }
 
     pub fn is_done(self) -> bool {
@@ -95,4 +98,3 @@ pub static TOOLS: phf::Map<&'static str, AIToolType> = phf_map! {
     "set_focus" => AIToolType::SetFocus,
     "valid" => AIToolType::Valid,
 };
-

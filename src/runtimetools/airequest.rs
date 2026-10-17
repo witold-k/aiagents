@@ -1,13 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Witold Kaminski
 
-use std::fmt;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use ureq::{
-    Agent,
-    tls::TlsConfig,
-};
+use std::fmt;
+use ureq::{Agent, tls::TlsConfig};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AIRequest {
@@ -36,7 +33,9 @@ impl fmt::Display for AIRequestResult {
             Self::DeserFailed(req, err) => write!(f, "DeserFailed: {} => {}", req, err),
             Self::RequestFailed(req, err) => write!(f, "RequestFailed: {} => {}", req, err),
             Self::DecodeFailed(req, err) => write!(f, "DecodeFailed: {} => {}", req, err),
-            Self::ReportedError(req, err, payload) => write!(f, "ReportedFailed: {} => {}, {}", req, err, payload),
+            Self::ReportedError(req, err, payload) => {
+                write!(f, "ReportedFailed: {} => {}, {}", req, err, payload)
+            }
         }
     }
 }
@@ -101,10 +100,7 @@ impl AIRequest {
             .header("Content-Type", "application/json");
 
         if !self.api_key.is_empty() {
-            req = req.header(
-                "Authorization",
-                &format!("Bearer {}", self.api_key),
-            );
+            req = req.header("Authorization", &format!("Bearer {}", self.api_key));
         }
 
         let mut response = match req.send_json(json_payload.clone()) {
@@ -119,7 +115,6 @@ impl AIRequest {
 
         if let Some(error) = json.get("error") {
             return AIRequestResult::ReportedError(self.clone(), error.clone(), json_payload);
-
         }
 
         AIRequestResult::Ok(json)
@@ -128,7 +123,8 @@ impl AIRequest {
 
 impl fmt::Display for AIRequest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f,
+        write!(
+            f,
             "url: {}, model: {}, max_tokens: {}, temperature {}",
             self.url, self.model, self.max_tokens, self.temperature
         )

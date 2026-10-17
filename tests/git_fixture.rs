@@ -18,10 +18,8 @@ impl TestRepository {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "aiagents-git-test-{}-{unique}",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("aiagents-git-test-{}-{unique}", std::process::id()));
 
         fs::create_dir(&path).unwrap();
         run_git(&path, ["init"]);

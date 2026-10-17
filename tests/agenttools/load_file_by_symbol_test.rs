@@ -8,10 +8,15 @@ mod tests {
     #[test]
     fn resolves_rust_symbol_to_source() {
         let tree = TempTree::new("symbol-rust");
-        tree.write("Cargo.toml", "[package]\nname = \"resolver-test\"\nversion = \"0.1.0\"\nedition = \"2024\"\n");
+        tree.write(
+            "Cargo.toml",
+            "[package]\nname = \"resolver-test\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        );
         tree.write("src/lib.rs", "pub struct ExampleSymbol;\n");
         let filter = Pathfilter::new(vec![tree.root().to_path_buf()]);
-        let tool = LoadFileBySymbol::from_json(tree.root(), &filter, &json!({"symbol":"ExampleSymbol"})).unwrap();
+        let tool =
+            LoadFileBySymbol::from_json(tree.root(), &filter, &json!({"symbol":"ExampleSymbol"}))
+                .unwrap();
         let result = tool.execute().unwrap();
         assert!(result.data.contains("src/lib.rs"));
         assert!(result.data.contains("pub struct ExampleSymbol;"));
@@ -20,12 +25,17 @@ mod tests {
     #[test]
     fn unreadable_candidates_are_not_disclosed() {
         let tree = TempTree::new("symbol-filter");
-        tree.write("Cargo.toml", "[package]\nname = \"resolver-test\"\nversion = \"0.1.0\"\nedition = \"2024\"\n");
+        tree.write(
+            "Cargo.toml",
+            "[package]\nname = \"resolver-test\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        );
         tree.write("src/lib.rs", "pub struct SecretSymbol;\n");
         let allowed = tree.root().join("other");
         std::fs::create_dir_all(&allowed).unwrap();
         let filter = Pathfilter::new(vec![allowed]);
-        let tool = LoadFileBySymbol::from_json(tree.root(), &filter, &json!({"symbol":"SecretSymbol"})).unwrap();
+        let tool =
+            LoadFileBySymbol::from_json(tree.root(), &filter, &json!({"symbol":"SecretSymbol"}))
+                .unwrap();
         let result = tool.execute().unwrap();
         assert!(!result.data.contains("pub struct SecretSymbol;"));
         assert!(!result.data.contains("src/lib.rs"));

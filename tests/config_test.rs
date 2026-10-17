@@ -20,9 +20,7 @@ mod tests {
             Ok(_) => panic!("duplicate provider name was accepted"),
             Err(error) => error,
         };
-        assert!(
-            format!("{error:?}").contains("duplicate provider name")
-        );
+        assert!(format!("{error:?}").contains("duplicate provider name"));
 
         std::fs::remove_file(path).unwrap();
     }
@@ -43,14 +41,19 @@ mod tests {
 
 #[test]
 fn config_filters_expand_home_and_project_fragments() {
-    let Some(home) = std::env::var_os("HOME") else { return };
+    let Some(home) = std::env::var_os("HOME") else {
+        return;
+    };
     let home = std::path::PathBuf::from(home).canonicalize().unwrap();
     let cwd = std::env::current_dir().unwrap().canonicalize().unwrap();
     let mut config = aiagents::config::Config::default();
     config.writefilter = vec!["{{home}}/.project".into()];
     config.readfilter = vec!["{{projectdir}}/..".into()];
     let expanded = config.with_expanded_filters().unwrap();
-    assert_eq!(expanded.writefilter[0], format!("{}/.project", home.display()));
+    assert_eq!(
+        expanded.writefilter[0],
+        format!("{}/.project", home.display())
+    );
     assert_eq!(expanded.readfilter[0], format!("{}/..", cwd.display()));
 }
 

@@ -11,16 +11,16 @@
 //! - never execute direct or indirect other tools that are listed here
 //! - never has sudo or higher priviledged access then the current user
 
+pub mod add_note;
 pub mod aitooltype;
 pub mod all_tools;
 pub mod ast;
-pub mod add_note;
 pub mod done;
 pub mod failed;
 pub mod list_dir;
 pub mod load_file;
-pub mod load_file_part;
 pub mod load_file_by_symbol;
+pub mod load_file_part;
 pub(crate) mod pathguard;
 pub mod save_file;
 pub mod save_file_replace_part;

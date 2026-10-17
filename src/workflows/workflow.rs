@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Witold Kaminski
 
-use std::fmt;
 use crate::runtimetools::{
     buildresult::Buildresult,
     llmcall::{LlmCall, LlmCallResult},
 };
+use std::fmt;
 
 pub enum WorkflowResult {
     Ok,
@@ -27,10 +27,9 @@ impl WorkflowResult {
     pub fn request_failure(&self) -> bool {
         match self {
             Self::LlmCallResult(result) => result.is_request_error(),
-            _ => false
+            _ => false,
         }
     }
-
 }
 
 impl fmt::Display for WorkflowResult {
@@ -45,26 +44,18 @@ impl fmt::Display for WorkflowResult {
 }
 
 pub trait Workflow {
-    fn execute(
-        &self
-    ) -> WorkflowResult;
+    fn execute(&self) -> WorkflowResult;
 
-    fn execute_build_llm(
-        &self,
-        buildresult: &Buildresult,
-        llm_call: &LlmCall
-    ) -> WorkflowResult {
+    fn execute_build_llm(&self, buildresult: &Buildresult, llm_call: &LlmCall) -> WorkflowResult {
         if buildresult.has_error() {
             let diagnostic = buildresult.limit_lines(100).to_string();
             let res: LlmCallResult = llm_call.run(&diagnostic);
             if res.is_valid() {
                 WorkflowResult::BuildResult(buildresult.clone())
-            }
-            else {
+            } else {
                 WorkflowResult::LlmCallResult(res)
             }
-        }
-        else {
+        } else {
             WorkflowResult::Ok
         }
     }

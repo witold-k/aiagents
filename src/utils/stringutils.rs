@@ -73,7 +73,11 @@ pub fn strip_outer_markdown_fence(input: &str) -> String {
     content.trim().to_string()
 }
 
-pub fn extract_known_paths(input: &str, known_paths: &[std::path::PathBuf], max_paths: usize) -> Vec<std::path::PathBuf> {
+pub fn extract_known_paths(
+    input: &str,
+    known_paths: &[std::path::PathBuf],
+    max_paths: usize,
+) -> Vec<std::path::PathBuf> {
     let mut matches = Vec::new();
 
     for line in input.lines().map(str::trim).filter(|line| !line.is_empty()) {
@@ -102,9 +106,7 @@ pub fn extract_standalone_choice(input: &str, max_choice: usize) -> Option<usize
         let mut line = line.trim();
 
         for marker in ["**", "__", "`"] {
-            if line.starts_with(marker)
-                && line.ends_with(marker)
-                && line.len() >= marker.len() * 2
+            if line.starts_with(marker) && line.ends_with(marker) && line.len() >= marker.len() * 2
             {
                 line = line[marker.len()..line.len() - marker.len()].trim();
             }
@@ -125,9 +127,7 @@ pub fn extract_standalone_keyword(input: &str, keywords: &[&str]) -> Option<Stri
         let mut line = line.trim();
 
         for marker in ["**", "__"] {
-            if line.starts_with(marker)
-                && line.ends_with(marker)
-                && line.len() >= marker.len() * 2
+            if line.starts_with(marker) && line.ends_with(marker) && line.len() >= marker.len() * 2
             {
                 line = line[marker.len()..line.len() - marker.len()].trim();
             }
@@ -150,13 +150,12 @@ pub fn raw_fence_to_string(encoded: &str) -> String {
 
     while let Some(found_start_pos) = current_string.find(START_MARKER) {
         // Optional '"' directly before RAW_TEXT_BEGIN>>\n
-        let start_pos = if found_start_pos > 0
-            && current_string.as_bytes()[found_start_pos - 1] == b'"'
-        {
-            found_start_pos - 1
-        } else {
-            found_start_pos
-        };
+        let start_pos =
+            if found_start_pos > 0 && current_string.as_bytes()[found_start_pos - 1] == b'"' {
+                found_start_pos - 1
+            } else {
+                found_start_pos
+            };
 
         let content_start = found_start_pos + START_MARKER.len();
 
@@ -195,11 +194,7 @@ pub fn raw_fence_to_string(encoded: &str) -> String {
 
             // Bestehendes Verhalten beibehalten:
             // >, Newline, Carriage Return und Leerzeichen überspringen.
-            if next_char == b'>'
-                || next_char == b'\n'
-                || next_char == b'\r'
-                || next_char == b' '
-            {
+            if next_char == b'>' || next_char == b'\n' || next_char == b'\r' || next_char == b' ' {
                 tail_pos += 1;
             } else {
                 break;
@@ -209,22 +204,11 @@ pub fn raw_fence_to_string(encoded: &str) -> String {
         let tail = &current_string[tail_pos..];
 
         if tail.starts_with(',') || tail.starts_with('}') {
-            current_string = format!(
-                "{}{}{}",
-                &current_string[..start_pos],
-                conv,
-                tail
-            );
+            current_string = format!("{}{}{}", &current_string[..start_pos], conv, tail);
         } else {
-            current_string = format!(
-                "{}{},{}",
-                &current_string[..start_pos],
-                conv,
-                tail
-            );
+            current_string = format!("{}{},{}", &current_string[..start_pos], conv, tail);
         }
     }
 
     current_string
 }
-

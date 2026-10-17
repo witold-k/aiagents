@@ -33,7 +33,11 @@ fn lists_and_reads_files_at_ref() {
     let git = repository.git();
     let files = git.files("HEAD").unwrap();
 
-    assert!(files.iter().any(|path| path == std::path::Path::new("Cargo.toml")));
+    assert!(
+        files
+            .iter()
+            .any(|path| path == std::path::Path::new("Cargo.toml"))
+    );
 
     let cargo_toml = git.file_at("HEAD", "Cargo.toml").unwrap();
     let cargo_toml = String::from_utf8(cargo_toml).unwrap();

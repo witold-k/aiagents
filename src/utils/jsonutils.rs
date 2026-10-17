@@ -5,15 +5,13 @@ use serde_json::Value;
 
 pub fn get_json_field(payload: &Value, name: &str) -> Result<String, String> {
     match payload.get(name) {
-        Some(content) => {
-            match content.as_str() {
-                Some(text) => Ok(text.to_string()),
-                None       => {
-                    let e = format!("got field {}, but it is empty: {}", name, payload);
-                    Err(e)
-                }
+        Some(content) => match content.as_str() {
+            Some(text) => Ok(text.to_string()),
+            None => {
+                let e = format!("got field {}, but it is empty: {}", name, payload);
+                Err(e)
             }
-        }
+        },
         None => {
             let e = format!("field {} not found: {}", name, payload);
             Err(e)

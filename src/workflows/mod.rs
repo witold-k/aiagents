@@ -30,9 +30,9 @@ pub mod build_lint_test;
 pub mod doc;
 pub mod endless;
 pub mod release_doc;
-pub mod workflow;
 pub mod select_workflow;
 pub mod setupbuild;
+pub mod workflow;
 pub mod workspace;
 
 pub trait Runnable {

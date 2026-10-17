@@ -3,18 +3,15 @@
 
 // This file contains functions for building, linting, and testing a project.
 
-use std::path::Path;
 use crate::config::Config;
-use crate::repostate::{ RepoState, gitstate::GitState };
+use crate::repostate::{RepoState, gitstate::GitState};
 use crate::runtimetools::{
-    llmcall::{LlmCall, LlmCallResult},
-    buildsystem::{Buildsystem, Buildcommand},
+    buildsystem::{Buildcommand, Buildsystem},
     generic_work_step::run_cmd,
+    llmcall::{LlmCall, LlmCallResult},
 };
-use crate::workflows::{
-    workflow::Workflow,
-    workflow::WorkflowResult,
-};
+use crate::workflows::{workflow::Workflow, workflow::WorkflowResult};
+use std::path::Path;
 
 #[expect(dead_code)]
 pub struct DocWorkflow<'a> {
@@ -35,18 +32,18 @@ impl<'a> DocWorkflow<'a> {
         targetdir: &'a Path,
     ) -> Self {
         DocWorkflow {
-            config, llm_call,
+            config,
+            llm_call,
             bc: bs.build_cmd(projdir, targetdir),
-            projdir, targetdir,
-            state: GitState::from_path(projdir)
+            projdir,
+            targetdir,
+            state: GitState::from_path(projdir),
         }
     }
 }
 
 impl<'a> Workflow for DocWorkflow<'a> {
-    fn execute(
-        &self,
-    ) -> WorkflowResult {
+    fn execute(&self) -> WorkflowResult {
         // first check: is it building at all
         let br = run_cmd(self.projdir, &self.bc.build);
         if br.has_error() {

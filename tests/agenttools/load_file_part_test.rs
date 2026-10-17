@@ -12,8 +12,7 @@ mod tests {
 
         let filter = Pathfilter::new(vec![tree.root().to_path_buf()]);
         let payload = json!({"file": "input.txt", "start": 2, "count": 2});
-        let tool =
-            LoadFilePart::from_json(tree.root(), &filter, &payload).unwrap();
+        let tool = LoadFilePart::from_json(tree.root(), &filter, &payload).unwrap();
 
         let result = tool.execute().unwrap();
         assert_eq!(result.data, "one\ntwo");
@@ -42,9 +41,7 @@ mod tests {
         let filter = Pathfilter::new(vec![tree.root().to_path_buf()]);
         let payload = json!({"file": "input.txt", "start": 0, "count": 1});
 
-        assert!(
-            LoadFilePart::from_json(tree.root(), &filter, &payload).is_err()
-        );
+        assert!(LoadFilePart::from_json(tree.root(), &filter, &payload).is_err());
     }
 
     #[test]
@@ -54,14 +51,10 @@ mod tests {
         let filter = Pathfilter::new(vec![tree.root().to_path_buf()]);
 
         let start = json!({"file": "input.txt", "start": -1, "count": 1});
-        assert!(
-            LoadFilePart::from_json(tree.root(), &filter, &start).is_err()
-        );
+        assert!(LoadFilePart::from_json(tree.root(), &filter, &start).is_err());
 
         let count = json!({"file": "input.txt", "start": 1, "count": -1});
-        assert!(
-            LoadFilePart::from_json(tree.root(), &filter, &count).is_err()
-        );
+        assert!(LoadFilePart::from_json(tree.root(), &filter, &count).is_err());
     }
 
     #[test]
@@ -70,8 +63,7 @@ mod tests {
         tree.write("input.txt", "one\ntwo\n");
         let filter = Pathfilter::new(vec![tree.root().to_path_buf()]);
         let payload = json!({"file": "input.txt", "start": 1, "count": 0});
-        let tool =
-            LoadFilePart::from_json(tree.root(), &filter, &payload).unwrap();
+        let tool = LoadFilePart::from_json(tree.root(), &filter, &payload).unwrap();
 
         let result = tool.execute().unwrap();
         assert_eq!(result.data, "");
@@ -84,11 +76,9 @@ mod tests {
         tree.write("input.txt", "one\ntwo\n");
         let filter = Pathfilter::new(vec![tree.root().to_path_buf()]);
         let payload = json!({"file": "input.txt", "start": 4, "count": 2});
-        let tool =
-            LoadFilePart::from_json(tree.root(), &filter, &payload).unwrap();
+        let tool = LoadFilePart::from_json(tree.root(), &filter, &payload).unwrap();
 
         let result = tool.execute().unwrap();
         assert_eq!(result.data, "\n\n\n");
     }
-
 }

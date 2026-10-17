@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Witold Kaminski
 
+use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
-use serde::{Serialize, Deserialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AIMessageId {
@@ -15,4 +15,3 @@ impl Display for AIMessageId {
         write!(f, "call_{}", self.val)
     }
 }
-

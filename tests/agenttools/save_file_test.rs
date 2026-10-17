@@ -41,10 +41,7 @@ mod tests {
 
         tool.execute().unwrap();
         assert_eq!(
-            std::fs::read_to_string(
-                tree.root().join("nested/new.txt")
-            )
-            .unwrap(),
+            std::fs::read_to_string(tree.root().join("nested/new.txt")).unwrap(),
             "created"
         );
     }
@@ -79,12 +76,8 @@ mod tests {
         let filter = Pathfilter::new(vec![tree.root().to_path_buf()]);
 
         assert!(
-            SaveFile::from_json(
-                tree.root(),
-                &filter,
-                &json!({"file":"x", "content":"data"})
-            )
-            .is_err()
+            SaveFile::from_json(tree.root(), &filter, &json!({"file":"x", "content":"data"}))
+                .is_err()
         );
     }
     #[test]
@@ -99,10 +92,7 @@ mod tests {
         let tool = SaveFile::from_json(tree.root(), &filter, &payload).unwrap();
 
         let err = tool.execute().unwrap_err();
-        assert!(matches!(
-            err.get_err_type(),
-            SaveFileErrorType::Forbidden
-        ));
+        assert!(matches!(err.get_err_type(), SaveFileErrorType::Forbidden));
         assert!(!tree.root().parent().unwrap().join("outside.txt").exists());
     }
 
@@ -125,11 +115,7 @@ mod tests {
         let tool = SaveFile::from_json(tree.root(), &filter, &payload).unwrap();
 
         let err = tool.execute().unwrap_err();
-        assert!(matches!(
-            err.get_err_type(),
-            SaveFileErrorType::Forbidden
-        ));
+        assert!(matches!(err.get_err_type(), SaveFileErrorType::Forbidden));
         assert!(!outside.join("new.txt").exists());
     }
-
 }

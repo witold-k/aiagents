@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Witold Kaminski
 
-use std::fmt;
-use std::path::{Path, PathBuf};
-use serde_json::{json, Value};
-use fsscanner::pathfilter::Pathfilter;
-use symbol_to_source_resolver::Backend;
 use crate::agenttools::aitooltype::{ResultToJson, ResultToString, Validatable};
 use crate::agenttools::pathguard::can_read_resolved;
 use crate::aimessageid::AIMessageId;
+use fsscanner::pathfilter::Pathfilter;
+use serde_json::{Value, json};
+use std::fmt;
+use std::path::{Path, PathBuf};
+use symbol_to_source_resolver::Backend;
 
 #[derive(Debug)]
 pub struct LoadFileBySymbol<'a> {
@@ -31,7 +31,9 @@ impl<'a> LoadFileBySymbol<'a> {
         filter: &'a Pathfilter,
         payload: &Value,
     ) -> Result<Self, LoadFileBySymbolError> {
-        let symbol = payload.get("symbol").and_then(Value::as_str)
+        let symbol = payload
+            .get("symbol")
+            .and_then(Value::as_str)
             .filter(|s| !s.trim().is_empty())
             .ok_or_else(|| LoadFileBySymbolError("missing non-empty 'symbol'".into()))?;
 
@@ -84,7 +86,8 @@ impl<'a> LoadFileBySymbol<'a> {
         };
         let mut readable = Vec::new();
         for path in candidates {
-            let path = path.canonicalize()
+            let path = path
+                .canonicalize()
                 .map_err(|err| LoadFileBySymbolError(format!("{}: {err}", path.display())))?;
             if !can_read_resolved(self.filter, &path) {
                 continue;
@@ -104,7 +107,10 @@ impl<'a> LoadFileBySymbol<'a> {
             content.push_str(&format!("=== {} ===\n{}\n", path.display(), data));
         }
         if content.is_empty() {
-            content = format!("No readable source files found for symbol '{}'", self.symbol);
+            content = format!(
+                "No readable source files found for symbol '{}'",
+                self.symbol
+            );
         }
         Ok(LoadFileBySymbolResult { data: content })
     }
@@ -119,7 +125,10 @@ impl std::error::Error for LoadFileBySymbolError {}
 
 impl ResultToJson for Result<LoadFileBySymbolResult, LoadFileBySymbolError> {
     fn to_json(&self, msg_id: AIMessageId) -> Value {
-        let data = match self { Ok(result) => result.data.clone(), Err(err) => err.to_string() };
+        let data = match self {
+            Ok(result) => result.data.clone(),
+            Err(err) => err.to_string(),
+        };
         json!({"role":"tool", "tool_call_id":msg_id, "content":data})
     }
 }
@@ -132,5 +141,7 @@ impl ResultToString for Result<LoadFileBySymbolResult, LoadFileBySymbolError> {
     }
 }
 impl Validatable for Result<LoadFileBySymbolResult, LoadFileBySymbolError> {
-    fn is_valid(&self) -> bool { self.is_ok() }
+    fn is_valid(&self) -> bool {
+        self.is_ok()
+    }
 }

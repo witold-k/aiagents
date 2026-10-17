@@ -15,10 +15,12 @@ fn collects_release_context_between_refs() {
     assert_eq!(context.to, "HEAD");
     assert_eq!(context.commits.len(), 1);
     assert!(context.diff.as_ref().is_some_and(|diff| !diff.is_empty()));
-    assert!(context
-        .files
-        .iter()
-        .any(|file| file.path == std::path::Path::new("Cargo.toml")));
+    assert!(
+        context
+            .files
+            .iter()
+            .any(|file| file.path == std::path::Path::new("Cargo.toml"))
+    );
 }
 
 #[test]
@@ -30,10 +32,12 @@ fn collects_release_context_since_latest_tag() {
     assert_eq!(context.from.as_deref(), Some("v0.1.0"));
     assert_eq!(context.to, "HEAD");
     assert_eq!(context.commits.len(), 1);
-    assert!(context
-        .files
-        .iter()
-        .any(|file| file.path == std::path::Path::new("Cargo.toml")));
+    assert!(
+        context
+            .files
+            .iter()
+            .any(|file| file.path == std::path::Path::new("Cargo.toml"))
+    );
 }
 
 #[test]

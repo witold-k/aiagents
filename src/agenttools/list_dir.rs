@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Witold Kaminski
 
-use std::fmt;
-use std::path::{Path, PathBuf};
-use serde_json::{json, Value};
+use crate::agenttools::aitooltype::{ResultToJson, ResultToString, Validatable};
+use crate::agenttools::pathguard::can_read_resolved;
+use crate::aimessageid::AIMessageId;
 use fsscanner::{
     pathfilter::Pathfilter,
     pathutils::{normalize_path, resolve_relaxed_path},
 };
-use crate::agenttools::aitooltype::{ ResultToString, ResultToJson, Validatable };
-use crate::aimessageid::AIMessageId;
-use crate::agenttools::pathguard::can_read_resolved;
+use serde_json::{Value, json};
+use std::fmt;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
 pub struct ListDir<'a> {
@@ -45,9 +45,13 @@ impl<'a> ListDir<'a> {
     pub fn from_json(
         projroot: &'a Path,
         filter: &'a Pathfilter,
-        payload: &Value
+        payload: &Value,
     ) -> Result<ListDir<'a>, ListDirError> {
-        match payload.get("path").and_then(|v| v.as_str()).map(PathBuf::from) {
+        match payload
+            .get("path")
+            .and_then(|v| v.as_str())
+            .map(PathBuf::from)
+        {
             Some(path) => {
                 let direct_path = normalize_path(&projroot.join(&path));
                 let resolved = if direct_path.is_dir() {
@@ -61,12 +65,13 @@ impl<'a> ListDir<'a> {
                         filter,
                         path: normalize_path(&rpath),
                     }),
-                    None => Err(ListDirError::new(ListDirErrorType::NotFound, &path))
+                    None => Err(ListDirError::new(ListDirErrorType::NotFound, &path)),
                 }
-            },
-            None => {
-                Err(ListDirError {err_type: ListDirErrorType::DecodeError, err_info: "path".to_string()})
-            },
+            }
+            None => Err(ListDirError {
+                err_type: ListDirErrorType::DecodeError,
+                err_info: "path".to_string(),
+            }),
         }
     }
 
@@ -100,7 +105,9 @@ impl<'a> ListDir<'a> {
             }
         };
 
-        Ok(ListDirResult { data: entries.join("\n") })
+        Ok(ListDirResult {
+            data: entries.join("\n"),
+        })
     }
 }
 
@@ -144,17 +151,21 @@ impl ListDirError {
 
     pub fn to_json(&self, message_id: AIMessageId) -> Value {
         let msg = match self.err_type {
-            ListDirErrorType::DecodeError =>
-                format!("[list_dir] ERROR: decode error: {}", self.err_info),
+            ListDirErrorType::DecodeError => {
+                format!("[list_dir] ERROR: decode error: {}", self.err_info)
+            }
 
-            ListDirErrorType::Forbidden =>
-                format!("[list_dir] ERROR: not allowed to read: {}", self.err_info),
+            ListDirErrorType::Forbidden => {
+                format!("[list_dir] ERROR: not allowed to read: {}", self.err_info)
+            }
 
-            ListDirErrorType::NotFound =>
-                format!("[list_dir] ERROR: file not found: {}", self.err_info),
+            ListDirErrorType::NotFound => {
+                format!("[list_dir] ERROR: file not found: {}", self.err_info)
+            }
 
-            ListDirErrorType::ReadFailed =>
-                format!("[list_dir] ERROR: read failed: {}", self.err_info),
+            ListDirErrorType::ReadFailed => {
+                format!("[list_dir] ERROR: read failed: {}", self.err_info)
+            }
         };
 
         json!({
@@ -193,4 +204,3 @@ impl Validatable for Result<ListDirResult, ListDirError> {
         self.is_ok()
     }
 }
-

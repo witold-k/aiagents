@@ -1,13 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Witold Kaminski
 
-use std::path::{PathBuf};
-use fsscanner::{
-    pathfilter::Pathfilter,
-    pathutils::normalize_path,
-};
-use crate::workflows::workflow::{Workflow, WorkflowResult};
 use crate::config::Config;
+use crate::workflows::workflow::{Workflow, WorkflowResult};
+use fsscanner::{pathfilter::Pathfilter, pathutils::normalize_path};
+use std::path::PathBuf;
 
 const REQUIRED_CONSECUTIVE_SUCCESSES: usize = 2;
 const INITIAL_SUCCESS_COUNT: usize = 1;
@@ -54,8 +51,7 @@ impl<'a> AIAgentLoop<'a> {
                     println!("{}", wr);
                     break;
                 }
-            }
-            else {
+            } else {
                 //println!("{}", wr);
                 okcount += 1;
             }

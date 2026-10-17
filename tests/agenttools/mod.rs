@@ -44,9 +44,9 @@ impl Drop for TempTree {
 }
 
 pub mod list_dir_test;
+pub mod load_file_by_symbol_test;
 pub mod load_file_part_test;
 pub mod load_file_test;
-pub mod load_file_by_symbol_test;
 pub mod pathguard_test;
 pub mod save_file_replace_part_test;
 pub mod save_file_test;

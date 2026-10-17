@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Witold Kaminski
 
-use serde_json::{json, Value};
+use crate::agenttools::aitooltype::{AIToolType, ResultToJson, ResultToString, Validatable};
+use crate::agenttools::pathguard::can_write_resolved;
+use crate::aimessageid::AIMessageId;
+use crate::utils::jsonutils::get_json_field;
+use fsscanner::{
+    pathfilter::Pathfilter,
+    pathutils::{normalize_path, resolve_relaxed_path},
+};
+use serde_json::{Value, json};
 use std::fmt;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use struct_extractors::extract_accessors;
-use fsscanner::{
-    pathfilter::Pathfilter,
-    pathutils::{normalize_path, resolve_relaxed_path}
-};
-use crate::utils::jsonutils::get_json_field;
-use crate::agenttools::aitooltype::{ AIToolType, ResultToString, ResultToJson, Validatable };
-use crate::aimessageid::AIMessageId;
-use crate::agenttools::pathguard::can_write_resolved;
 
 #[extract_accessors]
 #[derive(Clone, Debug)]
@@ -25,7 +25,7 @@ pub struct SaveFile<'a> {
     #[access(get_ref)]
     content: String,
     #[access(get)]
-    note: &'a str
+    note: &'a str,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -61,7 +61,11 @@ impl<'a> SaveFile<'a> {
         filter: &'a Pathfilter,
         payload: &'a Value,
     ) -> Result<SaveFile<'a>, SaveFileError> {
-        let file = match payload.get("file").and_then(|v| v.as_str()).map(PathBuf::from) {
+        let file = match payload
+            .get("file")
+            .and_then(|v| v.as_str())
+            .map(PathBuf::from)
+        {
             Some(file) => file,
             None => {
                 return Err(SaveFileError {
@@ -119,7 +123,11 @@ impl<'a> SaveFile<'a> {
         }
 
         if self.content.is_empty() {
-            return Err(SaveFileError::new(SaveFileErrorType::EmptyContent, &path, ""));
+            return Err(SaveFileError::new(
+                SaveFileErrorType::EmptyContent,
+                &path,
+                "",
+            ));
         }
 
         match OpenOptions::new()
@@ -187,29 +195,30 @@ impl SaveFileError {
     pub fn new(err_type: SaveFileErrorType, path: &Path, info: &str) -> Self {
         let err_info = format!("{}: {}", path.to_string_lossy(), info);
 
-        Self {
-            err_type,
-            err_info,
-        }
+        Self { err_type, err_info }
     }
 
     pub fn to_json(&'_ self, message_id: AIMessageId) -> Value {
         let msg = match self.err_type {
-            SaveFileErrorType::DecodeError =>
-                format!("[save_file] ERROR: decode error: {}", self.err_info),
+            SaveFileErrorType::DecodeError => {
+                format!("[save_file] ERROR: decode error: {}", self.err_info)
+            }
 
-            SaveFileErrorType::Forbidden =>
-                format!("[save_file] ERROR: not allowed to read: {}", self.err_info),
+            SaveFileErrorType::Forbidden => {
+                format!("[save_file] ERROR: not allowed to read: {}", self.err_info)
+            }
 
-            SaveFileErrorType::NotFound =>
-                format!("[save_file] ERROR: file not found: {}", self.err_info),
+            SaveFileErrorType::NotFound => {
+                format!("[save_file] ERROR: file not found: {}", self.err_info)
+            }
 
-            SaveFileErrorType::WriteFailed =>
-                format!("[save_file] ERROR: write failed: {}", self.err_info),
+            SaveFileErrorType::WriteFailed => {
+                format!("[save_file] ERROR: write failed: {}", self.err_info)
+            }
 
-            SaveFileErrorType::EmptyContent =>
-                format!("[save_file] ERROR: empty content: {}", self.err_info),
-
+            SaveFileErrorType::EmptyContent => {
+                format!("[save_file] ERROR: empty content: {}", self.err_info)
+            }
         };
 
         json!({
@@ -248,4 +257,3 @@ impl Validatable for Result<SaveFileResult, SaveFileError> {
         self.is_ok()
     }
 }
-

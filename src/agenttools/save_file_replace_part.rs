@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Witold Kaminski
 
-use std::fmt;
-use std::io::Write;
-use std::fs::OpenOptions;
-use std::path::{Path, PathBuf};
-use serde_json::{json, Value};
-use struct_extractors::extract_accessors;
+use crate::agenttools::aitooltype::{ResultToJson, ResultToString, Validatable};
+use crate::agenttools::pathguard::can_write_resolved;
+use crate::aimessageid::AIMessageId;
 use fsscanner::{
     pathfilter::Pathfilter,
     pathutils::{normalize_path, resolve_relaxed_path},
 };
-use crate::agenttools::aitooltype::{ ResultToString, ResultToJson, Validatable };
-use crate::aimessageid::AIMessageId;
-use crate::agenttools::pathguard::can_write_resolved;
+use serde_json::{Value, json};
+use std::fmt;
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use struct_extractors::extract_accessors;
 
 #[extract_accessors]
 #[derive(Debug)]
@@ -26,7 +26,7 @@ pub struct SaveFilePart<'a> {
     #[access(get_ref)]
     original: String,
     #[access(get_ref)]
-    note: String
+    note: String,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -55,7 +55,7 @@ pub struct SaveFilePartResult {
     #[access(get_ref)]
     original: String,
     #[access(get_ref)]
-    note: String
+    note: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -68,7 +68,11 @@ impl<'a> SaveFilePart<'a> {
         filter: &'a Pathfilter,
         payload: &'a Value,
     ) -> Result<SaveFilePart<'a>, SaveFilePartError> {
-        let file = match payload.get("file").and_then(|v| v.as_str()).map(PathBuf::from) {
+        let file = match payload
+            .get("file")
+            .and_then(|v| v.as_str())
+            .map(PathBuf::from)
+        {
             Some(file) => file,
             None => {
                 return Err(SaveFilePartError {
@@ -137,10 +141,7 @@ impl<'a> SaveFilePart<'a> {
             }
         };
 
-        let note = payload
-            .get("note")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let note = payload.get("note").and_then(|v| v.as_str()).unwrap_or("");
 
         Ok(SaveFilePart {
             filter,
@@ -156,17 +157,31 @@ impl<'a> SaveFilePart<'a> {
         let path = normalize_path(&self.path);
 
         if !can_write_resolved(self.filter, &path) {
-            return Err(SaveFilePartError::new(SaveFilePartErrorType::Forbidden, &path, ""));
+            return Err(SaveFilePartError::new(
+                SaveFilePartErrorType::Forbidden,
+                &path,
+                "",
+            ));
         }
 
         if !path.exists() {
-            return Err(SaveFilePartError::new(SaveFilePartErrorType::NotFound, &path, ""));
+            return Err(SaveFilePartError::new(
+                SaveFilePartErrorType::NotFound,
+                &path,
+                "",
+            ));
         }
 
         // Read full file content
         let file_content = match std::fs::read_to_string(&path) {
             Ok(content) => content,
-            Err(_) => return Err(SaveFilePartError::new(SaveFilePartErrorType::ReadFailed, &path, "")),
+            Err(_) => {
+                return Err(SaveFilePartError::new(
+                    SaveFilePartErrorType::ReadFailed,
+                    &path,
+                    "",
+                ));
+            }
         };
 
         // Normalisiere Zeilenumbrüche für einen robusten String-Match
@@ -190,7 +205,11 @@ impl<'a> SaveFilePart<'a> {
                 - Your requested block:\n\"\"\"\n{}\n\"\"\"",
                 clean_original
             );
-            return Err(SaveFilePartError::new(SaveFilePartErrorType::OriginalMismatch, &path, &err));
+            return Err(SaveFilePartError::new(
+                SaveFilePartErrorType::OriginalMismatch,
+                &path,
+                &err,
+            ));
         }
 
         // Check 2: Der gewünschte Index existiert nicht (z.B. Index 2 gefordert, aber nur 2 Matches [0, 1] vorhanden)
@@ -200,9 +219,14 @@ impl<'a> SaveFilePart<'a> {
                 - You requested index: {} (0-based)\n\
                 - Total identical matches found in file: {}\n\
                 - Reduce the index or make your 'original' block larger/more unique.",
-                self.occurrence_index, matches.len()
+                self.occurrence_index,
+                matches.len()
             );
-            return Err(SaveFilePartError::new(SaveFilePartErrorType::OriginalMismatch, &path, &err));
+            return Err(SaveFilePartError::new(
+                SaveFilePartErrorType::OriginalMismatch,
+                &path,
+                &err,
+            ));
         }
 
         // Identifiziere die exakte Byte-Position für das gewählte Vorkommen
@@ -220,16 +244,24 @@ impl<'a> SaveFilePart<'a> {
         match OpenOptions::new().write(true).truncate(true).open(&path) {
             Ok(mut file) => {
                 if file.write_all(updated_content.as_bytes()).is_err() {
-                    return Err(SaveFilePartError::new(SaveFilePartErrorType::WriteFailed, &path, ""));
+                    return Err(SaveFilePartError::new(
+                        SaveFilePartErrorType::WriteFailed,
+                        &path,
+                        "",
+                    ));
                 }
                 Ok(SaveFilePartResult {
                     occurrence_index: self.occurrence_index, // In diesem Modus optional/nicht zeilenbasiert
                     content: updated_content,
                     original: self.original,
-                    note: self.note
+                    note: self.note,
                 })
-            },
-            Err(_) => Err(SaveFilePartError::new(SaveFilePartErrorType::WriteFailed, &path, "")),
+            }
+            Err(_) => Err(SaveFilePartError::new(
+                SaveFilePartErrorType::WriteFailed,
+                &path,
+                "",
+            )),
         }
     }
 }
@@ -276,26 +308,32 @@ impl SaveFilePartError {
 
     pub fn to_json(&self, message_id: AIMessageId) -> Value {
         let msg = match self.err_type {
-            SaveFilePartErrorType::DecodeError =>
-                format!("[save_file] ERROR: decode error: {}", self.err_info),
+            SaveFilePartErrorType::DecodeError => {
+                format!("[save_file] ERROR: decode error: {}", self.err_info)
+            }
 
-             SaveFilePartErrorType::Forbidden =>
-                format!("[save_file] ERROR: not allowed to read: {}", self.err_info),
+            SaveFilePartErrorType::Forbidden => {
+                format!("[save_file] ERROR: not allowed to read: {}", self.err_info)
+            }
 
-            SaveFilePartErrorType::NotFound =>
-                format!("[save_file] ERROR: file not found: {}", self.err_info),
+            SaveFilePartErrorType::NotFound => {
+                format!("[save_file] ERROR: file not found: {}", self.err_info)
+            }
 
-            SaveFilePartErrorType::ReadFailed =>
-                format!("[save_file] ERROR: read (before write) failed: {}", self.err_info),
+            SaveFilePartErrorType::ReadFailed => format!(
+                "[save_file] ERROR: read (before write) failed: {}",
+                self.err_info
+            ),
 
-            SaveFilePartErrorType::WriteFailed =>
-                format!("[save_file] ERROR: write failed: {}", self.err_info),
+            SaveFilePartErrorType::WriteFailed => {
+                format!("[save_file] ERROR: write failed: {}", self.err_info)
+            }
 
-            SaveFilePartErrorType::OriginalMismatch =>
-                format!("[save_file] ERROR: original mismatch: {}", self.err_info),
+            SaveFilePartErrorType::OriginalMismatch => {
+                format!("[save_file] ERROR: original mismatch: {}", self.err_info)
+            }
 
-            SaveFilePartErrorType::NoChange =>
-                format!("[save_file] NO CHANGE: {}", self.err_info),
+            SaveFilePartErrorType::NoChange => format!("[save_file] NO CHANGE: {}", self.err_info),
         };
 
         json!({
@@ -334,4 +372,3 @@ impl Validatable for Result<SaveFilePartResult, SaveFilePartError> {
         self.is_ok()
     }
 }
-

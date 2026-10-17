@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Witold Kaminski
 
-use std::fmt;
-use serde_json::{json, Value};
-use crate::agenttools::aitooltype::{ ResultToString, ResultToJson, Validatable };
+use crate::agenttools::aitooltype::{ResultToJson, ResultToString, Validatable};
 use crate::aimessageid::AIMessageId;
+use serde_json::{Value, json};
+use std::fmt;
 
 #[derive(Clone, Debug)]
 pub struct SetFocusResult {
@@ -13,12 +13,11 @@ pub struct SetFocusResult {
 
 // Dummy, just to keep structure intact
 #[derive(Clone, Debug)]
-pub struct SetFocusError {
-}
+pub struct SetFocusError {}
 
 #[derive(Debug, Default)]
 pub struct SetFocus {
-    pub data: String
+    pub data: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -28,12 +27,16 @@ pub struct SetFocus {
 impl SetFocus {
     pub fn from_json(payload: &Value) -> Self {
         match payload.get("focus") {
-            Some(note) => SetFocus { data: note.to_string() },
-            None       => SetFocus { data: "no note found".to_string() },
+            Some(note) => SetFocus {
+                data: note.to_string(),
+            },
+            None => SetFocus {
+                data: "no note found".to_string(),
+            },
         }
     }
 
-    pub fn execute(self) -> Result<SetFocusResult, SetFocusError>  {
+    pub fn execute(self) -> Result<SetFocusResult, SetFocusError> {
         Ok(SetFocusResult { data: self.data })
     }
 }
@@ -106,4 +109,3 @@ impl Validatable for Result<SetFocusResult, SetFocusError> {
         self.is_ok()
     }
 }
-

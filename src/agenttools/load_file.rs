@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Witold Kaminski
 
-use std::fmt;
-use std::path::{Path, PathBuf};
-use serde_json::{json, Value};
+use crate::agenttools::aitooltype::{ResultToJson, ResultToString, Validatable};
+use crate::agenttools::pathguard::can_read_resolved;
+use crate::aimessageid::AIMessageId;
 use fsscanner::{
     pathfilter::Pathfilter,
     pathutils::{normalize_path, resolve_relaxed_path},
 };
-use crate::agenttools::aitooltype::{ ResultToString, ResultToJson, Validatable };
-use crate::aimessageid::AIMessageId;
-use crate::agenttools::pathguard::can_read_resolved;
+use serde_json::{Value, json};
+use std::fmt;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
 pub struct LoadFile<'a> {
@@ -47,22 +47,22 @@ impl<'a> LoadFile<'a> {
         filter: &'a Pathfilter,
         payload: &Value,
     ) -> Result<LoadFile<'a>, LoadFileError> {
-        match payload.get("file").and_then(|v| v.as_str()).map(PathBuf::from) {
-            Some(file) => {
-                match resolve_relaxed_path(projroot, &file) {
-                    Some(rpath) => Ok(LoadFile {
-                        filter,
-                        path: normalize_path(&rpath),
-                    }),
-                    None => Err(LoadFileError::new(LoadFileErrorType::NotFound, &file))
-                }
+        match payload
+            .get("file")
+            .and_then(|v| v.as_str())
+            .map(PathBuf::from)
+        {
+            Some(file) => match resolve_relaxed_path(projroot, &file) {
+                Some(rpath) => Ok(LoadFile {
+                    filter,
+                    path: normalize_path(&rpath),
+                }),
+                None => Err(LoadFileError::new(LoadFileErrorType::NotFound, &file)),
             },
-            None => {
-                Err(LoadFileError {
-                    err_type: LoadFileErrorType::DecodeError,
-                    err_info: "file".to_string(),
-                })
-            },
+            None => Err(LoadFileError {
+                err_type: LoadFileErrorType::DecodeError,
+                err_info: "file".to_string(),
+            }),
         }
     }
 
@@ -126,17 +126,21 @@ impl LoadFileError {
 
     pub fn to_json(&self, message_id: AIMessageId) -> Value {
         let msg = match self.err_type {
-            LoadFileErrorType::DecodeError =>
-                format!("[load_file] ERROR: decode error: {}", self.err_info),
+            LoadFileErrorType::DecodeError => {
+                format!("[load_file] ERROR: decode error: {}", self.err_info)
+            }
 
-            LoadFileErrorType::Forbidden =>
-                format!("[load_file] ERROR: not allowed to read: {}", self.err_info),
+            LoadFileErrorType::Forbidden => {
+                format!("[load_file] ERROR: not allowed to read: {}", self.err_info)
+            }
 
-            LoadFileErrorType::NotFound =>
-                format!("[load_file] ERROR: file not found: {}", self.err_info),
+            LoadFileErrorType::NotFound => {
+                format!("[load_file] ERROR: file not found: {}", self.err_info)
+            }
 
-            LoadFileErrorType::ReadFailed =>
-                format!("[load_file] ERROR: read failed: {}", self.err_info),
+            LoadFileErrorType::ReadFailed => {
+                format!("[load_file] ERROR: read failed: {}", self.err_info)
+            }
         };
 
         json!({
@@ -175,4 +179,3 @@ impl Validatable for Result<LoadFileResult, LoadFileError> {
         self.is_ok()
     }
 }
-

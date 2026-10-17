@@ -112,10 +112,7 @@ impl ReleaseDocContext {
         for commit in &self.commits {
             context.push_str(&format!(
                 "hash: {}\ndate: {}\nsubject: {}\nbody:\n{}\n---\n",
-                commit.hash,
-                commit.authored_at,
-                commit.subject,
-                commit.body
+                commit.hash, commit.authored_at, commit.subject, commit.body
             ));
         }
 
@@ -133,5 +130,4 @@ impl ReleaseDocContext {
 
         context
     }
-
 }

@@ -34,4 +34,3 @@ pub(crate) fn can_write_resolved(filter: &Pathfilter, path: &Path) -> bool {
 
     false
 }
-

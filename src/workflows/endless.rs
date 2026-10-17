@@ -1,15 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Witold Kaminski
 
-use std::path::Path;
 use crate::config::Config;
-use crate::runtimetools::{
-    llmcall::{LlmCall, LlmCallResult},
-};
-use crate::workflows::{
-    workflow::Workflow,
-    workflow::WorkflowResult,
-};
+use crate::runtimetools::llmcall::{LlmCall, LlmCallResult};
+use crate::workflows::{workflow::Workflow, workflow::WorkflowResult};
+use std::path::Path;
 
 #[expect(dead_code)]
 pub struct EndlessWorkflow<'a> {
@@ -26,14 +21,17 @@ impl<'a> EndlessWorkflow<'a> {
         projdir: &'a Path,
         targetdir: &'a Path,
     ) -> Self {
-        EndlessWorkflow { config, llm_call, projdir, targetdir  }
+        EndlessWorkflow {
+            config,
+            llm_call,
+            projdir,
+            targetdir,
+        }
     }
 }
 
 impl<'a> Workflow for EndlessWorkflow<'a> {
-    fn execute(
-        &self,
-    ) -> WorkflowResult {
+    fn execute(&self) -> WorkflowResult {
         let res: LlmCallResult = self.llm_call.run("");
         if res.is_done() {
             WorkflowResult::Ok

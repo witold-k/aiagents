@@ -6,16 +6,16 @@
 //! for now the same as ListDir
 //!
 
-use std::fmt;
-use std::path::{Path, PathBuf};
-use serde_json::{json, Value};
+use crate::agenttools::aitooltype::{ResultToJson, ResultToString, Validatable};
+use crate::agenttools::pathguard::can_read_resolved;
+use crate::aimessageid::AIMessageId;
 use fsscanner::{
     pathfilter::Pathfilter,
     pathutils::{normalize_path, resolve_relaxed_path},
 };
-use crate::agenttools::aitooltype::{ ResultToString, ResultToJson, Validatable };
-use crate::aimessageid::AIMessageId;
-use crate::agenttools::pathguard::can_read_resolved;
+use serde_json::{Value, json};
+use std::fmt;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
 pub struct ScanDir<'a> {
@@ -50,9 +50,13 @@ impl<'a> ScanDir<'a> {
     pub fn from_json(
         projroot: &'a Path,
         filter: &'a Pathfilter,
-        payload: &Value
+        payload: &Value,
     ) -> Result<ScanDir<'a>, ScanDirError> {
-        match payload.get("path").and_then(|v| v.as_str()).map(PathBuf::from) {
+        match payload
+            .get("path")
+            .and_then(|v| v.as_str())
+            .map(PathBuf::from)
+        {
             Some(path) => {
                 let direct_path = normalize_path(&projroot.join(&path));
                 let resolved = if direct_path.is_dir() {
@@ -66,12 +70,13 @@ impl<'a> ScanDir<'a> {
                         filter,
                         path: normalize_path(&rpath),
                     }),
-                    None => Err(ScanDirError::new(ScanDirErrorType::NotFound, &path))
+                    None => Err(ScanDirError::new(ScanDirErrorType::NotFound, &path)),
                 }
-            },
-            None => {
-                Err(ScanDirError {err_type: ScanDirErrorType::DecodeError, err_info: "path".to_string()})
-            },
+            }
+            None => Err(ScanDirError {
+                err_type: ScanDirErrorType::DecodeError,
+                err_info: "path".to_string(),
+            }),
         }
     }
 
@@ -105,7 +110,9 @@ impl<'a> ScanDir<'a> {
             }
         };
 
-        Ok(ScanDirResult { data: entries.join("\n") })
+        Ok(ScanDirResult {
+            data: entries.join("\n"),
+        })
     }
 }
 
@@ -149,17 +156,21 @@ impl ScanDirError {
 
     pub fn to_json(&self, message_id: AIMessageId) -> Value {
         let msg = match self.err_type {
-            ScanDirErrorType::DecodeError =>
-                format!("[scan_dir] ERROR: decode error: {}", self.err_info),
+            ScanDirErrorType::DecodeError => {
+                format!("[scan_dir] ERROR: decode error: {}", self.err_info)
+            }
 
-            ScanDirErrorType::Forbidden =>
-                format!("[scan_dir] ERROR: not allowed to read: {}", self.err_info),
+            ScanDirErrorType::Forbidden => {
+                format!("[scan_dir] ERROR: not allowed to read: {}", self.err_info)
+            }
 
-            ScanDirErrorType::NotFound =>
-                format!("[scan_dir] ERROR: file not found: {}", self.err_info),
+            ScanDirErrorType::NotFound => {
+                format!("[scan_dir] ERROR: file not found: {}", self.err_info)
+            }
 
-            ScanDirErrorType::ReadFailed =>
-                format!("[scan_dir] ERROR: read failed: {}", self.err_info),
+            ScanDirErrorType::ReadFailed => {
+                format!("[scan_dir] ERROR: read failed: {}", self.err_info)
+            }
         };
 
         json!({
@@ -198,4 +209,3 @@ impl Validatable for Result<ScanDirResult, ScanDirError> {
         self.is_ok()
     }
 }
-

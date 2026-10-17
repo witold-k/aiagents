@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Witold Kaminski
 
+use fsscanner::pathfilter::Pathfilter;
 use std::fs;
 use std::path::{Path, PathBuf};
-use fsscanner::pathfilter::{Pathfilter};
 
 pub fn scan_with_suffix_and_filter(
     root: impl AsRef<Path>,
@@ -25,7 +25,7 @@ fn walk_recursive(
         for entry in entries.flatten() {
             let canon = match entry.path().canonicalize() {
                 Ok(canon) => canon,
-                Err(_)    => continue,
+                Err(_) => continue,
             };
 
             if canon.is_dir() && filter.contains(&canon) {
@@ -43,4 +43,3 @@ fn walk_recursive(
         }
     }
 }
-

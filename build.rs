@@ -59,9 +59,7 @@ fn generate_task_argument_help(root: &Path, out_dir: &Path, visible_root: &Path)
         .join("\n");
 
     let escaped = format!("{help:?}");
-    let out = format!(
-        "pub const TASK_ARGUMENT_HELP: &str = {escaped};\n"
-    );
+    let out = format!("pub const TASK_ARGUMENT_HELP: &str = {escaped};\n");
 
     let dest_out = out_dir.join("generated_task_argument_help.rs");
     fs::write(&dest_out, &out).unwrap();
@@ -120,9 +118,15 @@ fn generate_dimension(
                 let content = fs::read_to_string(&path).unwrap();
 
                 enum_variants.push_str(&format!("    {},\n", variant));
-                match_as_str.push_str(&format!("            {enum_name}::{variant} => \"{stem}\",\n"));
-                match_from_str.push_str(&format!("            \"{stem}\" => Some({enum_name}::{variant}),\n"));
-                match_content.push_str(&format!("            {enum_name}::{variant} => r#\"{content}\"#,\n"));
+                match_as_str.push_str(&format!(
+                    "            {enum_name}::{variant} => \"{stem}\",\n"
+                ));
+                match_from_str.push_str(&format!(
+                    "            \"{stem}\" => Some({enum_name}::{variant}),\n"
+                ));
+                match_content.push_str(&format!(
+                    "            {enum_name}::{variant} => r#\"{content}\"#,\n"
+                ));
                 all_list.push_str(&format!("    {enum_name}::{variant},\n"));
             }
         }
@@ -190,4 +194,3 @@ fn create_link_or_copy(src: &std::path::Path, dst: &std::path::Path) {
 fn create_link_or_copy(src: &std::path::Path, dst: &std::path::Path) {
     fs::copy(src, dst).unwrap();
 }
-

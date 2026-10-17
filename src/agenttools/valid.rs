@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Witold Kaminski
 
-use std::fmt;
-use serde_json::{json, Value};
-use crate::agenttools::aitooltype::{ ResultToJson, ResultToString, Validatable };
+use crate::agenttools::aitooltype::{ResultToJson, ResultToString, Validatable};
 use crate::aimessageid::AIMessageId;
+use serde_json::{Value, json};
+use std::fmt;
 
 #[derive(Clone, Debug)]
 pub struct ValidResult {
@@ -13,12 +13,11 @@ pub struct ValidResult {
 
 // Dummy, just to keep structure intact
 #[derive(Clone, Debug)]
-pub struct ValidError {
-}
+pub struct ValidError {}
 
 #[derive(Debug, Default)]
 pub struct Valid {
-    pub data: String
+    pub data: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -103,4 +102,3 @@ impl Validatable for Result<ValidResult, ValidError> {
         true
     }
 }
-

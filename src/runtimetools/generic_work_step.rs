@@ -3,10 +3,7 @@
 
 use std::path::Path;
 
-use crate::{
-    runtimetools::buildresult::Buildresult,
-    utils::doprocess::DoProcess,
-};
+use crate::{runtimetools::buildresult::Buildresult, utils::doprocess::DoProcess};
 
 pub fn run_cmd(path: &Path, cmd: &[String]) -> Buildresult {
     let mut lines = Vec::new();
@@ -15,4 +12,3 @@ pub fn run_cmd(path: &Path, cmd: &[String]) -> Buildresult {
 
     Buildresult::new(result, path.to_path_buf(), path.to_path_buf(), lines)
 }
-

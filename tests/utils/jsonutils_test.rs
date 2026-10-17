@@ -53,4 +53,3 @@ mod tests {
         assert_eq!(result, Ok("".to_string()));
     }
 }
-

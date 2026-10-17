@@ -38,9 +38,6 @@ mod tests {
         let tree = TempTree::new("list-decode");
         let filter = Pathfilter::new(vec![tree.root().to_path_buf()]);
 
-        assert!(
-            ListDir::from_json(tree.root(), &filter, &json!({})).is_err()
-        );
+        assert!(ListDir::from_json(tree.root(), &filter, &json!({})).is_err());
     }
-
 }

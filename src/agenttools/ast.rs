@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Witold Kaminski
 
+use crate::agenttools::aitooltype::{ResultToJson, ResultToString, Validatable};
+use crate::agenttools::pathguard::can_read_resolved;
+use crate::aimessageid::AIMessageId;
+use fsscanner::pathfilter::Pathfilter;
+use serde_json::{Value, json};
 use std::fmt;
 use std::path::{Path, PathBuf};
-use serde_json::{json, Value};
-use fsscanner::pathfilter::Pathfilter;
-use crate::agenttools::aitooltype::{ ResultToString, ResultToJson, Validatable };
-use crate::aimessageid::AIMessageId;
-use crate::agenttools::pathguard::can_read_resolved;
 
 #[derive(Clone, Debug)]
 pub struct AstError {
@@ -39,9 +39,16 @@ pub enum AstErrorType {
 
 impl<'a> Ast<'a> {
     pub fn from_json(filter: &'a Pathfilter, payload: &Value) -> Ast<'a> {
-        match payload.get("path").and_then(|v| v.as_str()).map(PathBuf::from) {
+        match payload
+            .get("path")
+            .and_then(|v| v.as_str())
+            .map(PathBuf::from)
+        {
             Some(path) => Ast { filter, path },
-            None       => Ast { filter, path: PathBuf::from("") },
+            None => Ast {
+                filter,
+                path: PathBuf::from(""),
+            },
         }
     }
 
@@ -56,17 +63,12 @@ impl<'a> Ast<'a> {
             return Err(AstError::new(AstErrorType::NotFound, path));
         }
 
-        match std::process::Command::new("ast-outline")
-            .arg(path)
-            .output()
-        {
+        match std::process::Command::new("ast-outline").arg(path).output() {
             Ok(out) => {
                 let stdout = String::from_utf8_lossy(&out.stdout).to_string();
                 Ok(AstResult { data: stdout })
             }
-            Err(_) => {
-                Err(AstError::new(AstErrorType::ExeFailed, path))
-            }
+            Err(_) => Err(AstError::new(AstErrorType::ExeFailed, path)),
         }
     }
 }
@@ -111,14 +113,13 @@ impl AstError {
 
     pub fn to_json(&self, message_id: AIMessageId) -> Value {
         let msg = match self.err_type {
-            AstErrorType::Forbidden =>
-                format!("[ast] ERROR: not allowed to read: {}", self.err_info),
+            AstErrorType::Forbidden => {
+                format!("[ast] ERROR: not allowed to read: {}", self.err_info)
+            }
 
-            AstErrorType::NotFound =>
-                format!("[ast] ERROR: file not found: {}", self.err_info),
+            AstErrorType::NotFound => format!("[ast] ERROR: file not found: {}", self.err_info),
 
-            AstErrorType::ExeFailed =>
-                format!("[ast] ERROR: execute failed: {}", self.err_info),
+            AstErrorType::ExeFailed => format!("[ast] ERROR: execute failed: {}", self.err_info),
         };
 
         json!({

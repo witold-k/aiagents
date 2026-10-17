@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Witold Kaminski
 
 use std::fmt;
-use std::path::{PathBuf};
+use std::path::PathBuf;
 
 #[derive(Clone)]
 pub struct Buildresult {
@@ -62,7 +62,16 @@ impl Buildresult {
 
 impl fmt::Display for Buildresult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "result: {} {}", self.result, if self.has_error() { " => has_error" } else { " => valid " })?;
+        writeln!(
+            f,
+            "result: {} {}",
+            self.result,
+            if self.has_error() {
+                " => has_error"
+            } else {
+                " => valid "
+            }
+        )?;
         writeln!(f, "in:  {}", self.projectpath.display())?;
         writeln!(f, "out: {}", self.executionpath.display())?;
         for line in &self.output {
@@ -77,4 +86,3 @@ impl fmt::Debug for Buildresult {
         fmt::Display::fmt(self, f)
     }
 }
-

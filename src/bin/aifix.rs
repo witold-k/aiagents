@@ -1,25 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Witold Kaminski
 
-use std::sync::{Arc, Mutex};
-use std::path::PathBuf;
-use std::fs;
-use std::process::Command;
-use fsscanner::{
-    pathfilter::Pathfilter,
-    pathutils::normalize_path,
-};
 use aiagents::{
     aiagentloop::AIAgentLoop,
-    cli::commandline::{parse_args, help},
+    cli::commandline::{help, parse_args},
     config::Config,
-    runtimetools::buildsystem::Buildsystem,
-    runtimetools::llmcall::LlmCall,
-    workflows::select_workflow::WorkflowSelector,
     generated_languages::Languages,
     generated_tasks::Tasks,
     generated_workspaces::Workspaces,
+    runtimetools::buildsystem::Buildsystem,
+    runtimetools::llmcall::LlmCall,
+    workflows::select_workflow::WorkflowSelector,
 };
+use fsscanner::{pathfilter::Pathfilter, pathutils::normalize_path};
+use std::fs;
+use std::path::PathBuf;
+use std::process::Command;
+use std::sync::{Arc, Mutex};
 
 pub fn run_service(config: &Config, name: &Option<String>) {
     let Some(name) = name else {
@@ -53,17 +50,15 @@ pub fn run_service(config: &Config, name: &Option<String>) {
     let child_handler = Arc::clone(&child);
 
     #[cfg(feature = "signal-handling")]
-    if let Err(err) = ctrlc::set_handler(move || {
-        match child_handler.lock() {
-            Ok(mut guard) => {
-                if let Some(mut child) = guard.take() {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                }
+    if let Err(err) = ctrlc::set_handler(move || match child_handler.lock() {
+        Ok(mut guard) => {
+            if let Some(mut child) = guard.take() {
+                let _ = child.kill();
+                let _ = child.wait();
             }
-            Err(err) => {
-                eprintln!("warning: failed to lock child process: {err}");
-            }
+        }
+        Err(err) => {
+            eprintln!("warning: failed to lock child process: {err}");
         }
     }) {
         eprintln!("warning: failed to install Ctrl-C handler: {err}");
@@ -114,12 +109,19 @@ pub fn main() {
     }
 
     let filter_paths: Vec<PathBuf> = if args.pathfilter.is_empty() {
-        config.writefilter.iter().chain(config.readfilter.iter()).map(PathBuf::from).collect()
+        config
+            .writefilter
+            .iter()
+            .chain(config.readfilter.iter())
+            .map(PathBuf::from)
+            .collect()
     } else {
         args.pathfilter.clone()
     };
     if filter_paths.is_empty() {
-        eprintln!("No path filter configured; specify -f/--pathfilter or config.writefilter/config.readfilter");
+        eprintln!(
+            "No path filter configured; specify -f/--pathfilter or config.writefilter/config.readfilter"
+        );
         std::process::exit(1);
     }
     let filter = Pathfilter::new(filter_paths);
@@ -144,10 +146,16 @@ pub fn main() {
 
     let task_name = args.task.clone();
     let lang_name = args.language.clone().unwrap_or_else(|| {
-        bs.inferred_language().unwrap_or_else(|| {
-            eprintln!("Cannot infer language from build system '{}'; specify -l/--lang", bs.as_str());
-            std::process::exit(1);
-        }).as_str().to_string()
+        bs.inferred_language()
+            .unwrap_or_else(|| {
+                eprintln!(
+                    "Cannot infer language from build system '{}'; specify -l/--lang",
+                    bs.as_str()
+                );
+                std::process::exit(1);
+            })
+            .as_str()
+            .to_string()
     });
     let task_opt = Tasks::parse(&task_name);
     let lang_opt = Languages::parse(&lang_name);
@@ -155,33 +163,37 @@ pub fn main() {
     let lang_str = match lang_opt {
         Some(lang) => lang.get_prompt().into(),
         None => fs::read_to_string(&lang_name).unwrap_or_else(|err| {
-            eprintln!("Unknown language and failed to load file '{}': {}", lang_name, err);
+            eprintln!(
+                "Unknown language and failed to load file '{}': {}",
+                lang_name, err
+            );
             std::process::exit(1);
         }),
     };
 
     let task_str = match &args.taskdata {
         Some(taskdata) => taskdata.data.clone(),
-        None => {
-            match task_opt {
-                Some(task) => match task.get_prompt().into() {
-                    Some(prompt) => prompt.to_string(),
-                    None => fs::read_to_string(&task_name).unwrap_or_else(|err| {
-                        eprintln!("Unknown task and failed to load file '{}': {}", task_name, err);
-                        std::process::exit(1);
-                    }),
-                },
-                None => {
-                    eprintln!("No --task set");
+        None => match task_opt {
+            Some(task) => match task.get_prompt().into() {
+                Some(prompt) => prompt.to_string(),
+                None => fs::read_to_string(&task_name).unwrap_or_else(|err| {
+                    eprintln!(
+                        "Unknown task and failed to load file '{}': {}",
+                        task_name, err
+                    );
                     std::process::exit(1);
-                }
+                }),
+            },
+            None => {
+                eprintln!("No --task set");
+                std::process::exit(1);
             }
-        }
+        },
     };
 
     let ws_str: String = match args.workspace {
         Some(_) => Workspaces::Sandboxspace.get_prompt().into(),
-        None    => Workspaces::Srcspace.get_prompt().into(),
+        None => Workspaces::Srcspace.get_prompt().into(),
     };
 
     let combined_task = format!("{}\n{}\n{}", lang_str, task_str, ws_str);
@@ -190,9 +202,7 @@ pub fn main() {
     let target_path: PathBuf = {
         match args.builddir {
             Some(bd) => bd,
-            None => {
-                normalize_path(&bs.get_default_builddir())
-            }
+            None => normalize_path(&bs.get_default_builddir()),
         }
     };
 
@@ -214,7 +224,7 @@ pub fn main() {
             std::process::exit(1);
         });
         subtask_vec.push(data);
-    };
+    }
 
     // Inline messages use the same persistent subtask context as extra -t files.
     subtask_vec.extend(args.message);

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Witold Kaminski
 
-use std::fmt;
-use serde_json::{json, Value};
-use crate::agenttools::aitooltype::{ ResultToString, ResultToJson, Validatable };
+use crate::agenttools::aitooltype::{ResultToJson, ResultToString, Validatable};
 use crate::aimessageid::AIMessageId;
+use serde_json::{Value, json};
+use std::fmt;
 
 #[derive(Clone, Debug)]
 pub struct AddNoteResult {
@@ -13,12 +13,11 @@ pub struct AddNoteResult {
 
 // Dummy, just to keep structure intact
 #[derive(Clone, Debug)]
-pub struct AddNoteError {
-}
+pub struct AddNoteError {}
 
 #[derive(Debug, Default)]
 pub struct AddNote {
-    pub data: String
+    pub data: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -28,12 +27,16 @@ pub struct AddNote {
 impl AddNote {
     pub fn from_json(payload: &Value) -> Self {
         match payload.get("note") {
-            Some(note) => AddNote { data: note.to_string() },
-            None       => AddNote { data: "no note found".to_string() },
+            Some(note) => AddNote {
+                data: note.to_string(),
+            },
+            None => AddNote {
+                data: "no note found".to_string(),
+            },
         }
     }
 
-    pub fn execute(self) -> Result<AddNoteResult, AddNoteError>  {
+    pub fn execute(self) -> Result<AddNoteResult, AddNoteError> {
         Ok(AddNoteResult { data: self.data })
     }
 }
@@ -106,4 +109,3 @@ impl Validatable for Result<AddNoteResult, AddNoteError> {
         self.is_ok()
     }
 }
-

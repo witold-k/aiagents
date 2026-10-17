@@ -10,6 +10,7 @@ build:
 	cargo build
 	RUST_BACKTRACE=1 cargo test
 	cargo clippy
+	cargo fmt --check
 
 build-jvm:
     RUSTFLAGS="-C panic=unwind" cargo jvm build --bin aifix --no-default-features

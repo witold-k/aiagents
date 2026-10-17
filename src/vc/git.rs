@@ -34,7 +34,11 @@ impl fmt::Display for GitError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             GitError::Io(err) => write!(f, "failed to execute git: {err}"),
-            GitError::CommandFailed { args, status, stderr } => {
+            GitError::CommandFailed {
+                args,
+                status,
+                stderr,
+            } => {
                 write!(
                     f,
                     "git {} failed with status {:?}: {}",
@@ -110,7 +114,11 @@ impl Git {
         }
     }
 
-    pub fn commits(&self, from: Option<&str>, to: Option<&str>) -> Result<Vec<GitCommit>, GitError> {
+    pub fn commits(
+        &self,
+        from: Option<&str>,
+        to: Option<&str>,
+    ) -> Result<Vec<GitCommit>, GitError> {
         let range = match (from, to) {
             (Some(from), Some(to)) => Some(format!("{from}..{to}")),
             (Some(from), None) => Some(format!("{from}..HEAD")),
@@ -230,4 +238,3 @@ fn parse_commits(output: &str) -> Result<Vec<GitCommit>, GitError> {
         })
         .collect()
 }
-

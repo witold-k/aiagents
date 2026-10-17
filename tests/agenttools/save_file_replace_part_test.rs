@@ -18,8 +18,7 @@ mod tests {
             "content": "changed",
             "note": "replace second occurrence"
         });
-        let tool =
-            SaveFilePart::from_json(tree.root(), &filter, &payload).unwrap();
+        let tool = SaveFilePart::from_json(tree.root(), &filter, &payload).unwrap();
 
         let result = tool.execute().unwrap();
         assert_eq!(result.occurrence_index, 1);
@@ -42,8 +41,7 @@ mod tests {
             "content": "changed",
             "note": "must fail"
         });
-        let tool =
-            SaveFilePart::from_json(tree.root(), &filter, &payload).unwrap();
+        let tool = SaveFilePart::from_json(tree.root(), &filter, &payload).unwrap();
 
         let err = tool.execute().unwrap_err();
         assert!(err.to_string().starts_with("OriginalMismatch:"));
@@ -65,8 +63,7 @@ mod tests {
             "content": "changed",
             "note": "must fail"
         });
-        let tool =
-            SaveFilePart::from_json(tree.root(), &filter, &payload).unwrap();
+        let tool = SaveFilePart::from_json(tree.root(), &filter, &payload).unwrap();
 
         let err = tool.execute().unwrap_err();
         assert!(err.to_string().starts_with("OriginalMismatch:"));
@@ -89,8 +86,7 @@ mod tests {
             "content": "changed\r\n",
             "note": "normalize line endings"
         });
-        let tool =
-            SaveFilePart::from_json(tree.root(), &filter, &payload).unwrap();
+        let tool = SaveFilePart::from_json(tree.root(), &filter, &payload).unwrap();
 
         tool.execute().unwrap();
         assert_eq!(
@@ -98,5 +94,4 @@ mod tests {
             "before\nchanged\nafter\n"
         );
     }
-
 }
