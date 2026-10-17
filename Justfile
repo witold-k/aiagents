@@ -12,7 +12,7 @@ build:
 	cargo clippy
 
 build-jvm:
-    RUSTFLAGS="-C panic=unwind" cargo jvm build
+    RUSTFLAGS="-C panic=unwind" cargo jvm build --bin aifix --no-default-features
 
 cover-setup:
     cargo install cargo-llvm-cov

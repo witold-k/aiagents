@@ -11,6 +11,16 @@ readme = "README.md"
 keywords = ["ai", "llm", "code-generation", "doc-generation", "code-review", "code-repair", "code-fix"]
 categories = ["command-line-utilities", "development-tools"]
 
+[features]
+default = ["signal-handling", "runtest"]
+signal-handling = ["dep:ctrlc"]
+runtest = ["dep:libc"]
+
+[[bin]]
+name = "aifix_runtest"
+path = "src/bin/aifix_runtest.rs"
+required-features = ["runtest"]
+
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -27,6 +37,6 @@ fsscanner = { version = "0.4.0", git = "https://github.com/witold-k/fsscanner", 
 symbol_to_source_resolver = { git = "https://github.com/witold-k/symbol_to_source_resolver", rev = "24781cb7f1b5c0b26101ce50c8921311efd8e385" }
 
 # -- process
-ctrlc = "3.5.2"
-libc = "0.2"
+ctrlc = { version = "3.5.2", optional = true }
+libc = { version = "0.2", optional = true }
 

@@ -49,8 +49,10 @@ pub fn run_service(config: &Config, name: &Option<String>) {
         }
     };
 
+    #[cfg(feature = "signal-handling")]
     let child_handler = Arc::clone(&child);
 
+    #[cfg(feature = "signal-handling")]
     if let Err(err) = ctrlc::set_handler(move || {
         match child_handler.lock() {
             Ok(mut guard) => {
