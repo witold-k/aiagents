@@ -92,11 +92,16 @@ fn rejects_unsafe_or_malformed_model_paths() {
 
 #[test]
 fn irrelevant_chunk_uses_empty_marker() {
-    assert!(parse_file_records("NO_MESSAGE_DEFINITIONS").unwrap().is_empty());
+    assert!(
+        parse_file_records("NO_MESSAGE_DEFINITIONS")
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]
 fn mixed_empty_marker_and_records_are_rejected() {
-    let response = "=== FILE: general.md ===\n# Image metadata\n=== END FILE ===\nNO_MESSAGE_DEFINITIONS";
+    let response =
+        "=== FILE: general.md ===\n# Image metadata\n=== END FILE ===\nNO_MESSAGE_DEFINITIONS";
     assert!(parse_file_records(response).is_err());
 }
