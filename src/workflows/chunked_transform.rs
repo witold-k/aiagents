@@ -14,9 +14,9 @@ use crate::generated_workflowsteps::WorkflowSteps;
 use crate::runtimetools::llmcall::LlmCall;
 use crate::workflows::workflow::{Workflow, WorkflowResult};
 
-const CHUNK_CHARS: usize = 12_000;
-pub const CHUNK_OVERLAP_CHARS: usize = 1_000;
-const MAX_TOKENS: u32 = 10_000;
+const CHUNK_CHARS: usize = 4_000;
+pub pub const CHUNK_OVERLAP_CHARS: usize = 500;
+const MAX_TOKENS: u32 = 2_048;
 const MAX_MERGE_CHARS: usize = 20_000;
 const MAX_AUDIT_PASSES: usize = 2;
 
@@ -109,7 +109,10 @@ pub fn parse_file_records(response: &str) -> Result<Vec<(String, String)>, Strin
             content.push_str(line);
             content.push('\n');
         } else if !line.trim().is_empty() {
-            return Err("Unexpected text outside FILE records".into());
+            return Err(format!(
+                "Unexpected text outside FILE records: {}",
+                line.chars().take(160).collect::<String>()
+            ));
         }
     }
     if current_path.is_some() {
@@ -301,7 +304,13 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             };
             let records = match parse_file_records(&checked) {
                 Ok(records) => records,
-                Err(err) => return WorkflowResult::Error(format!("Chunk {}: {err}", index + 1)),
+                Err(err) => {
+                    return WorkflowResult::Error(format!(
+                        "Chunk {}: {err}; response starts with: {:?}",
+                        index + 1,
+                        checked.chars().take(240).collect::<String>()
+                    ));
+                }
             };
             for (path, fragment) in records {
                 if let Some(existing) = files.get(&path) {
