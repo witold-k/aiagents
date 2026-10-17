@@ -15,7 +15,7 @@ use crate::runtimetools::llmcall::LlmCall;
 use crate::workflows::workflow::{Workflow, WorkflowResult};
 
 const CHUNK_CHARS: usize = 4_000;
-pub pub const CHUNK_OVERLAP_CHARS: usize = 1_000;
+pub const CHUNK_OVERLAP_CHARS: usize = 1_000;
 const MAX_TOKENS: u32 = 2_048;
 const MAX_MERGE_CHARS: usize = 20_000;
 const MAX_AUDIT_PASSES: usize = 2;
