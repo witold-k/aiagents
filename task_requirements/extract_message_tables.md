@@ -112,7 +112,20 @@ Keep it independent of any build system or programming language.
 - Report unresolved ambiguities honestly; do not label unverified output as
   fully validated.
 
-### Stage 5 — Iterative whole-knowledge audit
+### Stage 5 — Persistent extraction checkpoint and resume
+
+- After each fully validated and merged source window, atomically persist the
+  next window index and the assembled destination-file map.
+- Bind the checkpoint to the input source and relevant extraction, validation,
+  and merge prompts. Refuse to reuse stale or malformed checkpoint data.
+- On restart, resume at the first incomplete window, not window 1. Never
+  checkpoint a window until all its merges have completed successfully.
+- Retain the checkpoint after an error; remove it after successful publication.
+- Current implementation limitation: the subsequent audit restarts from its
+  beginning after an interruption. Fine-grained audit checkpointing remains
+  future work.
+
+### Stage 6 — Iterative whole-knowledge audit
 
 - After initial per-chunk extraction, independent review, and file-level merge,
   audit the **assembled** specifications again against bounded source evidence.
@@ -129,7 +142,7 @@ Keep it independent of any build system or programming language.
 - Keep each audit call bounded; never send the complete original document
   or complete generated directory in one model request.
 
-### Stage 6 — Write specification directory
+### Stage 7 — Write specification directory
 
 - Write `<input_stem>_messages/` only after successful assembly and required
   checks. Stage files in a temporary directory and publish as one directory.
@@ -159,11 +172,14 @@ Keep it independent of any build system or programming language.
 13. Assembled specifications undergo iterative evidence-based audits for
     missing and unsupported facts, including unnecessary generic helpers.
 14. Audit convergence is required; reaching the iteration limit is an error.
+15. Interrupted extraction resumes from the last fully completed window using
+    a source-bound checkpoint, without silently reusing stale results.
 
 ## Implementation note
 
-The feature-branch implementation uses overlapping character windows and
-per-file incremental merging. It still needs comprehensive integration tests,
+The feature-branch implementation uses overlapping character windows,
+per-file incremental merging, and atomic checkpoints after completed windows.
+Audit progress is not yet checkpointed. It still needs comprehensive integration tests,
 robust cross-window identity resolution, hierarchical merge for oversized
 single-message specifications, and efficient, comprehensive verification of the final
 merged files against all contributing source ranges. The current audit is
