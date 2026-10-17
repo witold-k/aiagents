@@ -14,7 +14,7 @@ use crate::runtimetools::llmcall::LlmCall;
 use crate::workflows::workflow::{Workflow, WorkflowResult};
 
 const CHUNK_CHARS: usize = 12_000;
-const MAX_TOKENS: u32 = 12_000;
+const MAX_TOKENS: u32 = 10_000;
 
 #[derive(Debug, PartialEq, Eq)]
 struct Chunk {
