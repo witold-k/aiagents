@@ -162,6 +162,43 @@ The merge context is limited to **20,000 characters**. Exceeding this
 limit fails explicitly; hierarchical merging of oversized individual
 specifications is not yet implemented.
 
+## Resume after interruption (NON-LLM)
+
+After each **fully processed** source window (including its validation and
+all required merges), the workflow atomically writes a JSON checkpoint next
+to the intended output directory, named `<input-stem>_messages.checkpoint.json`.
+It stores the next window index and the assembled file map. The checkpoint
+also contains a version and a fingerprint of the source text and extraction,
+validation, and merge prompts.
+
+On the next invocation with the same source and prompts, the workflow prints
+`## [CHUNKED] RESUME` and skips completed windows. A failure during a window
+repeats **that window only** on restart. The checkpoint is retained on
+errors and removed after successful publication. If the source or relevant
+prompts changed, the workflow refuses to reuse the checkpoint and asks for
+manual removal or relocation; it does not silently restart.
+
+The checkpoint currently covers the extraction/merge phase. The later
+assembled-knowledge audit does **not** yet have fine-grained resume points,
+so an interruption during audit reruns the audit. A checkpoint written by
+older versions is not available retroactively: the first run with this
+implementation must process the document from the beginning.
+
+```mermaid
+flowchart TD
+    S["NON-LLM: Start or restart"] --> Q{"NON-LLM: Compatible checkpoint?"}
+    Q -->|no checkpoint| Z["NON-LLM: Start with window 1"]
+    Q -->|yes| R["NON-LLM: Restore map and next window"]
+    Q -->|mismatch| X["NON-LLM: Stop; preserve checkpoint"]
+    Z --> W["LLM: Extract / validate / merge window"]
+    R --> W
+    W -->|success| C["NON-LLM: Atomically save checkpoint"]
+    W -->|failure| E["NON-LLM: Stop; keep last checkpoint"]
+    C --> N{"NON-LLM: More windows?"}
+    N -->|yes| W
+    N -->|no| A["Continue to assembled-knowledge audit"]
+```
+
 ## 4. Iterative assembled-knowledge audit (LLM + NON-LLM)
 
 After all windows have been processed, the workflow audits the **assembled
