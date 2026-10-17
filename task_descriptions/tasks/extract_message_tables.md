@@ -57,4 +57,15 @@ fragment with source line references and explicit continuation/uncertainty
 notes. Return exactly `NO_MESSAGE_DEFINITIONS` only if the excerpt has no
 relevant message, shared protocol, or infrastructure facts.
 
+## Post-assembly verification
+
+The assembled knowledge must undergo iterative, independent checks against
+the original source excerpts and other generated specifications. Detect both
+omissions and unsupported inventions. Pay special attention to
+`infrastructure.md`: each generic helper must be needed by a concrete
+message or documented global rule. Identify missing necessary helpers and
+remove unjustified abstractions. Revisit corrections until a full audit pass
+makes no changes or the finite limit is reached. Do not claim successful
+verification if the audit fails to converge.
+
 Never emit source code, file-system commands, or conversational commentary.
