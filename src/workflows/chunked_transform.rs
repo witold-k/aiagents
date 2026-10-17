@@ -215,7 +215,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::{chunks, CHUNK_OVERLAP_CHARS};
+    use super::{CHUNK_OVERLAP_CHARS, chunks};
 
     #[test]
     fn short_document_is_unchanged() {
@@ -235,7 +235,14 @@ mod tests {
         for pair in parts.windows(2) {
             assert_eq!(pair[0].text.chars().count(), 1200);
             let tail: String = pair[0].text.chars().skip(200).collect();
-            assert_eq!(tail, pair[1].text.chars().take(CHUNK_OVERLAP_CHARS).collect::<String>());
+            assert_eq!(
+                tail,
+                pair[1]
+                    .text
+                    .chars()
+                    .take(CHUNK_OVERLAP_CHARS)
+                    .collect::<String>()
+            );
         }
         assert!(parts.iter().all(|part| part.text.chars().count() <= 1200));
     }
@@ -254,7 +261,10 @@ mod tests {
 
     #[test]
     fn embedded_image_data_remains_bounded() {
-        let source = format!("![figure](data:image/png;base64,{})\nNext", "A".repeat(50_000));
+        let source = format!(
+            "![figure](data:image/png;base64,{})\nNext",
+            "A".repeat(50_000)
+        );
         let parts = chunks(&source, 12_000);
         assert!(parts.len() >= 5);
         assert!(parts.iter().all(|part| part.text.chars().count() <= 12_000));
@@ -269,6 +279,9 @@ mod tests {
     #[test]
     fn one_character_windows_make_progress() {
         let parts = chunks("abc", 1);
-        assert_eq!(parts.iter().map(|p| p.text.as_str()).collect::<String>(), "abc");
+        assert_eq!(
+            parts.iter().map(|p| p.text.as_str()).collect::<String>(),
+            "abc"
+        );
     }
 }
