@@ -15,22 +15,22 @@ use crate::runtimetools::llmcall::LlmCall;
 use crate::workflows::workflow::{Workflow, WorkflowResult};
 
 const CHUNK_CHARS: usize = 12_000;
-const CHUNK_OVERLAP_CHARS: usize = 1_000;
+pub const CHUNK_OVERLAP_CHARS: usize = 1_000;
 const MAX_TOKENS: u32 = 10_000;
 const MAX_MERGE_CHARS: usize = 20_000;
 const MAX_AUDIT_PASSES: usize = 2;
 
 #[derive(Debug, PartialEq, Eq)]
-struct Chunk {
-    start_line: usize,
-    end_line: usize,
-    text: String,
+pub struct Chunk {
+    pub start_line: usize,
+    pub end_line: usize,
+    pub text: String,
 }
 
 /// Create overlapping character windows without interpreting the source format.
 /// All boundaries are valid UTF-8 boundaries; the final window is not padded.
 /// Line ranges are informational, and can overlap between adjacent windows.
-fn chunks(source: &str, limit: usize) -> Vec<Chunk> {
+pub fn chunks(source: &str, limit: usize) -> Vec<Chunk> {
     if source.is_empty() || limit == 0 {
         return Vec::new();
     }
@@ -75,7 +75,7 @@ const EMPTY_MARKER: &str = "NO_MESSAGE_DEFINITIONS";
 
 /// Parse the model's explicitly delimited Markdown file fragments. No source
 /// format parsing is involved: this is solely the controlled response format.
-fn parse_file_records(response: &str) -> Result<Vec<(String, String)>, String> {
+pub fn parse_file_records(response: &str) -> Result<Vec<(String, String)>, String> {
     if response.trim() == EMPTY_MARKER {
         return Ok(Vec::new());
     }
@@ -121,7 +121,7 @@ fn parse_file_records(response: &str) -> Result<Vec<(String, String)>, String> {
     Ok(records)
 }
 
-fn valid_spec_path(path: &str) -> bool {
+pub fn valid_spec_path(path: &str) -> bool {
     if matches!(path, "general.md" | "infrastructure.md") {
         return true;
     }
@@ -458,6 +458,3 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
     }
 }
 
-#[cfg(test)]
-#[path = "../../tests/workflows/chunked_transform_test.rs"]
-mod tests;
