@@ -145,30 +145,35 @@ pub fn main() {
     };
 
     let task_name = args.task.clone();
-    let lang_name = args.language.clone().unwrap_or_else(|| {
-        bs.inferred_language()
-            .unwrap_or_else(|| {
+    let task_opt = Tasks::parse(&task_name);
+    let task = task_opt.unwrap_or(Tasks::FixCode);
+
+    // Language-independent workflows do not need a build system or language prompt.
+    let lang_str = if WorkflowSelector::requires_language(task) {
+        let lang_name = args.language.clone().unwrap_or_else(|| {
+            bs.inferred_language()
+                .unwrap_or_else(|| {
+                    eprintln!(
+                        "Cannot infer language from build system '{}'; specify -l/--lang",
+                        bs.as_str()
+                    );
+                    std::process::exit(1);
+                })
+                .as_str()
+                .to_string()
+        });
+        match Languages::parse(&lang_name) {
+            Some(lang) => lang.get_prompt().into(),
+            None => fs::read_to_string(&lang_name).unwrap_or_else(|err| {
                 eprintln!(
-                    "Cannot infer language from build system '{}'; specify -l/--lang",
-                    bs.as_str()
+                    "Unknown language and failed to load file '{}': {}",
+                    lang_name, err
                 );
                 std::process::exit(1);
-            })
-            .as_str()
-            .to_string()
-    });
-    let task_opt = Tasks::parse(&task_name);
-    let lang_opt = Languages::parse(&lang_name);
-
-    let lang_str = match lang_opt {
-        Some(lang) => lang.get_prompt().into(),
-        None => fs::read_to_string(&lang_name).unwrap_or_else(|err| {
-            eprintln!(
-                "Unknown language and failed to load file '{}': {}",
-                lang_name, err
-            );
-            std::process::exit(1);
-        }),
+            }),
+        }
+    } else {
+        String::new()
     };
 
     let task_str = match &args.taskdata {
@@ -198,7 +203,6 @@ pub fn main() {
 
     let combined_task = format!("{}\n{}\n{}", lang_str, task_str, ws_str);
 
-    let task = task_opt.unwrap_or(Tasks::FixCode);
     let target_path: PathBuf = {
         match args.builddir {
             Some(bd) => bd,
