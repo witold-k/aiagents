@@ -106,8 +106,11 @@ validation boundary. See [BLT Execute Workflow](docs/blt_execute.md).
 The `extract_message_tables` task uses a separate chunked document workflow:
 it reads bounded overlapping text windows, extracts and independently reviews
 protocol facts with an LLM, merges Markdown specifications, and audits the
-assembled results before publishing a specification directory. It generates
-**specifications, not code**; full semantic completeness is not guaranteed.
+assembled results before publishing a specification directory. Completed
+extraction windows are saved in a source-bound checkpoint, so interrupted runs
+can resume without reprocessing earlier windows. The audit phase is not yet
+resumable. It generates **specifications, not code**; full semantic completeness
+is not guaranteed.
 See [Chunked Transform Workflow](docs/chunked_transform.md) for the detailed
 flow, Mermaid diagrams, output format, and limitations.
 
@@ -187,6 +190,7 @@ The current task system includes operations such as:
 * `write_block_doc`
 * `setup_build`
 * `release_doc`
+* `extract_message_tables`
 
 Task descriptions are kept separate from the Rust implementation and are
 converted into generated Rust metadata during the build.
