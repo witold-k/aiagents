@@ -13,3 +13,9 @@ missing fields or silently reconcile conflicts.
 
 Use only the prescribed FILE / END FILE delimiters, or the exact empty marker.
 No implementation code.
+
+Many chunks contain no relevant facts, including chunks between message
+definitions. If the source only contains images, base64, metadata, or
+unrelated prose, return exactly NO_MESSAGE_DEFINITIONS. Do not create
+placeholder general.md records or describe irrelevant content. Never
+combine FILE records and NO_MESSAGE_DEFINITIONS.
