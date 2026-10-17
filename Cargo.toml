@@ -2,6 +2,14 @@
 name = "aiagents"
 version = "0.1.0"
 edition = "2024"
+authors = ["Witold Kaminski"]
+description = "Local-first AI agents for software engineering workflows"
+license = "Apache-2.0"
+repository = "https://github.com/witold-k/aiagents"
+homepage = "https://github.com/witold-k/aiagents"
+readme = "README.md"
+keywords = ["ai", "llm", "code-generation", "doc-generation", "code-review", "code-repair", "code-fix"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
