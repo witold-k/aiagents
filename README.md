@@ -103,6 +103,14 @@ creates and critiques candidate repair designs, synthesizes a final plan, and
 only then applies edits. Deterministic build/lint/test execution remains the
 validation boundary. See [BLT Execute Workflow](docs/blt_execute.md).
 
+The `extract_message_tables` task uses a separate chunked document workflow:
+it reads bounded overlapping text windows, extracts and independently reviews
+protocol facts with an LLM, merges Markdown specifications, and audits the
+assembled results before publishing a specification directory. It generates
+**specifications, not code**; full semantic completeness is not guaranteed.
+See [Chunked Transform Workflow](docs/chunked_transform.md) for the detailed
+flow, Mermaid diagrams, output format, and limitations.
+
 Release documentation is also implemented as a multi-step workflow. It derives
 context from Git history, by default since the latest tag, analyzes the changes,
 and writes generated release notes to `RELEASE_NOTES.md`. Explicit first/last
