@@ -5,6 +5,7 @@
 
 use std::{fs, path::{Path, PathBuf}};
 
+use crate::generated_tasks::Tasks;
 use crate::generated_workflowsteps::WorkflowSteps;
 use crate::runtimetools::llmcall::LlmCall;
 use crate::workflows::workflow::{Workflow, WorkflowResult};
@@ -104,6 +105,9 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
 
         // Each review receives the original source excerpt and the draft,
         // never the entire document or an unbounded collection of drafts.
+        let requirements = Tasks::ExtractMessageTables.get_prompt();
+        let extract_prompt = format!("{requirements}\n\n{}", WorkflowSteps::ChunkedTransformExtract.get_prompt());
+        let validate_prompt = format!("{requirements}\n\n{}", WorkflowSteps::ChunkedTransformValidate.get_prompt());
         let mut sections = Vec::with_capacity(parts.len());
         for (index, part) in parts.iter().enumerate() {
             println!("## [CHUNKED] EXTRACT {}/{} (lines {}-{})",
@@ -114,7 +118,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 part.start_line, part.end_line, part.text
             );
             let draft = match self.llm_call.run_text_step_limited_with_temperature(
-                WorkflowSteps::ChunkedTransformExtract.get_prompt(),
+                &extract_prompt,
                 &context, MAX_TOKENS, 0.2
             ) {
                 Ok(text) => text,
@@ -125,12 +129,15 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             );
             println!("## [CHUNKED] VALIDATE {}/{}", index + 1, parts.len());
             let checked = match self.llm_call.run_text_step_limited_with_temperature(
-                WorkflowSteps::ChunkedTransformValidate.get_prompt(),
+                &validate_prompt,
                 &review_context, MAX_TOKENS, 0.1
             ) {
                 Ok(text) => text,
                 Err(err) => return WorkflowResult::LlmCallResult(err),
             };
+            if checked.trim() == "NO_MESSAGE_DEFINITIONS" {
+                continue;
+            }
             sections.push(format!(
                 "## Source lines {}–{}\n\n{}",
                 part.start_line, part.end_line, checked.trim()
