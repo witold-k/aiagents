@@ -1,21 +1,15 @@
-# Chunked Transform — Message Extraction
+# Chunked Transform — Extract File Fragments
 
-You are extracting protocol message specifications from ONE excerpt of a much
-larger source document. Follow the task requirements supplied in this prompt.
+Extract all relevant facts from this bounded source excerpt. Follow the
+task-level output file-record protocol exactly. The source format is unknown;
+do not assume it can be parsed as Markdown or that a line is short.
 
-Return **Markdown only**, not code or tool calls.
+Create `messages/<stable-id>.md` records for each identifiable message,
+`general.md` for shared protocol rules, and `infrastructure.md` for formal
+helper contracts. Use stable identifiers across excerpts. Record source line
+ranges and distinguish explicit facts from uncertainty. A fragment may start
+or end mid-definition: retain it with a continuation marker. Do not invent
+missing fields or silently reconcile conflicts.
 
-- Extract all message definitions, tables, and related rules visible in this
-  excerpt. A message may be defined in prose rather than a Markdown table.
-- Preserve source line references from the excerpt header.
-- Retain exact units, field order, sizes, constraints, and conditional logic.
-- Specify necessary helper classes/functions only as formal interfaces and
-  behavior, never implementations.
-- Assess fixed/bounded memory and dynamic allocation requirements. Do not
-  assert dynamic allocation is necessary without explicit justification.
-- If the excerpt begins or ends in the middle of a definition, mark it as a
-  continuation, and preserve all available details for later reconciliation.
-- If no relevant message information appears, return exactly
-  `NO_MESSAGE_DEFINITIONS`.
-- Never infer missing values or resolve conflicts without evidence.
-- Do not include generic introductions or summaries.
+Use only the prescribed FILE / END FILE delimiters, or the exact empty marker.
+No implementation code.
