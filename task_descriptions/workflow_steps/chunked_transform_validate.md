@@ -9,3 +9,8 @@ verify offsets, sizes, units, constraints, checksums, encodings, source
 references, and memory claims. Remove unsupported assertions, preserve
 contradictions, and mark unknowns explicitly. Do not generate implementations.
 If the source has no relevant facts, return exactly NO_MESSAGE_DEFINITIONS.
+
+A chunk with no message or protocol facts is normal anywhere in the document.
+If the draft only describes images, base64, metadata, or unrelated text,
+return exactly NO_MESSAGE_DEFINITIONS. Do not emit general.md for such
+observations. Never combine FILE records and NO_MESSAGE_DEFINITIONS.
