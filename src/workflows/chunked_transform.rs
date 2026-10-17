@@ -39,10 +39,8 @@ fn chunks(source: &str, limit: usize) -> Vec<Chunk> {
             if lines[end - 1].trim().is_empty() { last_blank = Some(end); }
             if size >= limit { break; }
         }
-        if end < lines.len() {
-            if let Some(blank) = last_blank {
-                if blank > start { end = blank; }
-            }
+        if end < lines.len() && let Some(blank) = last_blank && blank > start {
+            end = blank;
         }
         // An individual line may exceed the limit, but is never truncated.
         if end == start { end += 1; }
