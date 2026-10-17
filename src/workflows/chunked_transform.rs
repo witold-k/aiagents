@@ -4,6 +4,7 @@
 //! Bounded, source-aware document transformation with independent review.
 
 use std::{
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -16,6 +17,7 @@ use crate::workflows::workflow::{Workflow, WorkflowResult};
 const CHUNK_CHARS: usize = 12_000;
 const CHUNK_OVERLAP_CHARS: usize = 1_000;
 const MAX_TOKENS: u32 = 10_000;
+const MAX_MERGE_CHARS: usize = 20_000;
 
 #[derive(Debug, PartialEq, Eq)]
 struct Chunk {
@@ -68,6 +70,91 @@ fn chunks(source: &str, limit: usize) -> Vec<Chunk> {
     result
 }
 
+const EMPTY_MARKER: &str = "NO_MESSAGE_DEFINITIONS";
+
+/// Parse the model's explicitly delimited Markdown file fragments. No source
+/// format parsing is involved: this is solely the controlled response format.
+fn parse_file_records(response: &str) -> Result<Vec<(String, String)>, String> {
+    if response.trim() == EMPTY_MARKER {
+        return Ok(Vec::new());
+    }
+
+    let mut records = Vec::new();
+    let mut current_path: Option<String> = None;
+    let mut content = String::new();
+    for line in response.lines() {
+        if let Some(path) = line.strip_prefix("=== FILE: ").and_then(|s| s.strip_suffix(" ===")) {
+            if current_path.is_some() {
+                return Err("Nested FILE record in model response".into());
+            }
+            if !valid_spec_path(path) {
+                return Err(format!("Invalid specification path in model response: {path}"));
+            }
+            current_path = Some(path.to_owned());
+            content.clear();
+        } else if line == "=== END FILE ===" {
+            let path = current_path.take().ok_or("END FILE without FILE")?;
+            if content.trim().is_empty() {
+                return Err(format!("Empty specification fragment: {path}"));
+            }
+            records.push((path, content.trim().to_owned()));
+            content.clear();
+        } else if current_path.is_some() {
+            content.push_str(line);
+            content.push('\n');
+        } else if !line.trim().is_empty() {
+            return Err("Unexpected text outside FILE records".into());
+        }
+    }
+    if current_path.is_some() {
+        return Err("Unclosed FILE record in model response".into());
+    }
+    if records.is_empty() {
+        return Err("Model returned neither file records nor the empty marker".into());
+    }
+    Ok(records)
+}
+
+fn valid_spec_path(path: &str) -> bool {
+    if matches!(path, "general.md" | "infrastructure.md") {
+        return true;
+    }
+    let Some(slug) = path.strip_prefix("messages/").and_then(|s| s.strip_suffix(".md")) else {
+        return false;
+    };
+    !slug.is_empty()
+        && slug.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+}
+
+/// Stage all output files in a fresh sibling directory and publish only after
+/// every file has been written. Refuse to overwrite an existing specification.
+fn write_spec_directory(output: &Path, files: &BTreeMap<String, String>, source: &Path) -> Result<(), String> {
+    if output.exists() {
+        return Err(format!("Output directory already exists: {}", output.display()));
+    }
+    let name = output.file_name().and_then(|s| s.to_str()).ok_or("Invalid output directory name")?;
+    let stage = output.with_file_name(format!(".{name}.tmp-{}", std::process::id()));
+    fs::create_dir(&stage).map_err(|e| format!("Cannot stage output: {e}"))?;
+    let result = (|| {
+        fs::create_dir(stage.join("messages")).map_err(|e| e.to_string())?;
+        for (path, body) in files {
+            fs::write(stage.join(path), format!("{body}\n")).map_err(|e| format!("Cannot write {path}: {e}"))?;
+        }
+        let mut readme = format!("# Extracted Message Specifications\n\nSource: `{}`\n\n", source.display());
+        readme.push_str("## Shared specifications\n\n- [General protocol rules](general.md)\n- [Infrastructure contracts](infrastructure.md)\n\n## Messages\n\n");
+        for path in files.keys().filter(|p| p.starts_with("messages/")) {
+            readme.push_str(&format!("- [{path}]({path})\n"));
+        }
+        readme.push_str("\n## Verification status\n\nEach fragment was reviewed against its source window. Cross-window reconciliation and unresolved conflicts require further review.\n");
+        fs::write(stage.join("README.md"), readme).map_err(|e| e.to_string())?;
+        fs::rename(&stage, output).map_err(|e| format!("Cannot publish output: {e}"))
+    })();
+    if result.is_err() {
+        let _ = fs::remove_dir_all(&stage);
+    }
+    result
+}
+
 pub struct ChunkedTransformWorkflow<'a> {
     llm_call: LlmCall<'a>,
     projdir: &'a Path,
@@ -108,7 +195,7 @@ impl<'a> ChunkedTransformWorkflow<'a> {
             .file_stem()
             .and_then(|stem| stem.to_str())
             .ok_or("Input filename is not valid UTF-8")?;
-        let output = input.with_file_name(format!("{stem}_messages.md"));
+        let output = input.with_file_name(format!("{stem}_messages"));
         if output == input {
             return Err("Output would overwrite input".into());
         }
@@ -144,7 +231,11 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             "{requirements}\n\n{}",
             WorkflowSteps::ChunkedTransformValidate.get_prompt()
         );
-        let mut sections = Vec::with_capacity(parts.len());
+        let merge_prompt = format!(
+            "{requirements}\n\n{}",
+            WorkflowSteps::ChunkedTransformMerge.get_prompt()
+        );
+        let mut files: BTreeMap<String, String> = BTreeMap::new();
         for (index, part) in parts.iter().enumerate() {
             println!(
                 "## [CHUNKED] EXTRACT {}/{} (lines {}-{})",
@@ -164,10 +255,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 part.text
             );
             let draft = match self.llm_call.run_text_step_limited_with_temperature(
-                &extract_prompt,
-                &context,
-                MAX_TOKENS,
-                0.2,
+                &extract_prompt, &context, MAX_TOKENS, 0.2,
             ) {
                 Ok(text) => text,
                 Err(err) => return WorkflowResult::LlmCallResult(err),
@@ -175,47 +263,60 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             let review_context = format!("{context}\n\n=== EXTRACTED DRAFT ===\n{draft}");
             println!("## [CHUNKED] VALIDATE {}/{}", index + 1, parts.len());
             let checked = match self.llm_call.run_text_step_limited_with_temperature(
-                &validate_prompt,
-                &review_context,
-                MAX_TOKENS,
-                0.1,
+                &validate_prompt, &review_context, MAX_TOKENS, 0.1,
             ) {
                 Ok(text) => text,
                 Err(err) => return WorkflowResult::LlmCallResult(err),
             };
-            if checked.trim() == "NO_MESSAGE_DEFINITIONS" {
-                continue;
+            let records = match parse_file_records(&checked) {
+                Ok(records) => records,
+                Err(err) => return WorkflowResult::Error(format!("Chunk {}: {err}", index + 1)),
+            };
+            for (path, fragment) in records {
+                if let Some(existing) = files.get(&path) {
+                    let merge_context = format!(
+                        "DESTINATION: {path}\n\n=== EXISTING SPECIFICATION ===\n{existing}\n\n=== NEW REVIEWED FRAGMENT ===\n{fragment}"
+                    );
+                    if merge_context.chars().count() > MAX_MERGE_CHARS {
+                        return WorkflowResult::Error(format!(
+                            "Cannot safely merge {path}: context exceeds {MAX_MERGE_CHARS} characters"
+                        ));
+                    }
+                    println!("## [CHUNKED] MERGE {path}");
+                    let merged = match self.llm_call.run_text_step_limited_with_temperature(
+                        &merge_prompt, &merge_context, MAX_TOKENS, 0.1,
+                    ) {
+                        Ok(text) => text,
+                        Err(err) => return WorkflowResult::LlmCallResult(err),
+                    };
+                    if merged.trim().is_empty() {
+                        return WorkflowResult::Error(format!("Empty merge result for {path}"));
+                    }
+                    files.insert(path, merged);
+                } else {
+                    files.insert(path, fragment);
+                }
             }
-            sections.push(format!(
-                "## Source lines {}–{}\n\n{}",
-                part.start_line,
-                part.end_line,
-                checked.trim()
-            ));
         }
 
-        // Assemble deterministically: never pass the complete result back to
-        // the LLM, because it may exceed the context window.
-        let document = format!(
-            "# Extracted Message Specifications\n\nSource: `{}`\n\n\
-             Each section was extracted and checked against its source range.\n\n\
-             Cross-section references and unresolved ambiguities require review.\n\n{}\n",
-            input.display(),
-            sections.join("\n\n")
-        );
-        match fs::write(&output, document) {
+        if files.is_empty() {
+            return WorkflowResult::Error("No protocol specifications were extracted".into());
+        }
+        files.entry("general.md".into()).or_insert_with(|| "# General Protocol Rules\n\nNo shared rules were established from the source.".into());
+        files.entry("infrastructure.md".into()).or_insert_with(|| "# Infrastructure Contracts\n\nNo helper contracts were established from the source.".into());
+        match write_spec_directory(&output, &files, &input) {
             Ok(()) => {
                 println!("## [CHUNKED] WROTE {}", output.display());
                 WorkflowResult::Ok
             }
-            Err(err) => WorkflowResult::Error(format!("Cannot write {}: {err}", output.display())),
+            Err(err) => WorkflowResult::Error(err),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{CHUNK_OVERLAP_CHARS, chunks};
+    use super::{CHUNK_OVERLAP_CHARS, chunks, parse_file_records, valid_spec_path};
 
     #[test]
     fn short_document_is_unchanged() {
@@ -284,4 +385,22 @@ mod tests {
             "abc"
         );
     }
+    #[test]
+    fn parses_multiple_specification_files() {
+        let response = "=== FILE: general.md ===\n# General\n=== END FILE ===\n=== FILE: messages/a-1.md ===\n# A\n=== END FILE ===";
+        let records = parse_file_records(response).unwrap();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[1].0, "messages/a-1.md");
+    }
+
+    #[test]
+    fn rejects_unsafe_or_malformed_model_paths() {
+        assert!(!valid_spec_path("messages/../escape.md"));
+        assert!(!valid_spec_path("README.md"));
+        assert!(!valid_spec_path("messages/A.md"));
+        assert!(parse_file_records("=== FILE: ../oops.md ===\nfoo\n=== END FILE ===").is_err());
+        assert!(parse_file_records("garbage").is_err());
+        assert!(parse_file_records("=== FILE: general.md ===\nfoo").is_err());
+    }
+
 }
