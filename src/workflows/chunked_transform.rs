@@ -3,6 +3,8 @@
 
 //! Bounded, source-aware document transformation with independent review.
 
+use serde::{Deserialize, Serialize};
+
 use std::{
     collections::BTreeMap,
     fs,
@@ -19,6 +21,66 @@ pub const CHUNK_OVERLAP_CHARS: usize = 1_000;
 const MAX_TOKENS: u32 = 2_048;
 const MAX_MERGE_CHARS: usize = 20_000;
 const MAX_AUDIT_PASSES: usize = 2;
+
+const CHECKPOINT_VERSION: u32 = 1;
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ExtractionCheckpoint {
+    version: u32,
+    source_fingerprint: String,
+    next_chunk: usize,
+    files: BTreeMap<String, String>,
+}
+
+/// Stable fingerprint of the source and the prompt/configuration affecting extraction.
+/// This detects accidental changes between runs without requiring another dependency.
+fn extraction_fingerprint(source: &str, prompts: &[&str]) -> String {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for bytes in std::iter::once(source.as_bytes()).chain(prompts.iter().map(|p| p.as_bytes())) {
+        for byte in (bytes.len() as u64).to_le_bytes().iter().chain(bytes.iter()) {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+    }
+    format!("{hash:016x}")
+}
+
+fn checkpoint_path(output: &Path) -> PathBuf {
+    output.with_extension("checkpoint.json")
+}
+
+/// Atomically replace a complete checkpoint; never save a half-merged chunk.
+fn save_checkpoint(path: &Path, checkpoint: &ExtractionCheckpoint) -> Result<(), String> {
+    let tmp = path.with_extension("checkpoint.tmp");
+    let content = serde_json::to_vec_pretty(checkpoint)
+        .map_err(|err| format!("Cannot serialize extraction checkpoint: {err}"))?;
+    fs::write(&tmp, content).map_err(|err| format!("Cannot write checkpoint: {err}"))?;
+    fs::rename(&tmp, path).map_err(|err| format!("Cannot publish checkpoint: {err}"))
+}
+
+fn load_checkpoint(
+    path: &Path,
+    fingerprint: &str,
+    total_chunks: usize,
+) -> Result<Option<ExtractionCheckpoint>, String> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let data = fs::read(path).map_err(|err| format!("Cannot read checkpoint: {err}"))?;
+    let checkpoint: ExtractionCheckpoint = serde_json::from_slice(&data)
+        .map_err(|err| format!("Invalid extraction checkpoint: {err}"))?;
+    if checkpoint.version != CHECKPOINT_VERSION
+        || checkpoint.source_fingerprint != fingerprint
+        || checkpoint.next_chunk > total_chunks
+        || checkpoint.files.keys().any(|path| !valid_spec_path(path))
+    {
+        return Err(format!(
+            "Checkpoint {} does not match the current source or workflow; move or delete it to restart",
+            path.display()
+        ));
+    }
+    Ok(Some(checkpoint))
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Chunk {
@@ -265,8 +327,36 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             "{requirements}\n\n{}",
             WorkflowSteps::ChunkedTransformMerge.get_prompt()
         );
-        let mut files: BTreeMap<String, String> = BTreeMap::new();
-        for (index, part) in parts.iter().enumerate() {
+        let checkpoint_file = checkpoint_path(&output);
+        let fingerprint = extraction_fingerprint(
+            &source,
+            &[&extract_prompt, &validate_prompt, &merge_prompt],
+        );
+        let mut checkpoint = match load_checkpoint(&checkpoint_file, &fingerprint, parts.len()) {
+            Ok(Some(checkpoint)) => {
+                println!(
+                    "## [CHUNKED] RESUME at chunk {}/{}",
+                    checkpoint.next_chunk + 1,
+                    parts.len()
+                );
+                checkpoint
+            }
+            Ok(None) => ExtractionCheckpoint {
+                version: CHECKPOINT_VERSION,
+                source_fingerprint: fingerprint,
+                next_chunk: 0,
+                files: BTreeMap::new(),
+            },
+            Err(err) => return WorkflowResult::Error(err),
+        };
+        if output.exists() {
+            return WorkflowResult::Error(format!(
+                "Output directory already exists: {}",
+                output.display()
+            ));
+        }
+        let mut files = checkpoint.files.clone();
+        for (index, part) in parts.iter().enumerate().skip(checkpoint.next_chunk) {
             println!(
                 "## [CHUNKED] EXTRACT {}/{} (lines {}-{})",
                 index + 1,
@@ -341,6 +431,11 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 } else {
                     files.insert(path, fragment);
                 }
+            }
+            checkpoint.next_chunk = index + 1;
+            checkpoint.files = files.clone();
+            if let Err(err) = save_checkpoint(&checkpoint_file, &checkpoint) {
+                return WorkflowResult::Error(err);
             }
         }
 
@@ -462,6 +557,11 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         match write_spec_directory(&output, &files, &input) {
             Ok(()) => {
                 println!("## [CHUNKED] WROTE {}", output.display());
+                if let Err(err) = fs::remove_file(&checkpoint_file) {
+                    return WorkflowResult::Error(format!(
+                        "Output published, but cannot remove checkpoint: {err}"
+                    ));
+                }
                 WorkflowResult::Ok
             }
             Err(err) => WorkflowResult::Error(err),
