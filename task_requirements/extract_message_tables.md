@@ -4,8 +4,8 @@
 
 Implement the `extract_message_tables` task in `aiagents`. Transform a
 potentially very long Markdown (`.md`) or plain-text (`.txt`) protocol
-description into one formal, consolidated Markdown specification of all
-messages described in the source.
+description into a directory of formal Markdown specifications, with one file per
+logical message/version and separate shared protocol and helper contracts.
 
 This file is the **implementation brief / generation instructions** for the
 task and workflow, not an input protocol and not the resulting specification.
@@ -17,7 +17,9 @@ Keep the actual LLM instructions in
 
 - Input: exactly one existing `.md` or `.txt` document, selected explicitly
   by path; never modify it.
-- Output: `<input_stem>_messages.md` next to the input file.
+- Output: `<input_stem>_messages/` next to the input file, containing
+  `README.md`, `general.md`, `infrastructure.md`, and
+  `messages/<stable-id>.md` for each logical message/version.
 - Produce **only Markdown**. No executable code, Rust/C++ files, generated
   implementations, build steps, or project changes.
 - The output must be usable as an unambiguous specification for a *later*,
@@ -67,20 +69,16 @@ Implement `ChunkedTransformWorkflow` as a generic orchestration mechanism.
 requirements; the workflow owns chunking, orchestration, and output assembly.
 Keep it independent of any build system or programming language.
 
-### Stage 1 — Source-aware chunking
+### Stage 1 — Format-agnostic overlapping character windows
 
-- Process documents larger than the LLM context window with bounded input
-  chunks; never send the entire source to one model call.
-- Prefer Markdown heading/paragraph boundaries and **do not split tables
-  between header and rows** when avoidable.
-- Handle plain-text tables and long tables explicitly. When an indivisible
-  structure exceeds the chunk budget, split it safely with repeated headers,
-  continuation markers, and bounded overlap/context.
-- Maintain exact source positions and cover every input line. Ensure overlap
-  does not cause duplicated output.
-- Retain globally applicable definitions (framing, endian, shared field types,
-  common headers) and references between distant source sections, without
-  growing the prompt without bound.
+- Treat source as opaque UTF-8 text. Its format is unknown: do not parse
+  Markdown headings, tables, embedded images, or other syntax to split it.
+- Split by a strict maximum Unicode character count, including oversized
+  individual lines, without breaking UTF-8 characters.
+- Adjacent windows overlap by a bounded number of characters (currently 1000).
+  Preserve source positions and ensure the full source is covered.
+- Keep input and model contexts bounded, including validation and merge steps.
+- Duplicates from overlap must be consolidated, not written twice.
 
 ### Stage 2 — Extract
 
@@ -90,10 +88,12 @@ Keep it independent of any build system or programming language.
 - Preserve source citations, unresolved references, and partial definitions.
 - Represent empty chunks explicitly so they cannot be mistaken for a failure.
 
-### Stage 3 — Merge and normalize
+### Stage 3 — Merge and normalize by destination file
 
-- Merge message fragments spread across chunks into **one logical definition**
-  per message/version, rather than simply concatenating chunk outputs.
+- Route reviewed fragments to stable `messages/<stable-id>.md` files and
+  merge fragments for the same message/version incrementally.
+- Consolidate shared facts in `general.md` and helper contracts in
+  `infrastructure.md`. Generate `README.md` as an index.
 - Deduplicate overlapping source facts, normalize Markdown headings/tables,
   and resolve cross-references to shared definitions.
 - Keep conflicting source statements visible; do not silently choose one.
@@ -112,14 +112,14 @@ Keep it independent of any build system or programming language.
 - Report unresolved ambiguities honestly; do not label unverified output as
   fully validated.
 
-### Stage 5 — Write result
+### Stage 5 — Write specification directory
 
-- Write a single `<input_stem>_messages.md` only after successful assembly
-  and required checks.
-- Use a consistent, readable specification structure: overview, shared
-  definitions, message index, one section per message, field tables, size and
-  allocation analysis, parsing/validation rules, helper abstraction
-  specifications, source references, and unresolved questions.
+- Write `<input_stem>_messages/` only after successful assembly and required
+  checks. Stage files in a temporary directory and publish as one directory.
+- Use consistent Markdown across `README.md`, `general.md`,
+  `infrastructure.md`, and `messages/<stable-id>.md`. Message files contain
+  field tables, size/allocation analysis, parsing/validation rules, source
+  references, and unresolved questions; infrastructure is specification only.
 - Do not overwrite the input. Avoid partial/corrupt output on failures.
 
 ## Acceptance criteria / tests
@@ -131,7 +131,8 @@ Keep it independent of any build system or programming language.
 5. Shared definitions (e.g. endian and common headers) reach relevant messages.
 6. Independent verification detects missing or altered fields.
 7. Overlap does not duplicate messages or fields.
-8. Output is a single valid Markdown file with traceable source line ranges.
+8. Output is a Markdown directory with one file per message, shared rules,
+   helper contracts, and an index, with traceable source references.
 9. Static/bounded memory is preferred when justified; unknown bounds remain
    explicit; helper classes are specified but not implemented.
 10. No source code is generated and the input file is unchanged.
@@ -141,8 +142,9 @@ Keep it independent of any build system or programming language.
 
 ## Implementation note
 
-The initial feature-branch implementation is a **first iteration**: it has
-bounded per-chunk extraction and review, but its current line/paragraph
-chunker is not yet fully table-aware, and it does not perform a true
-cross-chunk semantic merge or global validation. These are requirements
-still to implement before treating the workflow as complete.
+The feature-branch implementation uses overlapping character windows and
+per-file incremental merging. It still needs comprehensive integration tests,
+robust cross-window identity resolution, hierarchical merge for oversized
+single-message specifications, and independent verification of the final
+merged files against all contributing source ranges. Do not describe the
+current implementation as fully validated.
