@@ -359,22 +359,34 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 // Cross-check infrastructure against every message; all other
                 // specifications against each original source window.
                 let evidence: Vec<(String, String)> = if path == "infrastructure.md" {
-                    files.iter()
+                    files
+                        .iter()
                         .filter(|(name, _)| name.starts_with("messages/") || *name == "general.md")
                         .map(|(name, body)| (name.clone(), body.clone()))
                         .collect()
                 } else {
-                    parts.iter().enumerate()
-                        .map(|(i, part)| (
-                            format!("source chunk {} lines {}-{}", i + 1, part.start_line, part.end_line),
-                            part.text.clone(),
-                        ))
+                    parts
+                        .iter()
+                        .enumerate()
+                        .map(|(i, part)| {
+                            (
+                                format!(
+                                    "source chunk {} lines {}-{}",
+                                    i + 1,
+                                    part.start_line,
+                                    part.end_line
+                                ),
+                                part.text.clone(),
+                            )
+                        })
                         .collect()
                 };
                 for (evidence_name, evidence_body) in evidence {
                     let existing = match files.get(&path) {
                         Some(body) => body.clone(),
-                        None => return WorkflowResult::Error(format!("Missing audit file: {path}")),
+                        None => {
+                            return WorkflowResult::Error(format!("Missing audit file: {path}"));
+                        }
                     };
                     let context = format!(
                         "DESTINATION: {path}\nAUDIT PASS: {}\nEVIDENCE: {evidence_name}\n\n=== EXISTING SPECIFICATION ===\n{existing}\n\n=== EVIDENCE ===\n{evidence_body}",
@@ -397,11 +409,17 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                     match decision.trim() {
                         "UNCHANGED" => continue,
                         "REVISE" => {}
-                        other => return WorkflowResult::Error(format!(
-                            "Invalid audit decision for {path}: {other}"
-                        )),
+                        other => {
+                            return WorkflowResult::Error(format!(
+                                "Invalid audit decision for {path}: {other}"
+                            ));
+                        }
                     }
-                    println!("## [CHUNKED] AUDIT {}/{}: {path} against {evidence_name}", pass + 1, MAX_AUDIT_PASSES);
+                    println!(
+                        "## [CHUNKED] AUDIT {}/{}: {path} against {evidence_name}",
+                        pass + 1,
+                        MAX_AUDIT_PASSES
+                    );
                     let revised = match self.llm_call.run_text_step_limited_with_temperature(
                         &audit_prompt,
                         &context,
