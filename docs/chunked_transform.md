@@ -32,6 +32,9 @@ flowchart TD
     M{"NON-LLM: Destination file already exists?"}
     G["LLM: Merge existing specification and new fragment"]
     S["NON-LLM: Store fragment by destination path"]
+    CP["NON-LLM: Atomically checkpoint completed window"]
+    RS{"NON-LLM: Compatible checkpoint on startup?"}
+    LD["NON-LLM: Restore next window and file map"]
     N{"NON-LLM: More windows?"}
     Z{"NON-LLM: Any specifications?"}
     A["LLM: Audit assembled file against bounded evidence"]
@@ -41,12 +44,17 @@ flowchart TD
     F["NON-LLM: Stage and publish output directory"]
     X["NON-LLM: Error; do not publish output"]
 
-    I --> W --> E --> V --> P
+    I --> W --> RS
+    RS -->|none| E
+    RS -->|valid| LD --> E
+    RS -->|mismatch| X
+    W --> RS
+    E --> V --> P
     P -->|invalid| X
     P -->|valid, possibly empty| M
     M -->|yes| G --> S
     M -->|no| S
-    S --> N
+    S --> CP --> N
     N -->|yes| E
     N -->|no| Z
     Z -->|no| X
@@ -61,7 +69,7 @@ flowchart TD
     classDef llm fill:#dbeafe,stroke:#1d4ed8,color:#111827;
     classDef nonllm fill:#dcfce7,stroke:#15803d,color:#111827;
     class E,V,G,A,D,R llm;
-    class I,W,P,M,S,N,Z,C,F,X nonllm;
+    class I,W,P,M,S,CP,RS,LD,N,Z,C,F,X nonllm;
 ```
 
 The diagram is conceptual: a complete audit pass iterates over every
@@ -162,7 +170,7 @@ The merge context is limited to **20,000 characters**. Exceeding this
 limit fails explicitly; hierarchical merging of oversized individual
 specifications is not yet implemented.
 
-## Resume after interruption (NON-LLM)
+## 4. Resume after interruption (NON-LLM)
 
 After each **fully processed** source window (including its validation and
 all required merges), the workflow atomically writes a JSON checkpoint next
@@ -199,7 +207,7 @@ flowchart TD
     N -->|no| A["Continue to assembled-knowledge audit"]
 ```
 
-## 4. Iterative assembled-knowledge audit (LLM + NON-LLM)
+## 5. Iterative assembled-knowledge audit (LLM + NON-LLM)
 
 After all windows have been processed, the workflow audits the **assembled
 files**, rather than stopping after one review per source window.
@@ -238,7 +246,7 @@ and a partial evidence window must not be treated as proof that facts from
 other windows are false. Convergence means only that the model requested no
 further changes under these checks.
 
-## 5. Output publication (NON-LLM)
+## 6. Output publication (NON-LLM)
 
 On successful assembly and audit, the workflow stages the files in a
 temporary sibling directory and renames that directory to:
@@ -266,6 +274,9 @@ is attempted if publication fails.
 
 ## Failure behavior and current limitations
 
+- A checkpoint is retained when extraction or audit fails. A changed source or
+  extraction prompt invalidates the checkpoint and requires an explicit restart.
+  The checkpoint is not a final specification and should not be edited manually.
 - An empty input, invalid path, unsupported extension, malformed model
   response, oversized merge/audit context, missing specifications, or
   non-converging audit produces an explicit workflow error.
@@ -291,6 +302,7 @@ Normal progress includes:
 ## [CHUNKED] EXTRACT 1/55 (lines 1-1)
 ## [CHUNKED] VALIDATE 1/55
 ## [CHUNKED] MERGE messages/example-message.md
+## [CHUNKED] RESUME at chunk 20/55
 ## [CHUNKED] AUDIT 1/2: infrastructure.md against messages/example-message.md
 ## [CHUNKED] WROTE /path/to/document_messages
 ```
