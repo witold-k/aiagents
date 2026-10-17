@@ -14,6 +14,7 @@ use crate::runtimetools::llmcall::LlmCall;
 use crate::workflows::workflow::{Workflow, WorkflowResult};
 
 const CHUNK_CHARS: usize = 12_000;
+const CHUNK_OVERLAP_CHARS: usize = 1_000;
 const MAX_TOKENS: u32 = 10_000;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -23,56 +24,34 @@ struct Chunk {
     text: String,
 }
 
-/// Split by a hard character budget, preferring paragraph or line boundaries.
-/// Long individual lines are split at UTF-8 character boundaries as well.
-/// Source line ranges may overlap when a line spans multiple chunks.
+/// Create overlapping character windows without interpreting the source format.
+/// All boundaries are valid UTF-8 boundaries; the final window is not padded.
+/// Line ranges are informational, and can overlap between adjacent windows.
 fn chunks(source: &str, limit: usize) -> Vec<Chunk> {
     if source.is_empty() || limit == 0 {
         return Vec::new();
     }
 
+    // For tiny test budgets, preserve forward progress as well.
+    let overlap = CHUNK_OVERLAP_CHARS.min(limit.saturating_sub(1));
+    let offsets: Vec<usize> = source
+        .char_indices()
+        .map(|(byte_offset, _)| byte_offset)
+        .chain(std::iter::once(source.len()))
+        .collect();
+    let character_count = offsets.len() - 1;
     let mut result = Vec::new();
     let mut start = 0;
-    let mut start_line = 1;
 
-    while start < source.len() {
-        let remaining = &source[start..];
-        let mut end = source.len();
-        let mut last_line_break = None;
-        let mut last_paragraph_break = None;
-        let mut count = 0;
-
-        for (offset, ch) in remaining.char_indices() {
-            if count == limit {
-                end = start + offset;
-                break;
-            }
-            count += 1;
-            if ch == '\n' {
-                let boundary = start + offset + ch.len_utf8();
-                last_line_break = Some(boundary);
-                if source[start..boundary].ends_with("\n\n") {
-                    last_paragraph_break = Some(boundary);
-                }
-            }
-        }
-
-        // Do not sacrifice most of the budget for a very early line break.
-        // Crucially, a long unbroken line can never exceed the hard limit.
-        let minimum_preferred = limit / 2;
-        if end < source.len() {
-            if let Some(boundary) = last_paragraph_break
-                && source[start..boundary].chars().count() >= minimum_preferred
-            {
-                end = boundary;
-            } else if let Some(boundary) = last_line_break
-                && source[start..boundary].chars().count() >= minimum_preferred
-            {
-                end = boundary;
-            }
-        }
-
-        let text = &source[start..end];
+    loop {
+        let end = (start + limit).min(character_count);
+        let start_byte = offsets[start];
+        let end_byte = offsets[end];
+        let start_line = 1 + source[..start_byte]
+            .bytes()
+            .filter(|byte| *byte == b'\n')
+            .count();
+        let text = &source[start_byte..end_byte];
         let newlines = text.bytes().filter(|byte| *byte == b'\n').count();
         let end_line = start_line + newlines - usize::from(text.ends_with('\n'));
         result.push(Chunk {
@@ -80,8 +59,10 @@ fn chunks(source: &str, limit: usize) -> Vec<Chunk> {
             end_line,
             text: text.to_owned(),
         });
-        start_line += newlines;
-        start = end;
+        if end == character_count {
+            break;
+        }
+        start = end - overlap;
     }
 
     result
@@ -173,12 +154,13 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 part.end_line
             );
             let context = format!(
-                "SOURCE: {}\nCHUNK: {}/{}\nLINES: {}-{}\n\n=== SOURCE ===\n{}",
+                "SOURCE: {}\nCHUNK: {}/{}\nLINES: {}-{}\nADJACENT CHUNKS OVERLAP BY UP TO {} CHARACTERS. Do not count repeated source facts twice.\n\n=== SOURCE ===\n{}",
                 input.display(),
                 index + 1,
                 parts.len(),
                 part.start_line,
                 part.end_line,
+                CHUNK_OVERLAP_CHARS,
                 part.text
             );
             let draft = match self.llm_call.run_text_step_limited_with_temperature(
@@ -233,53 +215,60 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::chunks;
+    use super::{chunks, CHUNK_OVERLAP_CHARS};
 
     #[test]
-    fn preserves_every_line_once() {
+    fn short_document_is_unchanged() {
         let source = "a\nb\n\nc\nd\n\ne";
-        let parts = chunks(source, 5);
-        assert_eq!(
-            parts.iter().map(|c| c.text.as_str()).collect::<String>(),
-            source
-        );
-        assert_eq!(parts.first().unwrap().start_line, 1);
-        assert_eq!(parts.last().unwrap().end_line, 7);
-    }
-
-    #[test]
-    fn oversized_line_is_split_without_loss() {
-        let source = format!("{}\nnext", "x".repeat(100));
-        let parts = chunks(&source, 10);
-        assert_eq!(
-            parts.iter().map(|c| c.text.as_str()).collect::<String>(),
-            source
-        );
-        assert!(parts.iter().all(|part| part.text.chars().count() <= 10));
-        assert!(parts.len() > 2);
+        let parts = chunks(source, 100);
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0].text, source);
         assert_eq!(parts[0].start_line, 1);
-        assert_eq!(parts[1].start_line, 1);
+        assert_eq!(parts[0].end_line, 7);
     }
 
     #[test]
-    fn long_unicode_line_splits_on_character_boundaries() {
-        let source = "😀é".repeat(50);
-        let parts = chunks(&source, 9);
-        assert_eq!(parts.iter().map(|part| part.text.as_str()).collect::<String>(), source);
-        assert!(parts.iter().all(|part| part.text.chars().count() <= 9));
+    fn adjacent_chunks_overlap_exactly() {
+        let source = "x".repeat(3000);
+        let parts = chunks(&source, 1200);
+        assert!(parts.len() > 2);
+        for pair in parts.windows(2) {
+            assert_eq!(pair[0].text.chars().count(), 1200);
+            let tail: String = pair[0].text.chars().skip(200).collect();
+            assert_eq!(tail, pair[1].text.chars().take(CHUNK_OVERLAP_CHARS).collect::<String>());
+        }
+        assert!(parts.iter().all(|part| part.text.chars().count() <= 1200));
     }
 
     #[test]
-    fn embedded_image_data_does_not_bypass_budget() {
+    fn unicode_and_newlines_preserve_source_with_overlap() {
+        let source = "😀é\n".repeat(2000);
+        let parts = chunks(&source, 1100);
+        let mut recovered = parts[0].text.clone();
+        for part in parts.iter().skip(1) {
+            recovered.extend(part.text.chars().skip(CHUNK_OVERLAP_CHARS));
+        }
+        assert_eq!(recovered, source);
+        assert!(parts.iter().all(|part| part.text.chars().count() <= 1100));
+    }
+
+    #[test]
+    fn embedded_image_data_remains_bounded() {
         let source = format!("![figure](data:image/png;base64,{})\nNext", "A".repeat(50_000));
         let parts = chunks(&source, 12_000);
         assert!(parts.len() >= 5);
         assert!(parts.iter().all(|part| part.text.chars().count() <= 12_000));
-        assert_eq!(parts.iter().map(|part| part.text.as_str()).collect::<String>(), source);
     }
 
     #[test]
     fn empty_document_has_no_chunks() {
         assert!(chunks("", 100).is_empty());
+        assert!(chunks("a", 0).is_empty());
+    }
+
+    #[test]
+    fn one_character_windows_make_progress() {
+        let parts = chunks("abc", 1);
+        assert_eq!(parts.iter().map(|p| p.text.as_str()).collect::<String>(), "abc");
     }
 }
