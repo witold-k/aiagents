@@ -23,50 +23,67 @@ struct Chunk {
     text: String,
 }
 
-/// Split on paragraph boundaries where possible. Oversized blocks are split
-/// on line boundaries; every source line is included exactly once.
+/// Split by a hard character budget, preferring paragraph or line boundaries.
+/// Long individual lines are split at UTF-8 character boundaries as well.
+/// Source line ranges may overlap when a line spans multiple chunks.
 fn chunks(source: &str, limit: usize) -> Vec<Chunk> {
-    if source.is_empty() {
+    if source.is_empty() || limit == 0 {
         return Vec::new();
     }
-    let lines: Vec<&str> = source.split_inclusive('\n').collect();
+
     let mut result = Vec::new();
     let mut start = 0;
-    while start < lines.len() {
-        let mut end = start;
-        let mut size = 0;
-        let mut last_blank = None;
-        while end < lines.len() {
-            let len = lines[end].len();
-            if end > start && size + len > limit {
+    let mut start_line = 1;
+
+    while start < source.len() {
+        let remaining = &source[start..];
+        let mut end = source.len();
+        let mut last_line_break = None;
+        let mut last_paragraph_break = None;
+        let mut count = 0;
+
+        for (offset, ch) in remaining.char_indices() {
+            if count == limit {
+                end = start + offset;
                 break;
             }
-            size += len;
-            end += 1;
-            if lines[end - 1].trim().is_empty() {
-                last_blank = Some(end);
+            count += 1;
+            if ch == '\n' {
+                let boundary = start + offset + ch.len_utf8();
+                last_line_break = Some(boundary);
+                if source[start..boundary].ends_with("\n\n") {
+                    last_paragraph_break = Some(boundary);
+                }
             }
-            if size >= limit {
-                break;
+        }
+
+        // Do not sacrifice most of the budget for a very early line break.
+        // Crucially, a long unbroken line can never exceed the hard limit.
+        let minimum_preferred = limit / 2;
+        if end < source.len() {
+            if let Some(boundary) = last_paragraph_break
+                && source[start..boundary].chars().count() >= minimum_preferred
+            {
+                end = boundary;
+            } else if let Some(boundary) = last_line_break
+                && source[start..boundary].chars().count() >= minimum_preferred
+            {
+                end = boundary;
             }
         }
-        if end < lines.len()
-            && let Some(blank) = last_blank
-            && blank > start
-        {
-            end = blank;
-        }
-        // An individual line may exceed the limit, but is never truncated.
-        if end == start {
-            end += 1;
-        }
+
+        let text = &source[start..end];
+        let newlines = text.bytes().filter(|byte| *byte == b'\n').count();
+        let end_line = start_line + newlines - usize::from(text.ends_with('\n'));
         result.push(Chunk {
-            start_line: start + 1,
-            end_line: end,
-            text: lines[start..end].concat(),
+            start_line,
+            end_line,
+            text: text.to_owned(),
         });
+        start_line += newlines;
         start = end;
     }
+
     result
 }
 
@@ -231,13 +248,34 @@ mod tests {
     }
 
     #[test]
-    fn oversized_line_is_not_truncated() {
+    fn oversized_line_is_split_without_loss() {
         let source = format!("{}\nnext", "x".repeat(100));
         let parts = chunks(&source, 10);
         assert_eq!(
             parts.iter().map(|c| c.text.as_str()).collect::<String>(),
             source
         );
+        assert!(parts.iter().all(|part| part.text.chars().count() <= 10));
+        assert!(parts.len() > 2);
+        assert_eq!(parts[0].start_line, 1);
+        assert_eq!(parts[1].start_line, 1);
+    }
+
+    #[test]
+    fn long_unicode_line_splits_on_character_boundaries() {
+        let source = "😀é".repeat(50);
+        let parts = chunks(&source, 9);
+        assert_eq!(parts.iter().map(|part| part.text.as_str()).collect::<String>(), source);
+        assert!(parts.iter().all(|part| part.text.chars().count() <= 9));
+    }
+
+    #[test]
+    fn embedded_image_data_does_not_bypass_budget() {
+        let source = format!("![figure](data:image/png;base64,{})\nNext", "A".repeat(50_000));
+        let parts = chunks(&source, 12_000);
+        assert!(parts.len() >= 5);
+        assert!(parts.iter().all(|part| part.text.chars().count() <= 12_000));
+        assert_eq!(parts.iter().map(|part| part.text.as_str()).collect::<String>(), source);
     }
 
     #[test]
