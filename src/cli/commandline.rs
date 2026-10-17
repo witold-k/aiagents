@@ -31,7 +31,7 @@ pub struct Args {
 pub fn help() {
     println!(
         r#"aifix [option]+
-    -l --lang [optional, detected from build system if omitted]: language: one of: {}
+    -l --lang [optional for language-dependent workflows; detected from build system if omitted]: language: one of: {}
             or provide path to taskdesciption
     -t --task [optional, default = fix_code, multiple possible invalid with -w switch]:
         - first -t selects task: one of: {}
