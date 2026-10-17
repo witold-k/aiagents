@@ -18,6 +18,7 @@ const CHUNK_CHARS: usize = 12_000;
 const CHUNK_OVERLAP_CHARS: usize = 1_000;
 const MAX_TOKENS: u32 = 10_000;
 const MAX_MERGE_CHARS: usize = 20_000;
+const MAX_AUDIT_PASSES: usize = 2;
 
 #[derive(Debug, PartialEq, Eq)]
 struct Chunk {
@@ -339,6 +340,96 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             "# General Protocol Rules\n\nNo shared rules were established from the source.".into()
         });
         files.entry("infrastructure.md".into()).or_insert_with(|| "# Infrastructure Contracts\n\nNo helper contracts were established from the source.".into());
+        // Audit the assembled knowledge, not just individual extraction drafts.
+        // Evidence is supplied in bounded windows; changes are reviewed again
+        // on subsequent passes. An unchanged pass is a fixed point.
+        let audit_prompt = format!(
+            "{requirements}\n\n{}",
+            WorkflowSteps::ChunkedTransformAudit.get_prompt()
+        );
+        let decision_prompt = format!(
+            "{requirements}\n\n{}",
+            WorkflowSteps::ChunkedTransformAuditDecide.get_prompt()
+        );
+        let mut converged = false;
+        for pass in 0..MAX_AUDIT_PASSES {
+            let mut changed = false;
+            let paths: Vec<String> = files.keys().cloned().collect();
+            for path in paths {
+                // Cross-check infrastructure against every message; all other
+                // specifications against each original source window.
+                let evidence: Vec<(String, String)> = if path == "infrastructure.md" {
+                    files.iter()
+                        .filter(|(name, _)| name.starts_with("messages/") || *name == "general.md")
+                        .map(|(name, body)| (name.clone(), body.clone()))
+                        .collect()
+                } else {
+                    parts.iter().enumerate()
+                        .map(|(i, part)| (
+                            format!("source chunk {} lines {}-{}", i + 1, part.start_line, part.end_line),
+                            part.text.clone(),
+                        ))
+                        .collect()
+                };
+                for (evidence_name, evidence_body) in evidence {
+                    let existing = match files.get(&path) {
+                        Some(body) => body.clone(),
+                        None => return WorkflowResult::Error(format!("Missing audit file: {path}")),
+                    };
+                    let context = format!(
+                        "DESTINATION: {path}\nAUDIT PASS: {}\nEVIDENCE: {evidence_name}\n\n=== EXISTING SPECIFICATION ===\n{existing}\n\n=== EVIDENCE ===\n{evidence_body}",
+                        pass + 1
+                    );
+                    if context.chars().count() > MAX_MERGE_CHARS {
+                        return WorkflowResult::Error(format!(
+                            "Audit context exceeds {MAX_MERGE_CHARS} characters for {path} against {evidence_name}"
+                        ));
+                    }
+                    let decision = match self.llm_call.run_text_step_limited_with_temperature(
+                        &decision_prompt,
+                        &context,
+                        32,
+                        0.0,
+                    ) {
+                        Ok(text) => text,
+                        Err(err) => return WorkflowResult::LlmCallResult(err),
+                    };
+                    match decision.trim() {
+                        "UNCHANGED" => continue,
+                        "REVISE" => {}
+                        other => return WorkflowResult::Error(format!(
+                            "Invalid audit decision for {path}: {other}"
+                        )),
+                    }
+                    println!("## [CHUNKED] AUDIT {}/{}: {path} against {evidence_name}", pass + 1, MAX_AUDIT_PASSES);
+                    let revised = match self.llm_call.run_text_step_limited_with_temperature(
+                        &audit_prompt,
+                        &context,
+                        MAX_TOKENS,
+                        0.1,
+                    ) {
+                        Ok(text) => text,
+                        Err(err) => return WorkflowResult::LlmCallResult(err),
+                    };
+                    if revised.trim().is_empty() {
+                        return WorkflowResult::Error(format!("Empty audit revision for {path}"));
+                    }
+                    if revised.trim() != existing.trim() {
+                        files.insert(path.clone(), revised.trim().to_owned());
+                        changed = true;
+                    }
+                }
+            }
+            if !changed {
+                converged = true;
+                break;
+            }
+        }
+        if !converged {
+            return WorkflowResult::Error(format!(
+                "Specification audit did not converge within {MAX_AUDIT_PASSES} passes; refusing unverified output"
+            ));
+        }
         match write_spec_directory(&output, &files, &input) {
             Ok(()) => {
                 println!("## [CHUNKED] WROTE {}", output.display());
