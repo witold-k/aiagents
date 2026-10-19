@@ -8,7 +8,8 @@ use crate::config::Config;
 use crate::generated_tasks::Tasks;
 use crate::runtimetools::{buildsystem::Buildsystem, llmcall::LlmCall};
 use crate::workflows::{
-    build::BuildWorkflow, build_lint_test::BLTWorkflow, doc::DocWorkflow, endless::EndlessWorkflow,
+    build::BuildWorkflow, build_lint_test::BLTWorkflow,
+    chunked_transform::ChunkedTransformWorkflow, doc::DocWorkflow, endless::EndlessWorkflow,
     release_doc::ReleaseDocWorkflow, setupbuild::SetupBuildWorkflow, workflow::Workflow,
     workspace::WorkspaceWorkflow,
 };
@@ -21,6 +22,7 @@ pub struct WorkflowSelector<'a> {
     gt: EndlessWorkflow<'a>,
     dt: DocWorkflow<'a>,
     rd: ReleaseDocWorkflow<'a>,
+    ct: ChunkedTransformWorkflow<'a>,
     tt: EndlessWorkflow<'a>,
     sb: SetupBuildWorkflow<'a>,
     ws: WorkspaceWorkflow<'a>,
@@ -28,6 +30,11 @@ pub struct WorkflowSelector<'a> {
 
 // FIXME should be named WorkflowBuilder and behave so
 impl<'a> WorkflowSelector<'a> {
+    /// Whether the workflow needs a programming-language prompt.
+    pub fn requires_language(task: Tasks) -> bool {
+        !matches!(task, Tasks::ExtractMessageTables)
+    }
+
     pub fn new(
         config: &'a Config,
         llm_call: &'a LlmCall<'a>,
@@ -43,6 +50,7 @@ impl<'a> WorkflowSelector<'a> {
             gt: EndlessWorkflow::new(config, llm_call.clone(), src_path, target_path),
             dt: DocWorkflow::new(config, llm_call.clone(), bs, src_path, target_path),
             rd: ReleaseDocWorkflow::new(llm_call.clone(), src_path, task_args),
+            ct: ChunkedTransformWorkflow::new(llm_call.clone(), src_path, task_args),
             tt: EndlessWorkflow::new(config, llm_call.clone(), src_path, target_path),
             sb: SetupBuildWorkflow::new(config, llm_call.clone(), bs, src_path, target_path),
             ws: WorkspaceWorkflow::new(
@@ -65,6 +73,7 @@ impl<'a> WorkflowSelector<'a> {
             Tasks::ReviewCode => &self.dt,
             Tasks::ReviewDoc => &self.dt,
             Tasks::ReleaseDoc => &self.rd,
+            Tasks::ExtractMessageTables => &self.ct,
             Tasks::SetupBuild => &self.sb,
             Tasks::TranspileCode => &self.tt,
             Tasks::WriteBlockDoc => &self.dt,

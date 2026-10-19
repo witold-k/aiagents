@@ -103,6 +103,26 @@ creates and critiques candidate repair designs, synthesizes a final plan, and
 only then applies edits. Deterministic build/lint/test execution remains the
 validation boundary. See [BLT Execute Workflow](docs/blt_execute.md).
 
+The `extract_message_tables` task uses a separate chunked document workflow
+to produce **Markdown protocol specifications, not code**. It extracts and
+reviews bounded overlapping source windows, accumulates reviewed fragments
+without rewriting earlier text, and runs an independent coverage sweep over
+all nonempty source windows. Exact duplicate fragments are skipped, but
+semantic deduplication is not guaranteed. An evidence-based audit permits
+two revision passes and, if needed, a final read-only verification pass.
+The additional checks increase LLM cost and reduce—but do not eliminate—the
+risk of omissions or unsupported facts.
+
+Progress is stored beside the source in
+`<input-stem>_messages.v5.checkpoint.json`, including extraction,
+coverage, and audit cursors. Previous checkpoint versions are preserved but
+not reused; v5 begins a fresh extraction. Interrupted runs resume at the
+last completed step. Publication is atomic and refuses to overwrite an
+existing output directory.
+
+See [Chunked Transform Workflow](docs/chunked_transform.md) for details,
+Mermaid diagrams, limitations, and failure behavior.
+
 Release documentation is also implemented as a multi-step workflow. It derives
 context from Git history, by default since the latest tag, analyzes the changes,
 and writes generated release notes to `RELEASE_NOTES.md`. Explicit first/last
@@ -179,6 +199,7 @@ The current task system includes operations such as:
 * `write_block_doc`
 * `setup_build`
 * `release_doc`
+* `extract_message_tables`
 
 Task descriptions are kept separate from the Rust implementation and are
 converted into generated Rust metadata during the build.
