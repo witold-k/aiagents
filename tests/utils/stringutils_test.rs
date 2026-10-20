@@ -4,6 +4,7 @@ mod tests {
     use aiagents::utils::stringutils::extract_standalone_choice;
     use aiagents::utils::stringutils::iter_fenced_blocks;
     use aiagents::utils::stringutils::raw_fence_to_string;
+    use aiagents::utils::stringutils::resolve_source_quote;
     use aiagents::utils::stringutils::strip_code_fences;
     use aiagents::utils::stringutils::strip_outer_markdown_fence;
 
@@ -238,6 +239,117 @@ mod tests {
         assert_eq!(
             result,
             "{\"first\": \"hello\\n\", \"second\": \"world\\n\"}"
+        );
+    }
+
+    #[test]
+    fn source_quote_allows_whitespace_only_changes_and_preserves_source_bytes() {
+        let source = "The timeout is\n  exactly   thirty seconds. Another line.";
+        let quote = "timeout is exactly thirty seconds";
+        assert_eq!(
+            resolve_source_quote(source, quote).as_deref(),
+            Some("timeout is\n  exactly   thirty seconds")
+        );
+        assert!(resolve_source_quote(source, "timeout is exactly forty seconds").is_none());
+        assert!(resolve_source_quote(source, "Timeout is exactly thirty seconds").is_none());
+        assert!(resolve_source_quote(source, "short").is_none());
+        assert_eq!(
+            resolve_source_quote(
+                "The command uses <lf> and <cr><lf> sequences.",
+                "command uses &lt;lf&gt; and &lt;cr&gt;&lt;lf&gt; sequences"
+            )
+            .as_deref(),
+            Some("command uses <lf> and <cr><lf> sequences")
+        );
+        assert_eq!(
+            resolve_source_quote(
+                "The command uses &lt;lf&gt; and &lt;cr&gt;&lt;lf&gt; sequences.",
+                "command uses <lf> and <cr><lf> sequences"
+            )
+            .as_deref(),
+            Some("command uses &lt;lf&gt; and &lt;cr&gt;&lt;lf&gt; sequences")
+        );
+        assert!(
+            resolve_source_quote(
+                "The command uses <lf> and <cr><lf> sequences.",
+                "command uses <lf> and <xx><lf> sequences"
+            )
+            .is_none()
+        );
+        let unicode = "Änderung\t  beträgt zwölf Sekunden.";
+        assert_eq!(
+            resolve_source_quote(unicode, "Änderung beträgt zwölf Sekunden.").as_deref(),
+            Some(unicode)
+        );
+    }
+    #[test]
+    fn quote_rejects_empty_and_whitespace_only_input() {
+        assert_eq!(resolve_source_quote("a source sentence", ""), None);
+        assert_eq!(
+            resolve_source_quote("a source sentence", "             "),
+            None
+        );
+        assert_eq!(
+            resolve_source_quote("a source sentence", "\n\t           "),
+            None
+        );
+        assert_eq!(resolve_source_quote("", "a sufficiently long quote"), None);
+    }
+
+    #[test]
+    fn quote_preserves_exact_source_and_byte_boundaries() {
+        let source = "Prefix: Änderung\n\t beträgt zwölf Sekunden. Suffix.";
+        assert_eq!(
+            resolve_source_quote(source, "Änderung beträgt zwölf Sekunden.").as_deref(),
+            Some("Änderung\n\t beträgt zwölf Sekunden.")
+        );
+        assert_eq!(
+            resolve_source_quote(source, "Änderung\n\t beträgt zwölf Sekunden.").as_deref(),
+            Some("Änderung\n\t beträgt zwölf Sekunden.")
+        );
+    }
+
+    #[test]
+    fn quote_handles_html_entity_spellings_and_original_source() {
+        let source = "Command <lf> & <cr><lf> end.";
+        for quote in [
+            "Command &lt;lf&gt; &amp; &lt;cr&gt;&lt;lf&gt; end.",
+            "Command &#60;lf&#62; &#38; &#60;cr&#62;&#60;lf&#62; end.",
+            "Command &#x3c;lf&#x3e; &#x26; &#x3c;cr&#x3e;&#x3c;lf&#x3e; end.",
+        ] {
+            assert_eq!(resolve_source_quote(source, quote).as_deref(), Some(source));
+        }
+        let escaped_source = "Command &lt;lf&gt; &amp; &lt;cr&gt;&lt;lf&gt; end.";
+        assert_eq!(
+            resolve_source_quote(escaped_source, source).as_deref(),
+            Some(escaped_source)
+        );
+    }
+
+    #[test]
+    fn quote_rejects_changes_other_than_whitespace_or_supported_entities() {
+        let source = "Timeout is exactly thirty seconds; use <lf>.";
+        for quote in [
+            "Timeout is exactly forty seconds; use <lf>.",
+            "timeout is exactly thirty seconds; use <lf>.",
+            "Timeout is exactly thirty seconds, use <lf>.",
+            "Timeout is exactly thirty seconds; use <cr>.",
+            "Timeout is exactly thirty seconds; use &quot;lf&quot;.",
+        ] {
+            assert_eq!(resolve_source_quote(source, quote), None, "{quote}");
+        }
+    }
+
+    #[test]
+    fn quote_matches_across_mixed_whitespace_and_entities() {
+        let source = "One\r\n  <lf>\t and\n<cr><lf> terminators.";
+        assert_eq!(
+            resolve_source_quote(
+                source,
+                "One &lt;lf&gt; and &lt;cr&gt;&lt;lf&gt; terminators."
+            )
+            .as_deref(),
+            Some(source)
         );
     }
 }

@@ -3,7 +3,7 @@
 ## Purpose and design rationale
 
 `extract_message_tables` transforms a large UTF-8 Markdown or text protocol
-document into Markdown message specifications and a machine-readable `facts.json`.
+document into per-specification JSON files and a machine-readable `facts.json`.
 It **does not** generate code, nor does it prove protocol correctness.
 
 The design deliberately separates **LLM interpretation** from **deterministic
@@ -100,6 +100,28 @@ heading can canonicalize a single-character protocol identifier to
 `messages/x.md`. Descriptive aliases without an explicit identifier are
 **not guessed**. Identity collisions and semantic aliases still need
 additional source-grounded normalization.
+
+## JSON extraction and unmatched evidence
+
+Extraction now requests a JSON `files` array containing atomic assertions and
+source quotations. The model must copy evidence from the source window without
+reconstructing grammar productions, punctuation or HTML entities. Rust accepts
+only quotations that match the source (allowing whitespace differences and
+supported HTML entity encodings) and stores the original source bytes.
+
+An unmatched quote is **not** proof. The workflow retries once with instructions
+to omit any assertion for which no verbatim quotation can be found. If both
+responses are structurally valid, supported assertions from either response are
+combined. Any assertion still lacking a matching quotation is retained as
+`unresolved`, with its source window and no `evidence_quote`; it is never
+silently marked supported. This also marks the run unverified and allows the
+next source window to proceed. Malformed JSON or unsafe paths still fail if
+both attempts cannot produce a structurally valid response.
+
+The existing v5 checkpoint and fingerprint remain compatible so already
+completed source windows do not need to be re-extracted. The later fact audit
+may establish missing evidence; unresolved output is published separately
+rather than presented as reviewed.
 
 ## Persistent facts and projections
 
@@ -220,3 +242,53 @@ evidence.
   validation and legacy audit prompts
 - `tests/workflows/chunked_transform_test.rs`: parsing and chunking tests
 - `docs/blt_execute.md`: diagram color convention and LLM/non-LLM separation
+
+## JSON output (schema version 1)
+
+The workflow publishes **JSON instead of Markdown specifications** in a separate
+`<input-stem>_messages-json` directory (or `-unverified` diagnostic sibling).
+It preserves the existing v5 checkpoint filename, so extraction and fact-audit
+progress from an earlier Markdown-output run can be reused. Existing Markdown
+output directories are not overwritten.
+
+- `general.json`, `infrastructure.json`, `messages/<slug>.json`:
+  `schema_version`, `name`, `facts`, `source_windows` (1-based),
+  and `verification` (`supported_quotes`, `unresolved`, or `no_facts`).
+- `facts.json`: the complete per-original-path fact map for compatibility
+  with previous structured fact consumers.
+- `manifest.json`: `schema_version`, `source`, `verification`
+  (`reviewed` or `unverified`), `files` and `facts_file`.
+
+Each fact retains `statement`, `source_chunk` (0-based internal index),
+`start_line`, `end_line`, `evidence_quote`, and `review`.
+A `supported` fact has a matching verbatim source quotation, **not a proof
+of semantic correctness**. Historical facts can have unknown provenance
+(`source_chunk` = maximum usize, lines 0). Their statements may still
+contain Markdown syntax: the first JSON migration changes the **serialization
+format**, not the LLM extraction contract or fact semantics.
+
+Rust owns JSON serialization and output path validation. The LLM never
+formats final JSON. The manifest's global verification flag remains
+conservative when earlier coverage/audit warnings were recorded.
+
+## Structured extraction v1 (new runs)
+
+The extraction phase now requests a JSON `files[]` array containing atomic
+`statement` and verbatim `evidence_quote` pairs. Rust rejects malformed
+JSON, invalid paths, empty/oversized statements, and source quotes shorter than
+12 characters or absent from the current window. A rejected window is retried
+once; if it still fails, the workflow stops **without advancing that window's
+checkpoint cursor**, so the same window can be retried after fixing the model
+or prompt. Earlier completed windows remain checkpointed.
+
+Facts accepted with a verified substring are marked `supported` immediately.
+The later audit skips those facts, avoiding redundant per-fact LLM calls.
+The independent coverage sweep still uses the legacy FILE-record contract and
+may introduce facts that need subsequent auditing. This is an incremental
+migration, not yet a fully JSON-native coverage pipeline.
+
+The extraction fingerprint includes `structured-extraction-v1`; old
+Markdown-era checkpoints cannot be silently resumed with a different extraction
+contract. Move an incompatible checkpoint aside if you want to preserve it.
+A valid source quotation does **not** establish semantic entailment, and
+unsupported but plausible facts can still be proposed by the LLM.

@@ -14,7 +14,7 @@ use std::{
 use crate::generated_tasks::Tasks;
 use crate::generated_workflowsteps::WorkflowSteps;
 use crate::runtimetools::llmcall::LlmCall;
-use crate::utils::stringutils::strip_code_fences;
+use crate::utils::stringutils::{resolve_source_quote, strip_code_fences};
 use crate::workflows::workflow::{Workflow, WorkflowResult};
 
 const CHUNK_CHARS: usize = 4_000;
@@ -86,11 +86,117 @@ fn verified_fact_quote(response: &str, source: &str) -> Result<String, String> {
     let normalized = strip_code_fences(response.trim());
     let proof: FactEvidence = serde_json::from_str(&normalized)
         .map_err(|err| format!("Invalid fact evidence JSON: {err}"))?;
-    let quote = proof.evidence_quote.trim();
-    if quote.chars().count() < 12 || !source.contains(quote) {
-        return Err("Fact quote is too short or absent from the attributed source window".into());
+    resolve_source_quote(source, &proof.evidence_quote)
+        .ok_or_else(|| "Fact quote is too short or absent from the attributed source window".into())
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExtractedFact {
+    statement: String,
+    #[serde(default)]
+    source_anchor: Option<String>,
+    #[serde(default)]
+    evidence_quote: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExtractedFile {
+    path: String,
+    facts: Vec<ExtractedFact>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExtractedWindow {
+    files: Vec<ExtractedFile>,
+}
+
+type ExtractedRecords = Vec<(String, Vec<(String, Option<String>)>)>;
+
+fn unsupported_quote_count(records: &ExtractedRecords) -> usize {
+    records
+        .iter()
+        .flat_map(|(_, entries)| entries)
+        .filter(|(_, quote)| quote.is_none())
+        .count()
+}
+
+fn parse_structured_window(response: &str, source: &str) -> Result<ExtractedRecords, String> {
+    let normalized = strip_code_fences(response.trim());
+    let parsed: ExtractedWindow = serde_json::from_str(normalized.trim())
+        .map_err(|e| format!("Invalid structured extraction JSON: {e}"))?;
+    let mut result = Vec::new();
+    for file in parsed.files {
+        if !valid_spec_path(&file.path) {
+            return Err(format!("Invalid specification path: {}", file.path));
+        }
+        if file.facts.is_empty() {
+            continue;
+        }
+        let mut entries = Vec::new();
+        for fact in file.facts {
+            let statement = fact.statement.trim();
+            if statement.is_empty() || statement.chars().count() > 4_000 {
+                return Err("Empty or oversized extracted fact".into());
+            }
+            // The model supplies a locator, never the authoritative evidence.
+            // Rust copies the matching bytes from the original source window.
+            // Keep accepting evidence_quote from earlier model responses.
+            let quote = fact
+                .source_anchor
+                .as_deref()
+                .and_then(|anchor| resolve_source_quote(source, anchor))
+                .filter(|matched| source.match_indices(matched).nth(1).is_none())
+                .or_else(|| {
+                    fact.evidence_quote
+                        .as_deref()
+                        .and_then(|quote| resolve_source_quote(source, quote))
+                });
+            entries.push((statement.to_owned(), quote));
+        }
+        result.push((file.path, entries));
     }
-    Ok(quote.to_owned())
+    Ok(result)
+}
+
+fn record_verified_facts(
+    facts: &mut BTreeMap<String, Vec<SourceFact>>,
+    path: &str,
+    entries: Vec<(String, Option<String>)>,
+    chunk: usize,
+    start_line: usize,
+    end_line: usize,
+) {
+    let destination = facts.entry(path.to_owned()).or_default();
+    for (statement, quote) in entries {
+        if let Some(existing) = destination
+            .iter_mut()
+            .find(|fact| fact.statement == statement)
+        {
+            if existing.review != FactReview::Supported
+                && let Some(quote) = quote
+            {
+                existing.evidence_quote = Some(quote);
+                existing.review = FactReview::Supported;
+            }
+            continue;
+        }
+        let review = if quote.is_some() {
+            FactReview::Supported
+        } else {
+            FactReview::Unresolved
+        };
+        destination.push(SourceFact {
+            statement,
+            source_chunk: chunk,
+            start_line,
+            end_line,
+            evidence_quote: quote,
+            review,
+        });
+    }
 }
 
 fn record_source_facts(
@@ -595,8 +701,27 @@ pub fn valid_spec_path(path: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
 }
 
-/// Stage all output files in a fresh sibling directory and publish only after
-/// every file has been written. Refuse to overwrite an existing specification.
+/// The output is a deterministic JSON projection of the canonical facts.
+/// Source facts may still contain Markdown-formatted statements from the LLM.
+#[derive(Serialize)]
+struct JsonSpecification<'a> {
+    schema_version: u32,
+    name: &'a str,
+    facts: &'a [SourceFact],
+    source_windows: Vec<usize>,
+    verification: &'static str,
+}
+
+#[derive(Serialize)]
+struct JsonManifest<'a> {
+    schema_version: u32,
+    source: String,
+    verification: &'static str,
+    files: Vec<String>,
+    facts_file: &'a str,
+}
+
+/// Stage JSON output in a sibling directory and publish it atomically.
 fn write_spec_directory(
     output: &Path,
     files: &BTreeMap<String, String>,
@@ -619,41 +744,58 @@ fn write_spec_directory(
     fs::create_dir(&stage).map_err(|e| format!("Cannot stage output: {e}"))?;
     let result = (|| {
         fs::create_dir(stage.join("messages")).map_err(|e| e.to_string())?;
-        for (path, body) in files {
-            fs::write(stage.join(path), format!("{body}\n"))
-                .map_err(|e| format!("Cannot write {path}: {e}"))?;
-        }
-        let mut readme = format!(
-            "# Extracted Message Specifications\n\nSource: `{}`\n\n",
-            source.display()
-        );
-        readme.push_str("## Shared specifications\n\n- [General protocol rules](general.md)\n- [Infrastructure contracts](infrastructure.md)\n\n## Messages\n\n");
-        for path in files.keys().filter(|p| p.starts_with("messages/")) {
-            readme.push_str(&format!("- [{path}]({path})\n"));
-        }
-        if unverified {
-            readme.push_str("\n## Verification status\n\n**UNVERIFIED DIAGNOSTIC DRAFT.** Coverage or audit findings remain unresolved. Do not use these specifications as an authoritative basis for implementation.\n");
-        } else {
-            readme.push_str("\n## Verification status\n\nNo unresolved findings were recorded by the workflow. Model review is not a proof of protocol correctness; independently verify against the source before implementation.\n");
-        }
-        readme.push_str("\n## Extraction provenance\n\nSource-window indices are 1-based and refer to the overlapping source windows used during extraction. They are not a substitute for exact source citations.\n\n");
-        for (path, indices) in source_windows {
-            let mut indices = indices.clone();
-            indices.sort_unstable();
-            indices.dedup();
-            let windows = indices
+        let mut output_paths = Vec::new();
+        for path in files.keys() {
+            if !valid_spec_path(path) {
+                return Err(format!("Invalid specification path: {path}"));
+            }
+            let json_path = path
+                .strip_suffix(".md")
+                .ok_or_else(|| format!("Invalid specification extension: {path}"))?
+                .to_owned()
+                + ".json";
+            let entries = facts.get(path).map(Vec::as_slice).unwrap_or(&[]);
+            let mut windows = source_windows.get(path).cloned().unwrap_or_default();
+            windows.sort_unstable();
+            windows.dedup();
+            let verification = if entries
                 .iter()
-                .map(|i| (i + 1).to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
-            readme.push_str(&format!("- `{path}`: windows {windows}\n"));
+                .any(|fact| fact.review != FactReview::Supported)
+            {
+                "unresolved"
+            } else if entries.is_empty() {
+                "no_facts"
+            } else {
+                "supported_quotes"
+            };
+            let document = JsonSpecification {
+                schema_version: 1,
+                name: path.strip_suffix(".md").unwrap_or(path),
+                facts: entries,
+                source_windows: windows.into_iter().map(|i| i + 1).collect(),
+                verification,
+            };
+            let bytes = serde_json::to_vec_pretty(&document)
+                .map_err(|e| format!("Cannot serialize {json_path}: {e}"))?;
+            fs::write(stage.join(&json_path), bytes)
+                .map_err(|e| format!("Cannot write {json_path}: {e}"))?;
+            output_paths.push(json_path);
         }
-        readme.push_str("\n## Structured facts\n\nSee [facts.json](facts.json) for deduplicated assertions, source-window attribution, evidence_quote and review status (pending/supported/unresolved). Supported means a verbatim quote exists in the attributed window, not that the assertion is semantically proven. Historical checkpoint attribution may be unreliable.\n");
-        let fact_json = serde_json::to_vec_pretty(facts)
-            .map_err(|e| format!("Cannot serialize structured facts: {e}"))?;
+        let fact_json =
+            serde_json::to_vec_pretty(facts).map_err(|e| format!("Cannot serialize facts: {e}"))?;
         fs::write(stage.join("facts.json"), fact_json)
             .map_err(|e| format!("Cannot write facts.json: {e}"))?;
-        fs::write(stage.join("README.md"), readme).map_err(|e| e.to_string())?;
+        let manifest = JsonManifest {
+            schema_version: 1,
+            source: source.display().to_string(),
+            verification: if unverified { "unverified" } else { "reviewed" },
+            files: output_paths,
+            facts_file: "facts.json",
+        };
+        let manifest_json = serde_json::to_vec_pretty(&manifest)
+            .map_err(|e| format!("Cannot serialize manifest: {e}"))?;
+        fs::write(stage.join("manifest.json"), manifest_json)
+            .map_err(|e| format!("Cannot write manifest.json: {e}"))?;
         fs::rename(&stage, output).map_err(|e| format!("Cannot publish output: {e}"))
     })();
     if result.is_err() {
@@ -702,7 +844,7 @@ impl<'a> ChunkedTransformWorkflow<'a> {
             .file_stem()
             .and_then(|stem| stem.to_str())
             .ok_or("Input filename is not valid UTF-8")?;
-        let output = input.with_file_name(format!("{stem}_messages"));
+        let output = input.with_file_name(format!("{stem}_messages-json"));
         if output == input {
             return Err("Output would overwrite input".into());
         }
@@ -743,9 +885,24 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             "{requirements}\n\n{}",
             WorkflowSteps::ChunkedTransformMerge.get_prompt()
         );
-        let checkpoint_file = checkpoint_path(&output);
-        let fingerprint =
-            extraction_fingerprint(&source, &[&extract_prompt, &validate_prompt, &merge_prompt]);
+        // Keep the v5 checkpoint path so completed OpenAMIP work can be reused.
+        let checkpoint_output = output.with_file_name(
+            output
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .replace("_messages-json", "_messages"),
+        );
+        let checkpoint_file = checkpoint_path(&checkpoint_output);
+        let fingerprint = extraction_fingerprint(
+            &source,
+            &[
+                &extract_prompt,
+                &validate_prompt,
+                &merge_prompt,
+                "structured-extraction-v1",
+            ],
+        );
         let mut checkpoint = match load_checkpoint(&checkpoint_file, &fingerprint, parts.len()) {
             Ok(Some(checkpoint)) => {
                 println!(
@@ -803,81 +960,81 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 CHUNK_OVERLAP_CHARS,
                 part.text
             );
-            let draft = match self.llm_call.run_text_step_limited_with_temperature(
-                &extract_prompt,
+            let json_prompt = format!(
+                "{requirements}\n\n{}",
+                r#"Extract only atomic statements directly supported by this SOURCE window. Return exactly one JSON object with schema: {"files":[{"path":"general.md","facts":[{"statement":"one atomic assertion","source_anchor":"verbatim unique source substring, at least 12 characters"}]}]}. Allowed paths: general.md, infrastructure.md, messages/<lowercase-slug>.md. Empty result: {"files":[]}. source_anchor is a LOCATOR, not a paraphrase: copy a contiguous substring exactly as printed in SOURCE, including spaces, EBNF punctuation and HTML entities. Select an anchor that occurs exactly once in SOURCE and directly supports the statement. Rust will copy the original source bytes as evidence. If no exact anchor exists, omit the fact. No Markdown fences, commentary, unsupported assertions, or invented protocol rules."#
+            );
+            let response = match self.llm_call.run_text_step_limited_with_temperature(
+                &json_prompt,
                 &context,
-                MAX_TOKENS,
-                0.2,
+                MAX_TOKENS * 2,
+                0.0,
             ) {
                 Ok(text) => text,
                 Err(err) => return WorkflowResult::LlmCallResult(err),
             };
-            let review_context = format!("{context}\n\n=== EXTRACTED DRAFT ===\n{draft}");
-            println!("## [CHUNKED] VALIDATE {}/{}", index + 1, parts.len());
-            let checked = match self.llm_call.run_text_step_limited_with_temperature(
-                &validate_prompt,
-                &review_context,
-                MAX_TOKENS,
-                0.1,
-            ) {
-                Ok(text) => text,
-                Err(err) => return WorkflowResult::LlmCallResult(err),
-            };
-            let records = match parse_file_records(&checked) {
+            // Retry only broken JSON or invalid paths. Unsupported anchors
+            // are retained for later audit without paying for another model call.
+            let records = match parse_structured_window(&response, &part.text) {
                 Ok(records) => records,
-                Err(err) => {
-                    println!("## [CHUNKED] VALIDATE RETRY {}/{}", index + 1, parts.len());
+                Err(reason) => {
+                    println!(
+                        "## [CHUNKED] EXTRACT RETRY {}/{}: {reason}; response preview: {:?}",
+                        index + 1,
+                        parts.len(),
+                        response.chars().take(200).collect::<String>()
+                    );
+                    let retry_prompt = format!(
+                        "{json_prompt}\n\nPrevious response was structurally invalid: {reason}. Return exactly one valid JSON object, with safe paths and the required fields."
+                    );
                     let retried = match self.llm_call.run_text_step_limited_with_temperature(
-                        &validate_prompt,
-                        &review_context,
+                        &retry_prompt,
+                        &context,
                         MAX_TOKENS * 2,
-                        0.1,
+                        0.0,
                     ) {
                         Ok(text) => text,
-                        Err(error) => return WorkflowResult::LlmCallResult(error),
+                        Err(err) => return WorkflowResult::LlmCallResult(err),
                     };
-                    match parse_file_records(&retried) {
+                    match parse_structured_window(&retried, &part.text) {
                         Ok(records) => records,
                         Err(retry_error) => {
                             return WorkflowResult::Error(format!(
-                                "Chunk {}: {retry_error} after validation retry; first error: {err}",
+                                "Chunk {} structured extraction failed after retry: {retry_error}; first error: {reason}",
                                 index + 1
                             ));
                         }
                     }
                 }
             };
-            for (model_path, fragment) in records {
+            let unsupported = unsupported_quote_count(&records);
+            if unsupported > 0 {
+                println!(
+                    "## [CHUNKED] EXTRACT UNRESOLVED {}/{}: {unsupported} assertions lack source quotes; retained for audit",
+                    index + 1,
+                    parts.len()
+                );
+                checkpoint.unresolved_findings = true;
+            }
+            for (model_path, entries) in records {
+                let fragment = entries
+                    .iter()
+                    .map(|(statement, _)| statement.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
                 let path = canonical_message_path(&model_path, &fragment);
-                if fragment.chars().count() > MAX_MERGE_CHARS {
-                    return WorkflowResult::Error(format!(
-                        "Extracted fragment for {path} exceeds {MAX_MERGE_CHARS} characters"
-                    ));
-                }
                 let source_windows = checkpoint.source_windows.entry(path.clone()).or_default();
                 if !source_windows.contains(&index) {
                     source_windows.push(index);
                 }
-                // Facts are the canonical accumulation format. Large shared
-                // specifications no longer deadlock at a fixed Markdown size.
-                // Preserve legacy checkpoint content as facts on first update.
-                if !checkpoint.facts.contains_key(&path)
-                    && let Some(existing) = files.get(&path)
-                {
-                    record_source_facts(&mut checkpoint.facts, &path, existing, usize::MAX, 0, 0);
-                    checkpoint.unresolved_findings = true;
-                }
-                record_source_facts(
+                record_verified_facts(
                     &mut checkpoint.facts,
                     &path,
-                    &fragment,
+                    entries,
                     index,
                     part.start_line,
                     part.end_line,
                 );
-                if files.contains_key(&path) {
-                    println!("## [CHUNKED] MERGE {path}");
-                }
                 files.insert(path.clone(), render_source_facts(&checkpoint.facts[&path]));
             }
             checkpoint.next_chunk = index + 1;
@@ -1045,6 +1202,19 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         while checkpoint.fact_audit_cursor < fact_keys.len() {
             let (path, index) = &fact_keys[checkpoint.fact_audit_cursor];
             let fact = checkpoint.facts[path][*index].clone();
+            if fact.review == FactReview::Supported
+                && fact.evidence_quote.as_ref().is_some_and(|quote| {
+                    parts.get(fact.source_chunk).is_some_and(|part| {
+                        quote.chars().count() >= 12 && part.text.contains(quote)
+                    })
+                })
+            {
+                checkpoint.fact_audit_cursor += 1;
+                if let Err(err) = save_checkpoint(&checkpoint_file, &checkpoint) {
+                    return WorkflowResult::Error(err);
+                }
+                continue;
+            }
             // Older v5 migrations assigned an entire accumulated file to the
             // extraction window that happened to trigger migration. If many
             // distinct facts share one such window, attribution is ambiguous.
@@ -1072,7 +1242,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                         index + 1
                     );
                     let context = format!(
-                        "DESTINATION: {path}\\nSOURCE WINDOW: {} (lines {}-{})\\n\\n=== FACT ===\\n{}\\n\\n=== ORIGINAL SOURCE ===\\n{}\\n",
+                        "DESTINATION: {path}\nSOURCE WINDOW: {} (lines {}-{})\n\n=== FACT ===\n{}\n\n=== ORIGINAL SOURCE ===\n{}\n",
                         fact.source_chunk + 1,
                         fact.start_line,
                         fact.end_line,
@@ -1116,7 +1286,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 return WorkflowResult::Error(err);
             }
         }
-        // Markdown is a projection of immutable extracted assertions. The
+        // JSON is the published projection of immutable extracted assertions. The
         // audit never rewrites it independently of the facts in facts.json.
         for (path, facts) in &checkpoint.facts {
             files.insert(path.clone(), render_source_facts(facts));
@@ -1176,112 +1346,5 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
 }
 
 #[cfg(test)]
-mod checkpoint_review_tests {
-    use super::*;
-
-    #[test]
-    fn legacy_checkpoint_without_warning_field_is_unverified() {
-        let checkpoint: ExtractionCheckpoint = serde_json::from_str(
-            r#"{"version":5,"source_fingerprint":"test","next_chunk":0,"files":{},"source_windows":{},"coverage_next_chunk":0,"audit":null}"#,
-        )
-        .unwrap();
-        assert!(checkpoint.unresolved_findings);
-    }
-
-    #[test]
-    fn explicitly_clean_checkpoint_stays_clean() {
-        let checkpoint: ExtractionCheckpoint = serde_json::from_str(
-            r#"{"version":5,"source_fingerprint":"test","next_chunk":0,"files":{},"source_windows":{},"coverage_next_chunk":0,"unresolved_findings":false,"audit":null}"#,
-        )
-        .unwrap();
-        assert!(!checkpoint.unresolved_findings);
-    }
-
-    #[test]
-    fn detects_legacy_internal_envelopes() {
-        assert!(internal_workflow_marker(
-            "=== CONSOLIDATED SPECIFICATION ==="
-        ));
-        assert!(!internal_workflow_marker("# General protocol rules"));
-    }
-}
-
-#[cfg(test)]
-mod structured_fact_tests {
-    use super::*;
-
-    #[test]
-    fn repeated_facts_are_deduplicated_with_first_source_retained() {
-        let mut facts = BTreeMap::new();
-        record_source_facts(&mut facts, "general.md", "Rule A.\n\nRule B.", 2, 10, 15);
-        record_source_facts(&mut facts, "general.md", "Rule A.\n\nRule C.", 3, 14, 20);
-        let entries = &facts["general.md"];
-        assert_eq!(entries.len(), 3);
-        assert_eq!(entries[0].source_chunk, 2);
-        assert_eq!(entries[0].start_line, 10);
-        assert_eq!(
-            render_source_facts(entries),
-            "Rule A.\n\nRule B.\n\nRule C."
-        );
-    }
-
-    #[test]
-    fn canonical_identity_requires_explicit_command_heading() {
-        assert_eq!(
-            canonical_message_path("messages/keepalive.md", "# Command A\n\nDescription"),
-            "messages/a.md"
-        );
-        assert_eq!(
-            canonical_message_path("messages/beat_frequency.md", "# Message B\n\nDescription"),
-            "messages/b.md"
-        );
-        assert_eq!(
-            canonical_message_path("messages/keepalive.md", "# Keepalive\n\nDescription"),
-            "messages/keepalive.md"
-        );
-        assert_eq!(
-            canonical_message_path("general.md", "# Command A"),
-            "general.md"
-        );
-    }
-
-    #[test]
-    fn fact_evidence_requires_verbatim_source_quote() {
-        let source = "The timeout is exactly 30 seconds in this mode.";
-        assert_eq!(
-            verified_fact_quote(
-                r#"{"evidence_quote":"timeout is exactly 30 seconds"}"#,
-                source,
-            )
-            .unwrap(),
-            "timeout is exactly 30 seconds"
-        );
-        assert!(
-            verified_fact_quote(
-                r#"{"evidence_quote":"timeout is exactly 60 seconds"}"#,
-                source,
-            )
-            .is_err()
-        );
-        assert!(verified_fact_quote(r#"{"evidence_quote":"timeout"}"#, source).is_err());
-        assert!(verified_fact_quote("UNSUPPORTED", source).is_err());
-    }
-
-    #[test]
-    fn legacy_fact_review_defaults_to_pending() {
-        let fact: SourceFact = serde_json::from_str(
-            r#"{"statement":"A","source_chunk":1,"start_line":2,"end_line":3}"#,
-        )
-        .unwrap();
-        assert_eq!(fact.review, FactReview::Pending);
-        assert_eq!(fact.evidence_quote, None);
-    }
-
-    #[test]
-    fn contradictory_facts_are_preserved_for_review() {
-        let mut facts = BTreeMap::new();
-        record_source_facts(&mut facts, "general.md", "Timeout is zero.", 0, 1, 3);
-        record_source_facts(&mut facts, "general.md", "Timeout is nonzero.", 1, 4, 6);
-        assert_eq!(facts["general.md"].len(), 2);
-    }
-}
+#[path = "../../tests/workflows/chunked_transform_internal_test.rs"]
+mod internal_tests;

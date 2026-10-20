@@ -61,6 +61,71 @@ pub fn strip_code_fences(input: &str) -> String {
     input.trim().to_string()
 }
 
+/// Match a model quotation against the source without changing punctuation,
+/// case, or word content. Whitespace runs may differ; return original bytes.
+pub fn resolve_source_quote(source: &str, quote: &str) -> Option<String> {
+    let quote = quote.trim();
+    if quote.chars().count() < 12 {
+        return None;
+    }
+    if source.contains(quote) {
+        return Some(quote.to_owned());
+    }
+
+    fn collapsed(text: &str) -> (String, Vec<(usize, usize)>) {
+        let mut normalized = String::new();
+        let mut offsets = Vec::new();
+        let mut whitespace_start = None;
+        let mut position = 0;
+        while position < text.len() {
+            let tail = &text[position..];
+            let entity = [
+                ("&lt;", '<'),
+                ("&gt;", '>'),
+                ("&amp;", '&'),
+                ("&#60;", '<'),
+                ("&#62;", '>'),
+                ("&#38;", '&'),
+                ("&#x3c;", '<'),
+                ("&#x3e;", '>'),
+                ("&#x26;", '&'),
+            ]
+            .into_iter()
+            .find(|(encoded, _)| tail.starts_with(encoded));
+            let (ch, length) = if let Some((encoded, decoded)) = entity {
+                (decoded, encoded.len())
+            } else {
+                let ch = tail.chars().next().expect("nonempty tail");
+                (ch, ch.len_utf8())
+            };
+            if ch.is_whitespace() {
+                if !normalized.is_empty() && whitespace_start.is_none() {
+                    whitespace_start = Some(position);
+                }
+            } else {
+                if let Some(start) = whitespace_start.take() {
+                    normalized.push(' ');
+                    offsets.push((start, position));
+                }
+                normalized.push(ch);
+                offsets.push((position, position + length));
+            }
+            position += length;
+        }
+        (normalized, offsets)
+    }
+
+    let (needle, _) = collapsed(quote);
+    if needle.trim().is_empty() {
+        return None;
+    }
+    let (haystack, offsets) = collapsed(source);
+    let position = haystack.find(&needle)?;
+    let start_char = haystack[..position].chars().count();
+    let end_char = start_char + needle.chars().count() - 1;
+    Some(source[offsets[start_char].0..offsets[end_char].1].to_owned())
+}
+
 pub fn strip_outer_markdown_fence(input: &str) -> String {
     let input = input.trim();
     let Some(rest) = input.strip_prefix("```") else {
