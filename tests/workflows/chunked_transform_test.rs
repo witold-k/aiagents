@@ -262,8 +262,8 @@ fn reviewed_fragments_accumulate_without_rewriting_existing_text() {
     let first = "# Shared rules\n\nA rule.";
     let next = "# Shared rules\n\nB rule.";
     let combined = append_reviewed_fragment(first, next);
-    assert!(combined.starts_with(first));
-    assert!(combined.contains(next));
+    assert_eq!(combined, "# Shared rules\n\nA rule.\n\nB rule.");
+    assert_eq!(combined.matches("# Shared rules").count(), 1);
     assert_eq!(append_reviewed_fragment(&combined, next), combined);
     assert_eq!(append_reviewed_fragment(&combined, "  "), combined);
 }
@@ -275,4 +275,53 @@ fn coverage_accepts_only_message_destinations() {
     assert!(!coverage_message_path("infrastructure.md"));
     assert!(!coverage_message_path("messages/NO_MESSAGE_DEFINITIONS.md"));
     assert!(!coverage_message_path("../messages/s.md"));
+}
+
+#[test]
+fn rejects_internal_llm_envelopes_in_extracted_markdown() {
+    for marker in [
+        "=== CONTEXT ===",
+        "=== EXISTING SPECIFICATION ===",
+        "=== NEW REVIEWED FRAGMENT ===",
+        "=== CONSOLIDATED SPECIFICATION ===",
+        "=== SOURCE ===",
+        "=== EVIDENCE ===",
+        "=== PROPOSED EDIT ===",
+    ] {
+        let response = format!(
+            "=== FILE: general.md ===\n# Rules\n{marker}\nIncorrect payload\n=== END FILE ==="
+        );
+        assert!(
+            parse_file_records(&response).is_err(),
+            "accepted leaked internal marker: {marker}"
+        );
+    }
+}
+
+#[test]
+fn consolidation_deduplicates_repeated_markdown_blocks() {
+    let existing = "# A\n\nField: uint8\n\nConstraint: 0..3";
+    let fragment = "# A\n\nField: uint8\n\nAdditional: uint16";
+    let merged = append_reviewed_fragment(existing, fragment);
+    assert_eq!(
+        merged,
+        "# A\n\nField: uint8\n\nConstraint: 0..3\n\nAdditional: uint16"
+    );
+}
+
+#[test]
+fn consolidation_preserves_conflicting_statements() {
+    let merged = append_reviewed_fragment(
+        "Interval: zero means disabled",
+        "Interval: zero means continuous",
+    );
+    assert!(merged.contains("Interval: zero means disabled"));
+    assert!(merged.contains("Interval: zero means continuous"));
+}
+
+#[test]
+fn consolidation_does_not_split_fenced_examples_on_blank_lines() {
+    let example = "Example:\n\n```text\nline 1\n\nline 2\n```";
+    let merged = append_reviewed_fragment(example, example);
+    assert_eq!(merged, example);
 }

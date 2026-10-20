@@ -26,6 +26,10 @@ const AUDIT_VERIFICATION_PASS: usize = MAX_AUDIT_PASSES;
 
 const CHECKPOINT_VERSION: u32 = 5;
 
+fn legacy_unresolved_findings() -> bool {
+    true
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct ExtractionCheckpoint {
     version: u32,
@@ -33,22 +37,123 @@ struct ExtractionCheckpoint {
     next_chunk: usize,
     files: BTreeMap<String, String>,
     #[serde(default)]
+    facts: BTreeMap<String, Vec<SourceFact>>,
+    #[serde(default)]
     source_windows: BTreeMap<String, Vec<usize>>,
     #[serde(default)]
     coverage_next_chunk: usize,
+    // Legacy v5 checkpoints did not track warnings. Treat them as unverified.
+    #[serde(default = "legacy_unresolved_findings")]
+    unresolved_findings: bool,
     #[serde(default)]
     audit: Option<AuditCheckpoint>,
+    #[serde(default)]
+    fact_audit_cursor: usize,
+    #[serde(default)]
+    fact_audit_version: u32,
+}
+
+/// One source-attributed, independently deduplicated specification assertion.
+/// A source window is evidence location, not a claim of verbatim verification.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct SourceFact {
+    statement: String,
+    source_chunk: usize,
+    start_line: usize,
+    end_line: usize,
+    #[serde(default)]
+    evidence_quote: Option<String>,
+    #[serde(default)]
+    review: FactReview,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum FactReview {
+    #[default]
+    Pending,
+    Supported,
+    Unresolved,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FactEvidence {
+    evidence_quote: String,
+}
+
+fn verified_fact_quote(response: &str, source: &str) -> Result<String, String> {
+    let normalized = strip_code_fences(response.trim());
+    let proof: FactEvidence = serde_json::from_str(&normalized)
+        .map_err(|err| format!("Invalid fact evidence JSON: {err}"))?;
+    let quote = proof.evidence_quote.trim();
+    if quote.chars().count() < 12 || !source.contains(quote) {
+        return Err("Fact quote is too short or absent from the attributed source window".into());
+    }
+    Ok(quote.to_owned())
+}
+
+fn record_source_facts(
+    facts: &mut BTreeMap<String, Vec<SourceFact>>,
+    path: &str,
+    fragment: &str,
+    chunk: usize,
+    start_line: usize,
+    end_line: usize,
+) {
+    let entries = facts.entry(path.to_owned()).or_default();
+    for statement in markdown_blocks(fragment) {
+        if !entries.iter().any(|fact| fact.statement == statement) {
+            entries.push(SourceFact {
+                statement,
+                source_chunk: chunk,
+                start_line,
+                end_line,
+                evidence_quote: None,
+                review: FactReview::Pending,
+            });
+        }
+    }
+}
+
+fn render_source_facts(facts: &[SourceFact]) -> String {
+    facts
+        .iter()
+        .map(|fact| fact.statement.as_str())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+/// Derive a canonical identity only from an explicit command/message token.
+/// An arbitrary descriptive filename is never treated as an identity.
+fn canonical_message_path(path: &str, fragment: &str) -> String {
+    if !path.starts_with("messages/") {
+        return path.to_owned();
+    }
+    for line in fragment.lines().take(12) {
+        let heading = line.trim().trim_start_matches('#').trim();
+        let lower = heading.to_ascii_lowercase();
+        for prefix in ["message ", "command ", "message: ", "command: "] {
+            if let Some(rest) = lower.strip_prefix(prefix) {
+                let token = rest
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("")
+                    .trim_matches(|c: char| !c.is_ascii_alphanumeric());
+                if token.len() == 1 && token.bytes().all(|b| b.is_ascii_alphanumeric()) {
+                    return format!("messages/{token}.md");
+                }
+            }
+        }
+    }
+    path.to_owned()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct AuditCheckpoint {
-    prompt_fingerprint: String,
+    // Only the legacy cursor bounds are needed while reading v5 checkpoints.
     pass: usize,
     file_index: usize,
-    evidence_index: usize,
-    changed: bool,
-    #[serde(default)]
-    masked_evidence: bool,
 }
 
 /// Stable fingerprint of the source and the prompt/configuration affecting extraction.
@@ -249,16 +354,64 @@ pub fn coverage_message_path(path: &str) -> bool {
     path.starts_with("messages/") && valid_spec_path(path)
 }
 
-/// Preserve every reviewed fragment without asking a model to reproduce the
-/// previous specification. Repeated identical fragments are skipped. Other
-/// overlap is kept explicitly for later source-grounded reconciliation.
+/// Split Markdown on blank lines outside fenced examples. A table or fenced
+/// example stays intact; no semantic interpretation of protocol data occurs.
+fn markdown_blocks(text: &str) -> Vec<String> {
+    let mut blocks = Vec::new();
+    let mut current = String::new();
+    let mut fence: Option<(char, usize)> = None;
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        let marker = trimmed.chars().next().filter(|c| *c == '`' || *c == '~');
+        if let Some(marker) = marker {
+            let count = trimmed.chars().take_while(|c| *c == marker).count();
+            if count >= 3 {
+                match fence {
+                    None => fence = Some((marker, count)),
+                    Some((open, length)) if open == marker && count >= length => fence = None,
+                    _ => {}
+                }
+            }
+        }
+        if fence.is_none() && line.trim().is_empty() {
+            if !current.trim().is_empty() {
+                blocks.push(current.trim().to_owned());
+                current.clear();
+            }
+        } else {
+            if !current.is_empty() {
+                current.push('\n');
+            }
+            current.push_str(line);
+        }
+    }
+    if !current.trim().is_empty() {
+        blocks.push(current.trim().to_owned());
+    }
+    blocks
+}
+
+/// Deterministically consolidate identical reviewed Markdown blocks. Different
+/// statements, including contradictions, remain available for the audit.
 pub fn append_reviewed_fragment(existing: &str, fragment: &str) -> String {
     let new_fragment = fragment.trim();
-    if new_fragment.is_empty() || existing.trim() == new_fragment || existing.contains(new_fragment)
-    {
+    if new_fragment.is_empty() || existing.trim() == new_fragment {
         return existing.to_owned();
     }
-    format!("{existing}\n\n---\n\n{new_fragment}")
+    let existing_blocks = markdown_blocks(existing);
+    let mut seen: std::collections::BTreeSet<String> = existing_blocks.into_iter().collect();
+    let mut additions = Vec::new();
+    for block in markdown_blocks(new_fragment) {
+        if !seen.insert(block.clone()) {
+            continue;
+        }
+        additions.push(block);
+    }
+    if additions.is_empty() {
+        existing.to_owned()
+    } else {
+        format!("{existing}\n\n{}", additions.join("\n\n"))
+    }
 }
 
 /// A merge may add reviewed facts, but must not silently rewrite existing facts.
@@ -318,6 +471,20 @@ pub fn apply_audit_edit(existing: &str, evidence: &str, response: &str) -> Resul
 
 const EMPTY_MARKER: &str = "NO_MESSAGE_DEFINITIONS";
 
+/// Internal workflow envelopes are never protocol facts.
+fn internal_workflow_marker(line: &str) -> bool {
+    matches!(
+        line.trim(),
+        "=== CONTEXT ==="
+            | "=== EXISTING SPECIFICATION ==="
+            | "=== NEW REVIEWED FRAGMENT ==="
+            | "=== CONSOLIDATED SPECIFICATION ==="
+            | "=== SOURCE ==="
+            | "=== EVIDENCE ==="
+            | "=== PROPOSED EDIT ==="
+    )
+}
+
 /// Parse the model's explicitly delimited Markdown file fragments. No source
 /// format parsing is involved: this is solely the controlled response format.
 pub fn parse_file_records(response: &str) -> Result<Vec<(String, String)>, String> {
@@ -370,6 +537,13 @@ pub fn parse_file_records(response: &str) -> Result<Vec<(String, String)>, Strin
             content.clear();
             fenced = false;
         } else if current_path.is_some() {
+            // Internal LLM prompt/merge envelopes must never become published
+            // protocol content. They indicate a contaminated model response.
+            if internal_workflow_marker(stripped) {
+                return Err(format!(
+                    "Model leaked internal workflow marker into specification: {stripped}"
+                ));
+            }
             // A marker inside a Markdown specification is not a control token.
             // Reject it instead of silently accepting a contradictory record.
             if matches!(stripped, EMPTY_MARKER | "=== NO_MESSAGE_DEFINITIONS ===") {
@@ -427,6 +601,9 @@ fn write_spec_directory(
     output: &Path,
     files: &BTreeMap<String, String>,
     source: &Path,
+    unverified: bool,
+    source_windows: &BTreeMap<String, Vec<usize>>,
+    facts: &BTreeMap<String, Vec<SourceFact>>,
 ) -> Result<(), String> {
     if output.exists() {
         return Err(format!(
@@ -454,7 +631,28 @@ fn write_spec_directory(
         for path in files.keys().filter(|p| p.starts_with("messages/")) {
             readme.push_str(&format!("- [{path}]({path})\n"));
         }
-        readme.push_str("\n## Verification status\n\nEach fragment was reviewed against its source window. Cross-window reconciliation and unresolved conflicts require further review.\n");
+        if unverified {
+            readme.push_str("\n## Verification status\n\n**UNVERIFIED DIAGNOSTIC DRAFT.** Coverage or audit findings remain unresolved. Do not use these specifications as an authoritative basis for implementation.\n");
+        } else {
+            readme.push_str("\n## Verification status\n\nNo unresolved findings were recorded by the workflow. Model review is not a proof of protocol correctness; independently verify against the source before implementation.\n");
+        }
+        readme.push_str("\n## Extraction provenance\n\nSource-window indices are 1-based and refer to the overlapping source windows used during extraction. They are not a substitute for exact source citations.\n\n");
+        for (path, indices) in source_windows {
+            let mut indices = indices.clone();
+            indices.sort_unstable();
+            indices.dedup();
+            let windows = indices
+                .iter()
+                .map(|i| (i + 1).to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            readme.push_str(&format!("- `{path}`: windows {windows}\n"));
+        }
+        readme.push_str("\n## Structured facts\n\nSee [facts.json](facts.json) for deduplicated assertions, source-window attribution, evidence_quote and review status (pending/supported/unresolved). Supported means a verbatim quote exists in the attributed window, not that the assertion is semantically proven. Historical checkpoint attribution may be unreliable.\n");
+        let fact_json = serde_json::to_vec_pretty(facts)
+            .map_err(|e| format!("Cannot serialize structured facts: {e}"))?;
+        fs::write(stage.join("facts.json"), fact_json)
+            .map_err(|e| format!("Cannot write facts.json: {e}"))?;
         fs::write(stage.join("README.md"), readme).map_err(|e| e.to_string())?;
         fs::rename(&stage, output).map_err(|e| format!("Cannot publish output: {e}"))
     })();
@@ -562,9 +760,13 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 source_fingerprint: fingerprint,
                 next_chunk: 0,
                 files: BTreeMap::new(),
+                facts: BTreeMap::new(),
                 source_windows: BTreeMap::new(),
                 coverage_next_chunk: 0,
+                unresolved_findings: false,
                 audit: None,
+                fact_audit_cursor: 0,
+                fact_audit_version: 0,
             },
             Err(err) => return WorkflowResult::Error(err),
         };
@@ -645,23 +847,38 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                     }
                 }
             };
-            for (path, fragment) in records {
+            for (model_path, fragment) in records {
+                let path = canonical_message_path(&model_path, &fragment);
+                if fragment.chars().count() > MAX_MERGE_CHARS {
+                    return WorkflowResult::Error(format!(
+                        "Extracted fragment for {path} exceeds {MAX_MERGE_CHARS} characters"
+                    ));
+                }
                 let source_windows = checkpoint.source_windows.entry(path.clone()).or_default();
                 if !source_windows.contains(&index) {
                     source_windows.push(index);
                 }
-                if let Some(existing) = files.get(&path) {
-                    println!("## [CHUNKED] MERGE {path}");
-                    let merged = append_reviewed_fragment(existing, &fragment);
-                    if merged.chars().count() > MAX_MERGE_CHARS {
-                        return WorkflowResult::Error(format!(
-                            "Cannot safely accumulate {path}: specification exceeds {MAX_MERGE_CHARS} characters"
-                        ));
-                    }
-                    files.insert(path, merged);
-                } else {
-                    files.insert(path, fragment);
+                // Facts are the canonical accumulation format. Large shared
+                // specifications no longer deadlock at a fixed Markdown size.
+                // Preserve legacy checkpoint content as facts on first update.
+                if !checkpoint.facts.contains_key(&path)
+                    && let Some(existing) = files.get(&path)
+                {
+                    record_source_facts(&mut checkpoint.facts, &path, existing, usize::MAX, 0, 0);
+                    checkpoint.unresolved_findings = true;
                 }
+                record_source_facts(
+                    &mut checkpoint.facts,
+                    &path,
+                    &fragment,
+                    index,
+                    part.start_line,
+                    part.end_line,
+                );
+                if files.contains_key(&path) {
+                    println!("## [CHUNKED] MERGE {path}");
+                }
+                files.insert(path.clone(), render_source_facts(&checkpoint.facts[&path]));
             }
             checkpoint.next_chunk = index + 1;
             checkpoint.files = files.clone();
@@ -740,24 +957,40 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                                     index + 1,
                                     parts.len()
                                 );
+                                checkpoint.unresolved_findings = true;
                                 Vec::new()
                             }
                         }
                     }
                 };
-                for (path, fragment) in records {
+                for (model_path, fragment) in records {
+                    let path = canonical_message_path(&model_path, &fragment);
                     if !coverage_message_path(&path) {
                         // Coverage is discovery-only. Non-message destinations
                         // must never modify general or infrastructure files,
                         // but must not trap resume on a deterministic model error.
                         println!("## [CHUNKED] COVERAGE IGNORE non-message path: {path}");
+                        checkpoint.unresolved_findings = true;
                         continue;
                     }
                     if files.contains_key(&path) {
                         // A known message is not a coverage discovery.
                         continue;
                     }
-                    files.insert(path.clone(), fragment);
+                    if fragment.chars().count() > MAX_MERGE_CHARS {
+                        return WorkflowResult::Error(format!(
+                            "Coverage fragment for {path} exceeds {MAX_MERGE_CHARS} characters"
+                        ));
+                    }
+                    record_source_facts(
+                        &mut checkpoint.facts,
+                        &path,
+                        &fragment,
+                        index,
+                        part.start_line,
+                        part.end_line,
+                    );
+                    files.insert(path.clone(), render_source_facts(&checkpoint.facts[&path]));
                     checkpoint
                         .source_windows
                         .entry(path)
@@ -779,397 +1012,133 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             "# General Protocol Rules\n\nNo shared rules were established from the source.".into()
         });
         files.entry("infrastructure.md".into()).or_insert_with(|| "# Infrastructure Contracts\n\nNo helper contracts were established from the source.".into());
-        // Audit the assembled knowledge, not just individual extraction drafts.
-        // Evidence is supplied in bounded windows; changes are reviewed again
-        // on subsequent passes. An unchanged pass is a fixed point.
-        let audit_prompt = format!(
-            "{requirements}\n\n{}",
-            WorkflowSteps::ChunkedTransformAudit.get_prompt()
-        );
-        let decision_prompt = format!(
-            "{requirements}\n\n{}",
-            WorkflowSteps::ChunkedTransformAuditDecide.get_prompt()
-        );
-        let audit_fingerprint = extraction_fingerprint("", &[&audit_prompt, &decision_prompt]);
-        if checkpoint
-            .audit
-            .as_ref()
-            .is_some_and(|audit| !audit.masked_evidence)
-        {
-            // Prior decisions were based on raw image payloads; invalidate only
-            // audit progress, retaining extraction results and their checkpoint.
+        // Review individual immutable facts against their attributed source windows.
+        // Fact audit v1 intentionally invalidates the old file-edit audit cursor.
+        // The extraction, coverage and source facts remain checkpointed.
+        if checkpoint.fact_audit_version != 1 {
+            checkpoint.fact_audit_version = 1;
+            checkpoint.fact_audit_cursor = 0;
+            if checkpoint.audit.is_some() {
+                checkpoint.unresolved_findings = true;
+            }
             checkpoint.audit = None;
-            println!("## [CHUNKED] RESET AUDIT: encoded image evidence is now masked");
-        }
-        if let Some(audit) = &checkpoint.audit {
-            if audit.prompt_fingerprint != audit_fingerprint {
-                return WorkflowResult::Error(
-                    "Audit prompts changed since checkpoint; cannot safely resume audit".into(),
-                );
-            }
-        } else {
-            checkpoint.files = files.clone();
-            checkpoint.audit = Some(AuditCheckpoint {
-                prompt_fingerprint: audit_fingerprint,
-                pass: 0,
-                file_index: 0,
-                evidence_index: 0,
-                changed: false,
-                masked_evidence: true,
-            });
+            println!("## [CHUNKED] RESET AUDIT: switching to source-grounded fact review");
             if let Err(err) = save_checkpoint(&checkpoint_file, &checkpoint) {
                 return WorkflowResult::Error(err);
             }
         }
-        let mut converged = false;
-        let mut unresolved_verification = false;
-        loop {
-            let audit = checkpoint
-                .audit
-                .as_ref()
-                .expect("audit initialized")
-                .clone();
-            if audit.pass > AUDIT_VERIFICATION_PASS {
-                break;
+        // Import legacy file bodies without inventing source provenance.
+        for (path, body) in &files {
+            if !checkpoint.facts.contains_key(path) {
+                record_source_facts(&mut checkpoint.facts, path, body, usize::MAX, 0, 0);
+                checkpoint.unresolved_findings = true;
             }
-            let paths: Vec<String> = files.keys().cloned().collect();
-            if audit.file_index == paths.len() {
-                if !audit.changed {
-                    converged = true;
-                    break;
-                }
-                let next_pass = audit.pass + 1;
-                if next_pass > AUDIT_VERIFICATION_PASS {
-                    break;
-                }
-                checkpoint.audit = Some(AuditCheckpoint {
-                    pass: next_pass,
-                    file_index: 0,
-                    evidence_index: 0,
-                    changed: false,
-                    ..audit
-                });
-                checkpoint.files = files.clone();
-                if let Err(err) = save_checkpoint(&checkpoint_file, &checkpoint) {
-                    return WorkflowResult::Error(err);
-                }
-                continue;
-            }
-            let path = &paths[audit.file_index];
-            // Rebuild evidence deterministically from checkpointed files. This
-            // also preserves revisions made earlier in the same audit pass.
-            let evidence: Vec<(String, String)> = if path == "infrastructure.md" {
-                files
-                    .iter()
-                    .filter(|(name, _)| name.starts_with("messages/") || *name == "general.md")
-                    .map(|(name, body)| (name.clone(), body.clone()))
-                    .collect()
+        }
+        let fact_keys: Vec<(String, usize)> = checkpoint
+            .facts
+            .iter()
+            .flat_map(|(path, facts)| (0..facts.len()).map(move |index| (path.clone(), index)))
+            .collect();
+        if checkpoint.fact_audit_cursor > fact_keys.len() {
+            return WorkflowResult::Error("Invalid fact audit checkpoint cursor".into());
+        }
+        while checkpoint.fact_audit_cursor < fact_keys.len() {
+            let (path, index) = &fact_keys[checkpoint.fact_audit_cursor];
+            let fact = checkpoint.facts[path][*index].clone();
+            // Older v5 migrations assigned an entire accumulated file to the
+            // extraction window that happened to trigger migration. If many
+            // distinct facts share one such window, attribution is ambiguous.
+            // Do not spend one LLM call per fact on that unreliable premise.
+            let suspicious_legacy_batch = checkpoint.facts[path]
+                .iter()
+                .filter(|other| other.source_chunk == fact.source_chunk)
+                .count()
+                > 20;
+            let source = if suspicious_legacy_batch {
+                None
             } else {
-                // Each message is audited only against source windows that
-                // actually yielded a validated fragment for that message.
-                // Extraction already independently validates every source
-                // window, including windows that yield no message.
-                let indices: Vec<usize> = if path == "general.md" {
-                    // Shared rules can occur alongside any message definition.
-                    // Windows that yielded no protocol facts were already
-                    // independently validated during extraction.
-                    let mut indices: Vec<usize> = checkpoint
-                        .source_windows
-                        .values()
-                        .flat_map(|windows| windows.iter().copied())
-                        .collect();
-                    indices.sort_unstable();
-                    indices.dedup();
-                    indices
+                parts.get(fact.source_chunk).map(|part| part.text.as_str())
+            };
+            // A historical checkpoint can contain entire Markdown documents
+            // assigned to a single window. That is NOT trustworthy provenance.
+            let result = if let Some(source) = source {
+                if fact.statement.chars().count() > 4_000 || source.trim().is_empty() {
+                    Err("Oversized fact or empty source window".to_owned())
                 } else {
-                    checkpoint
-                        .source_windows
-                        .get(path)
-                        .cloned()
-                        .unwrap_or_default()
-                };
-                indices
-                    .into_iter()
-                    .filter_map(|i| {
-                        parts.get(i).map(|part| {
-                            (
-                                format!(
-                                    "source chunk {} lines {}-{}",
-                                    i + 1,
-                                    part.start_line,
-                                    part.end_line
-                                ),
-                                part.text.clone(),
-                            )
-                        })
-                    })
-                    .collect()
-            };
-            if audit.evidence_index > evidence.len() {
-                return WorkflowResult::Error(format!(
-                    "Invalid audit checkpoint evidence index for {path}"
-                ));
-            }
-            if audit.evidence_index == evidence.len() {
-                let state = checkpoint.audit.as_mut().expect("audit initialized");
-                state.file_index += 1;
-                state.evidence_index = 0;
-                if let Err(err) = save_checkpoint(&checkpoint_file, &checkpoint) {
-                    return WorkflowResult::Error(err);
-                }
-                continue;
-            }
-            if evidence[audit.evidence_index].1.trim().is_empty() {
-                checkpoint
-                    .audit
-                    .as_mut()
-                    .expect("audit initialized")
-                    .evidence_index += 1;
-                if let Err(err) = save_checkpoint(&checkpoint_file, &checkpoint) {
-                    return WorkflowResult::Error(err);
-                }
-                continue;
-            }
-            let (evidence_name, evidence_body) = &evidence[audit.evidence_index];
-            let existing = files.get(path).expect("audit path exists").clone();
-            let context = format!(
-                "DESTINATION: {path}\nAUDIT PASS: {}\nEVIDENCE: {evidence_name}\n\n=== EXISTING SPECIFICATION ===\n{existing}\n\n=== EVIDENCE ===\n{evidence_body}",
-                audit.pass + 1
-            );
-            if context.chars().count() > MAX_MERGE_CHARS {
-                return WorkflowResult::Error(format!(
-                    "Audit context exceeds {MAX_MERGE_CHARS} characters for {path} against {evidence_name}"
-                ));
-            }
-            println!(
-                "## [CHUNKED] AUDIT CHECK {}/{}: {path} against {evidence_name}",
-                audit.pass + 1,
-                MAX_AUDIT_PASSES
-            );
-            let decision = match self.llm_call.run_text_step_limited_with_temperature(
-                &decision_prompt,
-                &context,
-                32,
-                0.0,
-            ) {
-                Ok(text) => text,
-                Err(err) => return WorkflowResult::LlmCallResult(err),
-            };
-            let revise = match parse_audit_decision(&decision) {
-                Ok(revise) => revise,
-                Err(_) => {
-                    // A small model may echo the context or emit a FILE record
-                    // instead of the required decision. Retry once with a
-                    // minimal instruction; never silently treat this as UNCHANGED.
                     println!(
-                        "## [CHUNKED] AUDIT RETRY {}/{}: {path} against {evidence_name}",
-                        audit.pass + 1,
-                        MAX_AUDIT_PASSES
+                        "## [CHUNKED] FACT AUDIT {}/{}: {path} fact {}",
+                        checkpoint.fact_audit_cursor + 1,
+                        fact_keys.len(),
+                        index + 1
                     );
-                    let retry_prompt = "You are an audit decision classifier. Reply with exactly one token: UNCHANGED or REVISE. Do not echo the input, output Markdown, or produce FILE records. If the evidence is irrelevant or contains only encoded image data, reply UNCHANGED.";
-                    let retry_context = format!(
-                        "DESTINATION: {path}\nAUDIT PASS: {}\nEVIDENCE: {evidence_name}\n\n=== SPECIFICATION ===\n{existing}\n\n=== SOURCE EVIDENCE ===\n{evidence_body}\n\nOnly answer UNCHANGED or REVISE.",
-                        audit.pass + 1
+                    let context = format!(
+                        "DESTINATION: {path}\\nSOURCE WINDOW: {} (lines {}-{})\\n\\n=== FACT ===\\n{}\\n\\n=== ORIGINAL SOURCE ===\\n{}\\n",
+                        fact.source_chunk + 1,
+                        fact.start_line,
+                        fact.end_line,
+                        fact.statement,
+                        source
                     );
-                    let retried = match self.llm_call.run_text_step_limited_with_temperature(
-                        retry_prompt,
-                        &retry_context,
-                        32,
-                        0.0,
-                    ) {
-                        Ok(text) => text,
+                    let prompt = r#"Find a verbatim quotation in ORIGINAL SOURCE that directly supports the FACT. Return ONLY JSON: {"evidence_quote":"exact source substring at least 12 characters"}. If there is no supporting quotation, return exactly UNSUPPORTED. Do not invent quotes or rewrite facts."#;
+                    match self
+                        .llm_call
+                        .run_text_step_limited_with_temperature(prompt, &context, 512, 0.0)
+                    {
+                        Ok(answer) if answer.trim() == "UNSUPPORTED" => {
+                            Err("Model did not find supporting source evidence".to_owned())
+                        }
+                        Ok(answer) => verified_fact_quote(&answer, source),
                         Err(err) => return WorkflowResult::LlmCallResult(err),
-                    };
-                    match parse_audit_decision(&retried) {
-                        Ok(revise) => revise,
-                        Err(_) => {
-                            return WorkflowResult::Error(format!(
-                                "Invalid audit decision after one retry for {path} against {evidence_name}; first response: {:?}; retry response: {:?}",
-                                decision.chars().take(160).collect::<String>(),
-                                retried.chars().take(160).collect::<String>()
-                            ));
-                        }
                     }
                 }
+            } else {
+                Err("Missing, ambiguous legacy, or unattributed original source window".to_owned())
             };
-            if revise && audit.pass == AUDIT_VERIFICATION_PASS {
-                // The final pass is read-only. Preserve the unresolved finding
-                // and continue so a complete diagnostic draft can be written.
-                println!(
-                    "## [CHUNKED] VERIFICATION WARNING: unresolved correction for {path} against {evidence_name}; no change applied"
-                );
-                unresolved_verification = true;
-                checkpoint.files = files.clone();
-                checkpoint
-                    .audit
-                    .as_mut()
-                    .expect("audit initialized")
-                    .evidence_index += 1;
-                if let Err(err) = save_checkpoint(&checkpoint_file, &checkpoint) {
-                    return WorkflowResult::Error(err);
+            let current = &mut checkpoint.facts.get_mut(path).expect("fact path exists")[*index];
+            match result {
+                Ok(quote) => {
+                    current.evidence_quote = Some(quote);
+                    current.review = FactReview::Supported;
                 }
-                continue;
-            }
-            if revise {
-                println!(
-                    "## [CHUNKED] AUDIT REVISE {}/{}: {path} against {evidence_name}",
-                    audit.pass + 1,
-                    MAX_AUDIT_PASSES
-                );
-                let revised = match self.llm_call.run_text_step_limited_with_temperature(
-                    &audit_prompt,
-                    &context,
-                    MAX_TOKENS,
-                    0.1,
-                ) {
-                    Ok(text) => text,
-                    Err(err) => return WorkflowResult::LlmCallResult(err),
-                };
-                let mut accepted_edit = revised.clone();
-                let candidate = match apply_audit_edit(&existing, evidence_body, &revised) {
-                    Ok(candidate) => candidate,
-                    Err(first_err) => {
-                        println!(
-                            "## [CHUNKED] AUDIT EDIT RETRY {}/{}: {path} against {evidence_name}",
-                            audit.pass + 1,
-                            MAX_AUDIT_PASSES
-                        );
-                        let retry_prompt = "Produce ONLY a JSON object with string fields evidence_quote, old_text, new_text. evidence_quote must be a verbatim source substring at least 12 characters long; old_text must be an exact unique substring of the existing specification. Return no Markdown fences or commentary. If no supported change is possible, reply exactly UNCHANGED.";
-                        let retry = match self.llm_call.run_text_step_limited_with_temperature(
-                            retry_prompt,
-                            &context,
-                            MAX_TOKENS,
-                            0.0,
-                        ) {
-                            Ok(text) => text,
-                            Err(err) => return WorkflowResult::LlmCallResult(err),
-                        };
-                        if retry.trim() == "UNCHANGED" {
-                            println!(
-                                "## [CHUNKED] AUDIT SKIP: no supported edit for {path} against {evidence_name}"
-                            );
-                            existing.clone()
-                        } else {
-                            match apply_audit_edit(&existing, evidence_body, &retry) {
-                                Ok(candidate) => {
-                                    accepted_edit = retry;
-                                    candidate
-                                }
-                                Err(retry_err) => {
-                                    // Never apply an edit that cannot be located
-                                    // unambiguously. Record the unresolved audit
-                                    // finding and continue checking other evidence
-                                    // instead of retrying the same checkpoint forever.
-                                    println!(
-                                        "## [CHUNKED] AUDIT WARNING: unresolved edit for {path} against {evidence_name}; first: {first_err}; retry: {retry_err}; no change applied"
-                                    );
-                                    existing.clone()
-                                }
-                            }
-                        }
-                    }
-                };
-                if candidate == existing {
-                    checkpoint.files = files.clone();
-                    checkpoint
-                        .audit
-                        .as_mut()
-                        .expect("audit initialized")
-                        .evidence_index += 1;
-                    if let Err(err) = save_checkpoint(&checkpoint_file, &checkpoint) {
-                        return WorkflowResult::Error(err);
-                    }
-                    continue;
-                }
-                let verify_prompt = "Independently verify the proposed minimal edit. The caller has already checked that old_text occurs exactly once in the destination and that the source quote is verbatim. Reply exactly APPROVE only if the source evidence supports replacing old_text with new_text without introducing unsupported claims. Otherwise reply exactly REJECT.";
-                // The edit was already validated by apply_audit_edit.
-                // Use its exact evidence quote, not the entire source window:
-                // some windows contain very large embedded data or long edits.
-                let normalized_edit = strip_code_fences(accepted_edit.trim());
-                let edit: AuditEdit = match serde_json::from_str(&normalized_edit) {
-                    Ok(edit) => edit,
-                    Err(err) => {
-                        return WorkflowResult::Error(format!(
-                            "Previously validated audit edit could not be parsed for {path}: {err}"
-                        ));
-                    }
-                };
-                let verify_context = format!(
-                    "DESTINATION: {path}\nEVIDENCE: {evidence_name}\n\n=== VERBATIM SOURCE QUOTE ===\n{}\n\n=== OLD TEXT ===\n{}\n\n=== NEW TEXT ===\n{}",
-                    edit.evidence_quote, edit.old_text, edit.new_text
-                );
-                if verify_context.chars().count() > MAX_MERGE_CHARS {
-                    // A valid but oversized edit is not safe to send to the
-                    // verifier. Keep the original and advance with a warning.
+                Err(reason) => {
                     println!(
-                        "## [CHUNKED] AUDIT WARNING: verification edit exceeds {MAX_MERGE_CHARS} characters for {path} against {evidence_name}; no change applied"
+                        "## [CHUNKED] FACT WARNING: {path} fact {}: {reason}",
+                        index + 1
                     );
-                    checkpoint.files = files.clone();
-                    checkpoint
-                        .audit
-                        .as_mut()
-                        .expect("audit initialized")
-                        .evidence_index += 1;
-                    if let Err(err) = save_checkpoint(&checkpoint_file, &checkpoint) {
-                        return WorkflowResult::Error(err);
-                    }
-                    continue;
+                    current.evidence_quote = None;
+                    current.review = FactReview::Unresolved;
+                    checkpoint.unresolved_findings = true;
                 }
-                let verdict = match self.llm_call.run_text_step_limited_with_temperature(
-                    verify_prompt,
-                    &verify_context,
-                    32,
-                    0.0,
-                ) {
-                    Ok(text) => text,
-                    Err(err) => return WorkflowResult::LlmCallResult(err),
-                };
-                if verdict.trim() != "APPROVE" {
-                    // A rejected proposal must never change the specification.
-                    // Record the unresolved finding and checkpoint this evidence
-                    // so a deterministic REJECT cannot trap resume indefinitely.
-                    println!(
-                        "## [CHUNKED] AUDIT WARNING: edit not independently approved for {path} against {evidence_name}: {:?}; no change applied",
-                        verdict.chars().take(160).collect::<String>()
-                    );
-                    checkpoint.files = files.clone();
-                    checkpoint
-                        .audit
-                        .as_mut()
-                        .expect("audit initialized")
-                        .evidence_index += 1;
-                    if let Err(err) = save_checkpoint(&checkpoint_file, &checkpoint) {
-                        return WorkflowResult::Error(err);
-                    }
-                    continue;
-                }
-                files.insert(path.clone(), candidate);
-                checkpoint
-                    .audit
-                    .as_mut()
-                    .expect("audit initialized")
-                    .changed = true;
             }
-            // Advance only after a complete decision (and any revision), with
-            // the resulting files and cursor saved together atomically.
-            checkpoint.files = files.clone();
-            checkpoint
-                .audit
-                .as_mut()
-                .expect("audit initialized")
-                .evidence_index += 1;
+            checkpoint.fact_audit_cursor += 1;
+            // Persist review outcome and cursor in the same atomic checkpoint.
             if let Err(err) = save_checkpoint(&checkpoint_file, &checkpoint) {
                 return WorkflowResult::Error(err);
             }
         }
-        if !converged {
-            return WorkflowResult::Error(format!(
-                "Specification audit did not converge after {MAX_AUDIT_PASSES} revision passes and one final verification pass; refusing unverified output"
-            ));
+        // Markdown is a projection of immutable extracted assertions. The
+        // audit never rewrites it independently of the facts in facts.json.
+        for (path, facts) in &checkpoint.facts {
+            files.insert(path.clone(), render_source_facts(facts));
+        }
+        checkpoint.files = files.clone();
+        if let Err(err) = save_checkpoint(&checkpoint_file, &checkpoint) {
+            return WorkflowResult::Error(err);
+        }
+        // Older checkpoints may already contain prompt envelopes from
+        // responses accepted before the parser was hardened.
+        for (path, body) in &files {
+            if let Some(marker) = body.lines().find(|line| internal_workflow_marker(line)) {
+                println!(
+                    "## [CHUNKED] OUTPUT WARNING: internal workflow marker in {path}: {}; diagnostic draft only",
+                    marker.trim()
+                );
+                checkpoint.unresolved_findings = true;
+            }
         }
         // Never publish an unverified draft at the normal destination.
         // Keep the checkpoint so the unresolved findings can be revisited.
-        let destination = if unresolved_verification {
+        let destination = if checkpoint.unresolved_findings {
             output.with_file_name(format!(
                 "{}-unverified",
                 output.file_name().unwrap_or_default().to_string_lossy()
@@ -1177,9 +1146,16 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         } else {
             output.clone()
         };
-        match write_spec_directory(&destination, &files, &input) {
+        match write_spec_directory(
+            &destination,
+            &files,
+            &input,
+            checkpoint.unresolved_findings,
+            &checkpoint.source_windows,
+            &checkpoint.facts,
+        ) {
             Ok(()) => {
-                if unresolved_verification {
+                if checkpoint.unresolved_findings {
                     println!(
                         "## [CHUNKED] WROTE UNVERIFIED DRAFT {}; unresolved verification findings remain; checkpoint retained",
                         destination.display()
@@ -1196,5 +1172,116 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             }
             Err(err) => WorkflowResult::Error(err),
         }
+    }
+}
+
+#[cfg(test)]
+mod checkpoint_review_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_checkpoint_without_warning_field_is_unverified() {
+        let checkpoint: ExtractionCheckpoint = serde_json::from_str(
+            r#"{"version":5,"source_fingerprint":"test","next_chunk":0,"files":{},"source_windows":{},"coverage_next_chunk":0,"audit":null}"#,
+        )
+        .unwrap();
+        assert!(checkpoint.unresolved_findings);
+    }
+
+    #[test]
+    fn explicitly_clean_checkpoint_stays_clean() {
+        let checkpoint: ExtractionCheckpoint = serde_json::from_str(
+            r#"{"version":5,"source_fingerprint":"test","next_chunk":0,"files":{},"source_windows":{},"coverage_next_chunk":0,"unresolved_findings":false,"audit":null}"#,
+        )
+        .unwrap();
+        assert!(!checkpoint.unresolved_findings);
+    }
+
+    #[test]
+    fn detects_legacy_internal_envelopes() {
+        assert!(internal_workflow_marker(
+            "=== CONSOLIDATED SPECIFICATION ==="
+        ));
+        assert!(!internal_workflow_marker("# General protocol rules"));
+    }
+}
+
+#[cfg(test)]
+mod structured_fact_tests {
+    use super::*;
+
+    #[test]
+    fn repeated_facts_are_deduplicated_with_first_source_retained() {
+        let mut facts = BTreeMap::new();
+        record_source_facts(&mut facts, "general.md", "Rule A.\n\nRule B.", 2, 10, 15);
+        record_source_facts(&mut facts, "general.md", "Rule A.\n\nRule C.", 3, 14, 20);
+        let entries = &facts["general.md"];
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].source_chunk, 2);
+        assert_eq!(entries[0].start_line, 10);
+        assert_eq!(
+            render_source_facts(entries),
+            "Rule A.\n\nRule B.\n\nRule C."
+        );
+    }
+
+    #[test]
+    fn canonical_identity_requires_explicit_command_heading() {
+        assert_eq!(
+            canonical_message_path("messages/keepalive.md", "# Command A\n\nDescription"),
+            "messages/a.md"
+        );
+        assert_eq!(
+            canonical_message_path("messages/beat_frequency.md", "# Message B\n\nDescription"),
+            "messages/b.md"
+        );
+        assert_eq!(
+            canonical_message_path("messages/keepalive.md", "# Keepalive\n\nDescription"),
+            "messages/keepalive.md"
+        );
+        assert_eq!(
+            canonical_message_path("general.md", "# Command A"),
+            "general.md"
+        );
+    }
+
+    #[test]
+    fn fact_evidence_requires_verbatim_source_quote() {
+        let source = "The timeout is exactly 30 seconds in this mode.";
+        assert_eq!(
+            verified_fact_quote(
+                r#"{"evidence_quote":"timeout is exactly 30 seconds"}"#,
+                source,
+            )
+            .unwrap(),
+            "timeout is exactly 30 seconds"
+        );
+        assert!(
+            verified_fact_quote(
+                r#"{"evidence_quote":"timeout is exactly 60 seconds"}"#,
+                source,
+            )
+            .is_err()
+        );
+        assert!(verified_fact_quote(r#"{"evidence_quote":"timeout"}"#, source).is_err());
+        assert!(verified_fact_quote("UNSUPPORTED", source).is_err());
+    }
+
+    #[test]
+    fn legacy_fact_review_defaults_to_pending() {
+        let fact: SourceFact = serde_json::from_str(
+            r#"{"statement":"A","source_chunk":1,"start_line":2,"end_line":3}"#,
+        )
+        .unwrap();
+        assert_eq!(fact.review, FactReview::Pending);
+        assert_eq!(fact.evidence_quote, None);
+    }
+
+    #[test]
+    fn contradictory_facts_are_preserved_for_review() {
+        let mut facts = BTreeMap::new();
+        record_source_facts(&mut facts, "general.md", "Timeout is zero.", 0, 1, 3);
+        record_source_facts(&mut facts, "general.md", "Timeout is nonzero.", 1, 4, 6);
+        assert_eq!(facts["general.md"].len(), 2);
     }
 }
