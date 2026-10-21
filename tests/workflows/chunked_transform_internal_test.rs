@@ -4,12 +4,9 @@ mod checkpoint_review_tests {
     use super::*;
 
     #[test]
-    fn legacy_checkpoint_without_warning_field_is_unverified() {
-        let checkpoint: ExtractionCheckpoint = serde_json::from_str(
-            r#"{"version":5,"source_fingerprint":"test","next_chunk":0,"files":{},"source_windows":{},"coverage_next_chunk":0,"audit":null}"#,
-        )
-        .unwrap();
-        assert!(checkpoint.unresolved_findings);
+    fn checkpoint_requires_explicit_warning_status() {
+        let missing_status = r#"{"version":6,"source_fingerprint":"test","next_chunk":0,"files":{},"source_windows":{},"coverage_next_chunk":0,"audit":null}"#;
+        assert!(serde_json::from_str::<ExtractionCheckpoint>(missing_status).is_err());
     }
 
     #[test]
@@ -81,7 +78,7 @@ mod coverage_json_tests {
         assert_eq!(records.len(), 1);
         assert_eq!(unsupported_quote_count(&records), 0);
         assert_eq!(
-            canonical_message_path(&records[0].0, &records[0].1[0].0),
+            canonical_message_path(&records[0].0, &records[0].1[0].0).unwrap(),
             "messages/s.md"
         );
     }
@@ -89,13 +86,73 @@ mod coverage_json_tests {
     #[test]
     fn arbitrary_descriptive_message_names_are_not_collapsed() {
         assert_eq!(
-            canonical_message_path("messages/antenna_test_mode.md", "Antenna test mode"),
+            canonical_message_path("messages/antenna_test_mode.md", "Antenna test mode").unwrap(),
             "messages/antenna_test_mode.md"
         );
         assert_eq!(
-            canonical_message_path("messages/w_message.md", "Platform location"),
+            canonical_message_path("messages/w_message.md", "Platform location").unwrap(),
             "messages/w.md"
         );
+    }
+}
+
+mod message_identity_tests {
+    use super::*;
+
+    #[test]
+    fn explicit_heading_conflict_is_rejected() {
+        assert!(canonical_message_path("messages/s_message.md", "# Message w").is_err());
+        assert!(canonical_message_path("messages/s.md", "# Message s\n# Command w").is_err());
+    }
+
+    #[test]
+    fn mentions_are_not_treated_as_identity_declarations() {
+        assert_eq!(
+            canonical_message_path(
+                "messages/s_message.md",
+                "Message w is mentioned in a status fact."
+            )
+            .unwrap(),
+            "messages/s.md"
+        );
+        assert_eq!(
+            canonical_message_path("messages/antenna_test_mode.md", "Message w is mentioned.")
+                .unwrap(),
+            "messages/antenna_test_mode.md"
+        );
+    }
+
+    #[test]
+    fn coverage_adds_new_facts_and_upgrades_existing_evidence() {
+        let mut facts = BTreeMap::new();
+        record_verified_facts(
+            &mut facts,
+            "messages/s.md",
+            vec![("Status is reported".into(), None)],
+            0,
+            1,
+            2,
+        );
+        record_verified_facts(
+            &mut facts,
+            "messages/s.md",
+            vec![
+                (
+                    "Status is reported".into(),
+                    Some("Status is reported by modem".into()),
+                ),
+                (
+                    "Additional field exists".into(),
+                    Some("Additional field is defined".into()),
+                ),
+            ],
+            1,
+            3,
+            4,
+        );
+        assert_eq!(facts["messages/s.md"].len(), 2);
+        assert_eq!(facts["messages/s.md"][0].review, FactReview::Supported);
+        assert_eq!(facts["messages/s.md"][1].source_chunk, 1);
     }
 }
 
@@ -257,19 +314,20 @@ mod structured_fact_tests {
     #[test]
     fn canonical_identity_requires_explicit_command_heading() {
         assert_eq!(
-            canonical_message_path("messages/keepalive.md", "# Command A\n\nDescription"),
+            canonical_message_path("messages/keepalive.md", "# Command A\n\nDescription").unwrap(),
             "messages/a.md"
         );
         assert_eq!(
-            canonical_message_path("messages/beat_frequency.md", "# Message B\n\nDescription"),
+            canonical_message_path("messages/beat_frequency.md", "# Message B\n\nDescription")
+                .unwrap(),
             "messages/b.md"
         );
         assert_eq!(
-            canonical_message_path("messages/keepalive.md", "# Keepalive\n\nDescription"),
+            canonical_message_path("messages/keepalive.md", "# Keepalive\n\nDescription").unwrap(),
             "messages/keepalive.md"
         );
         assert_eq!(
-            canonical_message_path("general.md", "# Command A"),
+            canonical_message_path("general.md", "# Command A").unwrap(),
             "general.md"
         );
     }

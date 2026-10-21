@@ -24,11 +24,7 @@ const MAX_MERGE_CHARS: usize = 20_000;
 const MAX_AUDIT_PASSES: usize = 2;
 const AUDIT_VERIFICATION_PASS: usize = MAX_AUDIT_PASSES;
 
-const CHECKPOINT_VERSION: u32 = 5;
-
-fn legacy_unresolved_findings() -> bool {
-    true
-}
+const CHECKPOINT_VERSION: u32 = 6;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ExtractionCheckpoint {
@@ -42,8 +38,6 @@ struct ExtractionCheckpoint {
     source_windows: BTreeMap<String, Vec<usize>>,
     #[serde(default)]
     coverage_next_chunk: usize,
-    // Legacy v5 checkpoints did not track warnings. Treat them as unverified.
-    #[serde(default = "legacy_unresolved_findings")]
     unresolved_findings: bool,
     #[serde(default)]
     audit: Option<AuditCheckpoint>,
@@ -199,6 +193,7 @@ fn record_verified_facts(
     }
 }
 
+#[cfg(test)]
 fn record_source_facts(
     facts: &mut BTreeMap<String, Vec<SourceFact>>,
     path: &str,
@@ -232,27 +227,32 @@ fn render_source_facts(facts: &[SourceFact]) -> String {
 
 /// Derive a canonical identity only from an explicit command/message token.
 /// An arbitrary descriptive filename is never treated as an identity.
-fn canonical_message_path(path: &str, fragment: &str) -> String {
+fn canonical_message_path(path: &str, fragment: &str) -> Result<String, String> {
     if !path.starts_with("messages/") {
-        return path.to_owned();
+        return Ok(path.to_owned());
     }
-    // Normalize only unambiguous single-letter aliases. Never infer a
-    // protocol identity from an arbitrary descriptive filename.
-    if let Some(slug) = path
+    let slug = path
         .strip_prefix("messages/")
         .and_then(|name| name.strip_suffix(".md"))
-    {
-        for suffix in ["_message", "_command"] {
-            if let Some(letter) = slug.strip_suffix(suffix)
-                && letter.len() == 1
-                && letter.bytes().all(|c| c.is_ascii_lowercase())
-            {
-                return format!("messages/{letter}.md");
-            }
-        }
-    }
+        .unwrap_or("");
+    // A filename is authoritative only for explicit one-letter message names.
+    let filename_identity = if slug.len() == 1 && slug.bytes().all(|b| b.is_ascii_lowercase()) {
+        Some(slug)
+    } else {
+        ["_message", "_command"].iter().find_map(|suffix| {
+            let letter = slug.strip_suffix(suffix)?;
+            (letter.len() == 1 && letter.bytes().all(|b| b.is_ascii_lowercase())).then_some(letter)
+        })
+    };
+    let mut heading_identity: Option<String> = None;
     for line in fragment.lines().take(12) {
-        let heading = line.trim().trim_start_matches('#').trim();
+        // Only an actual Markdown heading can declare an identity. A fact
+        // mentioning another command must never silently rename its file.
+        let trimmed = line.trim();
+        if !trimmed.starts_with('#') {
+            continue;
+        }
+        let heading = trimmed.trim_start_matches('#').trim();
         let lower = heading.to_ascii_lowercase();
         for prefix in ["message ", "command ", "message: ", "command: "] {
             if let Some(rest) = lower.strip_prefix(prefix) {
@@ -261,18 +261,31 @@ fn canonical_message_path(path: &str, fragment: &str) -> String {
                     .next()
                     .unwrap_or("")
                     .trim_matches(|c: char| !c.is_ascii_alphanumeric());
-                if token.len() == 1 && token.bytes().all(|b| b.is_ascii_alphanumeric()) {
-                    return format!("messages/{token}.md");
+                if token.len() == 1 && token.bytes().all(|b| b.is_ascii_lowercase()) {
+                    if heading_identity.as_deref().is_some_and(|old| old != token) {
+                        return Err(format!("Conflicting message headings in {path}"));
+                    }
+                    heading_identity = Some(token.to_owned());
                 }
+                break;
             }
         }
     }
-    path.to_owned()
+    if let (Some(filename), Some(heading)) = (filename_identity, heading_identity.as_deref())
+        && filename != heading
+    {
+        return Err(format!(
+            "Conflicting message identity in {path}: filename {filename}, heading {heading}"
+        ));
+    }
+    match filename_identity.or(heading_identity.as_deref()) {
+        Some(identity) => Ok(format!("messages/{identity}.md")),
+        None => Ok(path.to_owned()),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct AuditCheckpoint {
-    // Only the legacy cursor bounds are needed while reading v5 checkpoints.
     pass: usize,
     file_index: usize,
 }
@@ -295,7 +308,7 @@ fn extraction_fingerprint(source: &str, prompts: &[&str]) -> String {
 }
 
 fn checkpoint_path(output: &Path) -> PathBuf {
-    output.with_extension("v5.checkpoint.json")
+    output.with_extension("v6.checkpoint.json")
 }
 
 /// Atomically replace a complete checkpoint; never save a half-merged chunk.
@@ -900,7 +913,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             "{requirements}\n\n{}",
             WorkflowSteps::ChunkedTransformMerge.get_prompt()
         );
-        // Keep the v5 checkpoint path so completed OpenAMIP work can be reused.
+        // New checkpoint format; previous extraction checkpoints are never loaded.
         let checkpoint_output = output.with_file_name(
             output
                 .file_name()
@@ -1037,7 +1050,14 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                     .map(|(statement, _)| statement.as_str())
                     .collect::<Vec<_>>()
                     .join("\n\n");
-                let path = canonical_message_path(&model_path, &fragment);
+                let path = match canonical_message_path(&model_path, &fragment) {
+                    Ok(path) => path,
+                    Err(reason) => {
+                        println!("## [CHUNKED] IDENTITY WARNING: {reason}");
+                        checkpoint.unresolved_findings = true;
+                        model_path
+                    }
+                };
                 let source_windows = checkpoint.source_windows.entry(path.clone()).or_default();
                 if !source_windows.contains(&index) {
                     source_windows.push(index);
@@ -1140,17 +1160,20 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                         .map(|(statement, _)| statement.as_str())
                         .collect::<Vec<_>>()
                         .join("\n\n");
-                    let path = canonical_message_path(&model_path, &fragment);
+                    let path = match canonical_message_path(&model_path, &fragment) {
+                        Ok(path) => path,
+                        Err(reason) => {
+                            println!("## [CHUNKED] IDENTITY WARNING: {reason}");
+                            checkpoint.unresolved_findings = true;
+                            model_path
+                        }
+                    };
                     if !coverage_message_path(&path) {
                         // Coverage is discovery-only. Non-message destinations
                         // must never modify general or infrastructure files,
                         // but must not trap resume on a deterministic model error.
                         println!("## [CHUNKED] COVERAGE IGNORE non-message path: {path}");
                         checkpoint.unresolved_findings = true;
-                        continue;
-                    }
-                    if files.contains_key(&path) {
-                        // A known message is not a coverage discovery.
                         continue;
                     }
                     if fragment.chars().count() > MAX_MERGE_CHARS {
@@ -1169,17 +1192,11 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                         part.start_line,
                         part.end_line,
                     );
-                    checkpoint
-                        .source_windows
-                        .entry(path.clone())
-                        .or_default()
-                        .push(index);
+                    let windows = checkpoint.source_windows.entry(path.clone()).or_default();
+                    if !windows.contains(&index) {
+                        windows.push(index);
+                    }
                     files.insert(path.clone(), render_source_facts(&checkpoint.facts[&path]));
-                    checkpoint
-                        .source_windows
-                        .entry(path)
-                        .or_default()
-                        .push(index);
                 }
             }
             checkpoint.coverage_next_chunk = index + 1;
@@ -1211,13 +1228,6 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 return WorkflowResult::Error(err);
             }
         }
-        // Import legacy file bodies without inventing source provenance.
-        for (path, body) in &files {
-            if !checkpoint.facts.contains_key(path) {
-                record_source_facts(&mut checkpoint.facts, path, body, usize::MAX, 0, 0);
-                checkpoint.unresolved_findings = true;
-            }
-        }
         let fact_keys: Vec<(String, usize)> = checkpoint
             .facts
             .iter()
@@ -1242,22 +1252,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 }
                 continue;
             }
-            // Older v5 migrations assigned an entire accumulated file to the
-            // extraction window that happened to trigger migration. If many
-            // distinct facts share one such window, attribution is ambiguous.
-            // Do not spend one LLM call per fact on that unreliable premise.
-            let suspicious_legacy_batch = checkpoint.facts[path]
-                .iter()
-                .filter(|other| other.source_chunk == fact.source_chunk)
-                .count()
-                > 20;
-            let source = if suspicious_legacy_batch {
-                None
-            } else {
-                parts.get(fact.source_chunk).map(|part| part.text.as_str())
-            };
-            // A historical checkpoint can contain entire Markdown documents
-            // assigned to a single window. That is NOT trustworthy provenance.
+            let source = parts.get(fact.source_chunk).map(|part| part.text.as_str());
             let result = if let Some(source) = source {
                 if fact.statement.chars().count() > 4_000 || source.trim().is_empty() {
                     Err("Oversized fact or empty source window".to_owned())
@@ -1304,7 +1299,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                     }
                 }
             } else {
-                Err("Missing, ambiguous legacy, or unattributed original source window".to_owned())
+                Err("Missing or unattributed original source window".to_owned())
             };
             let current = &mut checkpoint.facts.get_mut(path).expect("fact path exists")[*index];
             match result {
