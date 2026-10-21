@@ -236,6 +236,21 @@ fn canonical_message_path(path: &str, fragment: &str) -> String {
     if !path.starts_with("messages/") {
         return path.to_owned();
     }
+    // Normalize only unambiguous single-letter aliases. Never infer a
+    // protocol identity from an arbitrary descriptive filename.
+    if let Some(slug) = path
+        .strip_prefix("messages/")
+        .and_then(|name| name.strip_suffix(".md"))
+    {
+        for suffix in ["_message", "_command"] {
+            if let Some(letter) = slug.strip_suffix(suffix)
+                && letter.len() == 1
+                && letter.bytes().all(|c| c.is_ascii_lowercase())
+            {
+                return format!("messages/{letter}.md");
+            }
+        }
+    }
     for line in fragment.lines().take(12) {
         let heading = line.trim().trim_start_matches('#').trim();
         let lower = heading.to_ascii_lowercase();
@@ -1050,7 +1065,8 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         // Only genuinely missing identities are admitted; existing specs are
         // never overwritten by the coverage pass.
         let coverage_prompt = format!(
-            "{requirements}\n\nReview the source excerpt independently for protocol-defined message identities missing from the provided existing message list. Output only FILE records for genuinely missing messages, using the same record syntax as extraction, or exactly NO_MESSAGE_DEFINITIONS. Do not emit files for identities already listed. Do not infer messages from base64, examples, or isolated fragments."
+            "{requirements}\n\n{}",
+            r#"Independently find protocol message identities missing from KNOWN MESSAGES. Return ONLY JSON: {"files":[{"path":"messages/<lowercase-slug>.md","facts":[{"statement":"one atomic assertion","source_anchor":"unique exact substring from SOURCE, at least 12 characters"}]}]}. Empty result: {"files":[]}. Do not emit general.md or infrastructure.md. Do not invent identities from examples or encoded data. Every source_anchor must be copied verbatim from SOURCE. Do not output Markdown FILE records."#
         );
         for (index, part) in parts
             .iter()
@@ -1088,14 +1104,12 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                     Ok(text) => text,
                     Err(err) => return WorkflowResult::LlmCallResult(err),
                 };
-                let records = match parse_file_records(&response) {
+                let records = match parse_structured_window(&response, &part.text) {
                     Ok(records) => records,
                     Err(first_error) => {
-                        // Coverage is an independent, best-effort discovery pass.
-                        // Retry malformed framing once before discarding it.
                         println!("## [CHUNKED] COVERAGE RETRY {}/{}", index + 1, parts.len());
                         let retry_prompt = format!(
-                            "{coverage_prompt}\n\nIMPORTANT: Every === FILE: path === record MUST end with a separate === END FILE === line before another FILE record starts. Output no explanatory text. If no new messages exist, output exactly NO_MESSAGE_DEFINITIONS."
+                            "{coverage_prompt}\n\nPrevious JSON response was invalid: {first_error}. Return a single valid JSON object only."
                         );
                         let retried = match self.llm_call.run_text_step_limited_with_temperature(
                             &retry_prompt,
@@ -1106,11 +1120,11 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                             Ok(text) => text,
                             Err(err) => return WorkflowResult::LlmCallResult(err),
                         };
-                        match parse_file_records(&retried) {
+                        match parse_structured_window(&retried, &part.text) {
                             Ok(records) => records,
                             Err(retry_error) => {
                                 println!(
-                                    "## [CHUNKED] COVERAGE WARNING {}/{}: malformed response after retry ({first_error}; {retry_error}); discovery for this window is incomplete",
+                                    "## [CHUNKED] COVERAGE WARNING {}/{}: invalid JSON after retry ({first_error}; {retry_error}); discovery incomplete",
                                     index + 1,
                                     parts.len()
                                 );
@@ -1120,7 +1134,12 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                         }
                     }
                 };
-                for (model_path, fragment) in records {
+                for (model_path, entries) in records {
+                    let fragment = entries
+                        .iter()
+                        .map(|(statement, _)| statement.as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n\n");
                     let path = canonical_message_path(&model_path, &fragment);
                     if !coverage_message_path(&path) {
                         // Coverage is discovery-only. Non-message destinations
@@ -1139,14 +1158,22 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                             "Coverage fragment for {path} exceeds {MAX_MERGE_CHARS} characters"
                         ));
                     }
-                    record_source_facts(
+                    if unsupported_quote_count(&vec![(path.clone(), entries.clone())]) > 0 {
+                        checkpoint.unresolved_findings = true;
+                    }
+                    record_verified_facts(
                         &mut checkpoint.facts,
                         &path,
-                        &fragment,
+                        entries,
                         index,
                         part.start_line,
                         part.end_line,
                     );
+                    checkpoint
+                        .source_windows
+                        .entry(path.clone())
+                        .or_default()
+                        .push(index);
                     files.insert(path.clone(), render_source_facts(&checkpoint.facts[&path]));
                     checkpoint
                         .source_windows
@@ -1235,6 +1262,21 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 if fact.statement.chars().count() > 4_000 || source.trim().is_empty() {
                     Err("Oversized fact or empty source window".to_owned())
                 } else {
+                    // Reuse original source bytes without another model call
+                    // when the fact itself is a verbatim, unique source span.
+                    let local_quote = resolve_source_quote(source, &fact.statement)
+                        .filter(|quote| source.match_indices(quote).nth(1).is_none());
+                    if let Some(quote) = local_quote {
+                        let current =
+                            &mut checkpoint.facts.get_mut(path).expect("fact path exists")[*index];
+                        current.evidence_quote = Some(quote);
+                        current.review = FactReview::Supported;
+                        checkpoint.fact_audit_cursor += 1;
+                        if let Err(err) = save_checkpoint(&checkpoint_file, &checkpoint) {
+                            return WorkflowResult::Error(err);
+                        }
+                        continue;
+                    }
                     println!(
                         "## [CHUNKED] FACT AUDIT {}/{}: {path} fact {}",
                         checkpoint.fact_audit_cursor + 1,
@@ -1316,6 +1358,60 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         } else {
             output.clone()
         };
+        // A completed unverified run retains its checkpoint. Re-running it
+        // must be idempotent, but never silently accept stale or edited output.
+        if destination.exists() {
+            let expected_facts = match serde_json::to_value(&checkpoint.facts) {
+                Ok(value) => value,
+                Err(err) => return WorkflowResult::Error(err.to_string()),
+            };
+            let published_facts = fs::read(destination.join("facts.json"))
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok());
+            let published_manifest = fs::read(destination.join("manifest.json"))
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok());
+            let expected_paths = files
+                .keys()
+                .map(|path| path.trim_end_matches(".md").to_owned() + ".json")
+                .collect::<Vec<_>>();
+            let matching_manifest = published_manifest.as_ref().is_some_and(|manifest| {
+                manifest.get("schema_version").and_then(|v| v.as_u64()) == Some(1)
+                    && manifest.get("source").and_then(|v| v.as_str())
+                        == Some(input.to_string_lossy().as_ref())
+                    && manifest.get("verification").and_then(|v| v.as_str())
+                        == Some(if checkpoint.unresolved_findings {
+                            "unverified"
+                        } else {
+                            "reviewed"
+                        })
+                    && manifest.get("facts_file").and_then(|v| v.as_str()) == Some("facts.json")
+                    && manifest
+                        .get("files")
+                        .and_then(|v| v.as_array())
+                        .is_some_and(|paths| {
+                            paths.iter().filter_map(|p| p.as_str()).collect::<Vec<_>>()
+                                == expected_paths
+                                    .iter()
+                                    .map(String::as_str)
+                                    .collect::<Vec<_>>()
+                        })
+                    && expected_paths
+                        .iter()
+                        .all(|path| destination.join(path).is_file())
+            });
+            if published_facts.as_ref() == Some(&expected_facts) && matching_manifest {
+                println!(
+                    "## [CHUNKED] OUTPUT ALREADY PUBLISHED {}",
+                    destination.display()
+                );
+                return WorkflowResult::Ok;
+            }
+            return WorkflowResult::Error(format!(
+                "Existing output differs from checkpoint or is incomplete: {}; preserved both output and checkpoint",
+                destination.display()
+            ));
+        }
         match write_spec_directory(
             &destination,
             &files,

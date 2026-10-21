@@ -70,6 +70,35 @@ mod structured_extraction_tests {
     }
 }
 
+mod coverage_json_tests {
+    use super::*;
+
+    #[test]
+    fn coverage_accepts_structured_message_facts() {
+        let source = "Message s reports antenna status to the modem.";
+        let response = r#"{"files":[{"path":"messages/s_message.md","facts":[{"statement":"Message s reports antenna status","source_anchor":"Message s reports antenna status"}]}]}"#;
+        let records = parse_structured_window(response, source).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(unsupported_quote_count(&records), 0);
+        assert_eq!(
+            canonical_message_path(&records[0].0, &records[0].1[0].0),
+            "messages/s.md"
+        );
+    }
+
+    #[test]
+    fn arbitrary_descriptive_message_names_are_not_collapsed() {
+        assert_eq!(
+            canonical_message_path("messages/antenna_test_mode.md", "Antenna test mode"),
+            "messages/antenna_test_mode.md"
+        );
+        assert_eq!(
+            canonical_message_path("messages/w_message.md", "Platform location"),
+            "messages/w.md"
+        );
+    }
+}
+
 mod partial_extraction_tests {
     use super::*;
 
