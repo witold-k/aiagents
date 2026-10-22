@@ -1,5 +1,12 @@
 # Chunked Transform — Extract File Fragments
 
+> **Legacy / inactive for `extract_message_tables` v6.** This prompt is not
+> called by the current JSON-based `chunked_transform` runtime. The active
+> extraction and coverage prompts are defined in
+> `src/workflows/chunked_transform.rs`. The historical instructions below
+> describe an earlier workflow and must not be treated as its current contract.
+
+
 Extract all relevant facts from this bounded source excerpt. Follow the
 task-level output file-record protocol exactly. The source format is unknown;
 do not assume it can be parsed as Markdown or that a line is short.

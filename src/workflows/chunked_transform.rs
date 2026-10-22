@@ -6,13 +6,12 @@
 use serde::{Deserialize, Serialize};
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     fs,
     path::{Path, PathBuf},
 };
 
 use crate::generated_tasks::Tasks;
-use crate::generated_workflowsteps::WorkflowSteps;
 use crate::runtimetools::llmcall::LlmCall;
 use crate::utils::stringutils::{resolve_source_quote, strip_code_fences};
 use crate::workflows::workflow::{Workflow, WorkflowResult};
@@ -20,6 +19,8 @@ use crate::workflows::workflow::{Workflow, WorkflowResult};
 const CHUNK_CHARS: usize = 4_000;
 pub const CHUNK_OVERLAP_CHARS: usize = 1_000;
 const MAX_TOKENS: u32 = 2_048;
+const MIN_RECOVERY_CHARS: usize = 700;
+const MAX_RECOVERY_WINDOWS: usize = 32;
 const MAX_MERGE_CHARS: usize = 20_000;
 const MAX_AUDIT_PASSES: usize = 2;
 const AUDIT_VERIFICATION_PASS: usize = MAX_AUDIT_PASSES;
@@ -45,6 +46,12 @@ struct ExtractionCheckpoint {
     fact_audit_cursor: usize,
     #[serde(default)]
     fact_audit_version: u32,
+    #[serde(default)]
+    recovery_chunk: Option<usize>,
+    #[serde(default)]
+    recovery_pending: Vec<String>,
+    #[serde(default)]
+    recovery_records: ExtractedRecords,
 }
 
 /// One source-attributed, independently deduplicated specification assertion.
@@ -174,6 +181,11 @@ fn record_verified_facts(
             {
                 existing.evidence_quote = Some(quote);
                 existing.review = FactReview::Supported;
+                // The accepted evidence belongs to this window, not to the
+                // earlier occurrence of the same unsupported assertion.
+                existing.source_chunk = chunk;
+                existing.start_line = start_line;
+                existing.end_line = end_line;
             }
             continue;
         }
@@ -335,6 +347,11 @@ fn load_checkpoint(
         || checkpoint.source_fingerprint != fingerprint
         || checkpoint.next_chunk > total_chunks
         || checkpoint.coverage_next_chunk > checkpoint.next_chunk
+        || checkpoint
+            .recovery_chunk
+            .is_some_and(|index| index != checkpoint.next_chunk || index >= total_chunks)
+        || (checkpoint.recovery_chunk.is_none()
+            && (!checkpoint.recovery_pending.is_empty() || !checkpoint.recovery_records.is_empty()))
         || checkpoint.files.keys().any(|path| !valid_spec_path(path))
         || checkpoint.source_windows.iter().any(|(path, indices)| {
             !valid_spec_path(path) || indices.iter().any(|index| *index >= total_chunks)
@@ -412,6 +429,29 @@ pub fn chunks(source: &str, limit: usize) -> Vec<Chunk> {
         start = end - overlap;
     }
 
+    result
+}
+
+/// Recovery-only windows use a smaller overlap than primary chunks to ensure
+/// subdivision actually reduces the amount of work and always makes progress.
+fn recovery_chunks(source: &str, limit: usize) -> Vec<String> {
+    let offsets: Vec<usize> = source
+        .char_indices()
+        .map(|(offset, _)| offset)
+        .chain(std::iter::once(source.len()))
+        .collect();
+    let total = offsets.len() - 1;
+    let overlap = (limit / 4).min(256);
+    let mut start = 0;
+    let mut result = Vec::new();
+    while start < total {
+        let end = (start + limit).min(total);
+        result.push(source[offsets[start]..offsets[end]].to_owned());
+        if end == total {
+            break;
+        }
+        start = end - overlap;
+    }
     result
 }
 
@@ -832,6 +872,10 @@ fn write_spec_directory(
     result
 }
 
+// The runtime prompt contracts are fingerprinted together with the source.
+const JSON_EXTRACT_PROMPT: &str = r#"Extract all source-supported protocol facts in concise, atomic statements. Return exactly one JSON object: {"files":[{"path":"general.md","facts":[{"statement":"short assertion","source_anchor":"unique verbatim excerpt"}]}]}. Allowed paths: general.md, infrastructure.md, messages/<lowercase-slug>.md. Empty: {"files":[]}. Keep each statement concise without losing technical details. Each source_anchor should be the SHORTEST uniquely identifying contiguous substring from SOURCE (prefer 12-64 characters); do not copy whole paragraphs or repeat the statement as an anchor unless necessary. Rust resolves the excerpt to original source bytes. If no exact unique anchor exists, omit that fact. No Markdown fences, commentary, or invented rules."#;
+const JSON_COVERAGE_PROMPT: &str = r#"Independently find protocol message identities missing from KNOWN MESSAGES. Return ONLY JSON: {"files":[{"path":"messages/<lowercase-slug>.md","facts":[{"statement":"one atomic assertion","source_anchor":"unique exact substring from SOURCE, at least 12 characters"}]}]}. Empty result: {"files":[]}. Do not emit general.md or infrastructure.md. Do not invent identities from examples or encoded data. Every source_anchor must be copied verbatim from SOURCE. Do not output Markdown FILE records."#;
+
 pub struct ChunkedTransformWorkflow<'a> {
     llm_call: LlmCall<'a>,
     projdir: &'a Path,
@@ -901,18 +945,6 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         // Each review receives the original source excerpt and the draft,
         // never the entire document or an unbounded collection of drafts.
         let requirements = Tasks::ExtractMessageTables.get_prompt();
-        let extract_prompt = format!(
-            "{requirements}\n\n{}",
-            WorkflowSteps::ChunkedTransformExtract.get_prompt()
-        );
-        let validate_prompt = format!(
-            "{requirements}\n\n{}",
-            WorkflowSteps::ChunkedTransformValidate.get_prompt()
-        );
-        let merge_prompt = format!(
-            "{requirements}\n\n{}",
-            WorkflowSteps::ChunkedTransformMerge.get_prompt()
-        );
         // New checkpoint format; previous extraction checkpoints are never loaded.
         let checkpoint_output = output.with_file_name(
             output
@@ -925,10 +957,10 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         let fingerprint = extraction_fingerprint(
             &source,
             &[
-                &extract_prompt,
-                &validate_prompt,
-                &merge_prompt,
-                "structured-extraction-v1",
+                requirements,
+                JSON_EXTRACT_PROMPT,
+                JSON_COVERAGE_PROMPT,
+                "structured-extraction-v2",
             ],
         );
         let mut checkpoint = match load_checkpoint(&checkpoint_file, &fingerprint, parts.len()) {
@@ -952,6 +984,9 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 audit: None,
                 fact_audit_cursor: 0,
                 fact_audit_version: 0,
+                recovery_chunk: None,
+                recovery_pending: Vec::new(),
+                recovery_records: Vec::new(),
             },
             Err(err) => return WorkflowResult::Error(err),
         };
@@ -988,53 +1023,137 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 CHUNK_OVERLAP_CHARS,
                 part.text
             );
-            let json_prompt = format!(
-                "{requirements}\n\n{}",
-                r#"Extract only atomic statements directly supported by this SOURCE window. Return exactly one JSON object with schema: {"files":[{"path":"general.md","facts":[{"statement":"one atomic assertion","source_anchor":"verbatim unique source substring, at least 12 characters"}]}]}. Allowed paths: general.md, infrastructure.md, messages/<lowercase-slug>.md. Empty result: {"files":[]}. source_anchor is a LOCATOR, not a paraphrase: copy a contiguous substring exactly as printed in SOURCE, including spaces, EBNF punctuation and HTML entities. Select an anchor that occurs exactly once in SOURCE and directly supports the statement. Rust will copy the original source bytes as evidence. If no exact anchor exists, omit the fact. No Markdown fences, commentary, unsupported assertions, or invented protocol rules."#
-            );
-            let response = match self.llm_call.run_text_step_limited_with_temperature(
-                &json_prompt,
-                &context,
-                MAX_TOKENS * 2,
-                0.0,
-            ) {
-                Ok(text) => text,
-                Err(err) => return WorkflowResult::LlmCallResult(err),
+            let json_prompt = format!("{requirements}\n\n{}", JSON_EXTRACT_PROMPT);
+            // Each source window is committed only after all recovery windows succeed.
+            // EOF is usually a truncated model response: retrying the identical
+            // deterministic request cannot make progress. Subdivide instead.
+            let mut pending = if checkpoint.recovery_chunk == Some(index) {
+                VecDeque::from(checkpoint.recovery_pending.clone())
+            } else {
+                VecDeque::from([part.text.clone()])
             };
-            // Retry only broken JSON or invalid paths. Unsupported anchors
-            // are retained for later audit without paying for another model call.
-            let records = match parse_structured_window(&response, &part.text) {
-                Ok(records) => records,
-                Err(reason) => {
-                    println!(
-                        "## [CHUNKED] EXTRACT RETRY {}/{}: {reason}; response preview: {:?}",
+            let mut records: ExtractedRecords = if checkpoint.recovery_chunk == Some(index) {
+                checkpoint.recovery_records.clone()
+            } else {
+                Vec::new()
+            };
+            let mut recovery_windows = 0_usize;
+            while let Some(window) = pending.pop_front() {
+                recovery_windows += 1;
+                if recovery_windows > MAX_RECOVERY_WINDOWS {
+                    return WorkflowResult::Error(format!(
+                        "Chunk {} exceeded {MAX_RECOVERY_WINDOWS} recovery windows",
+                        index + 1
+                    ));
+                }
+                let window_context = if window == part.text {
+                    context.clone()
+                } else {
+                    format!(
+                        "SOURCE: {}\nCHUNK: {}/{} (recovery window)\nLINES: {}-{}\n\n=== SOURCE ===\n{}",
+                        input.display(),
                         index + 1,
                         parts.len(),
-                        response.chars().take(200).collect::<String>()
+                        part.start_line,
+                        part.end_line,
+                        window
+                    )
+                };
+                let response = match self.llm_call.run_text_step_limited_with_temperature(
+                    &json_prompt,
+                    &window_context,
+                    MAX_TOKENS * 2,
+                    0.0,
+                ) {
+                    Ok(text) => text,
+                    Err(err) => return WorkflowResult::LlmCallResult(err),
+                };
+                let parsed = parse_structured_window(&response, &window);
+                if let Err(reason) = &parsed {
+                    let normalized = strip_code_fences(response.trim());
+                    let eof = serde_json::from_str::<ExtractedWindow>(&normalized)
+                        .is_err_and(|err| err.is_eof());
+                    println!(
+                        "## [CHUNKED] EXTRACT INVALID {}/{}: source_chars={}, response_chars={}, eof={}, recovery_window={}; {}",
+                        index + 1,
+                        parts.len(),
+                        window.chars().count(),
+                        response.chars().count(),
+                        eof,
+                        recovery_windows,
+                        reason
                     );
-                    let retry_prompt = format!(
-                        "{json_prompt}\n\nPrevious response was structurally invalid: {reason}. Return exactly one valid JSON object, with safe paths and the required fields."
-                    );
-                    let retried = match self.llm_call.run_text_step_limited_with_temperature(
-                        &retry_prompt,
-                        &context,
-                        MAX_TOKENS * 2,
-                        0.0,
-                    ) {
-                        Ok(text) => text,
-                        Err(err) => return WorkflowResult::LlmCallResult(err),
-                    };
-                    match parse_structured_window(&retried, &part.text) {
-                        Ok(records) => records,
-                        Err(retry_error) => {
+                }
+                let parsed = match parsed {
+                    Ok(found) => Ok(found),
+                    Err(reason) => {
+                        let is_eof = serde_json::from_str::<ExtractedWindow>(
+                            strip_code_fences(response.trim()).trim(),
+                        )
+                        .is_err_and(|err| err.is_eof());
+                        if is_eof {
+                            Err(reason)
+                        } else {
+                            println!(
+                                "## [CHUNKED] EXTRACT RETRY {}/{}: {reason}",
+                                index + 1,
+                                parts.len()
+                            );
+                            let retry_prompt = format!(
+                                "{json_prompt}\n\nPrevious response was invalid: {reason}. Return valid JSON only."
+                            );
+                            let retried =
+                                match self.llm_call.run_text_step_limited_with_temperature(
+                                    &retry_prompt,
+                                    &window_context,
+                                    MAX_TOKENS * 2,
+                                    0.0,
+                                ) {
+                                    Ok(text) => text,
+                                    Err(err) => return WorkflowResult::LlmCallResult(err),
+                                };
+                            parse_structured_window(&retried, &window)
+                        }
+                    }
+                };
+                match parsed {
+                    Ok(found) => records.extend(found),
+                    Err(reason) => {
+                        let length = window.chars().count();
+                        if length <= MIN_RECOVERY_CHARS {
                             return WorkflowResult::Error(format!(
-                                "Chunk {} structured extraction failed after retry: {retry_error}; first error: {reason}",
+                                "Chunk {} failed even at {length} characters: {reason}",
                                 index + 1
                             ));
                         }
+                        let limit = length.div_ceil(2).max(MIN_RECOVERY_CHARS);
+                        let children = recovery_chunks(&window, limit);
+                        if children.len() < 2 || children.iter().any(|child| child == &window) {
+                            return WorkflowResult::Error(format!(
+                                "Chunk {} could not be subdivided: {reason}",
+                                index + 1
+                            ));
+                        }
+                        println!(
+                            "## [CHUNKED] EXTRACT SPLIT {}/{}: {length} chars -> {} windows ({reason})",
+                            index + 1,
+                            parts.len(),
+                            children.len()
+                        );
+                        for child in children.into_iter().rev() {
+                            pending.push_front(child);
+                        }
                     }
                 }
-            };
+                // Persist progress after each successful subwindow or split. A
+                // restart never needs to replay already verified subwindows.
+                checkpoint.recovery_chunk = Some(index);
+                checkpoint.recovery_pending = pending.iter().cloned().collect();
+                checkpoint.recovery_records = records.clone();
+                if let Err(err) = save_checkpoint(&checkpoint_file, &checkpoint) {
+                    return WorkflowResult::Error(err);
+                }
+            }
             let unsupported = unsupported_quote_count(&records);
             if unsupported > 0 {
                 println!(
@@ -1055,7 +1174,10 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                     Err(reason) => {
                         println!("## [CHUNKED] IDENTITY WARNING: {reason}");
                         checkpoint.unresolved_findings = true;
-                        model_path
+                        // Do not publish facts under a disputed identity.
+                        // The source window and checkpoint remain available
+                        // for inspection and a corrected extraction.
+                        continue;
                     }
                 };
                 let source_windows = checkpoint.source_windows.entry(path.clone()).or_default();
@@ -1072,6 +1194,9 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 );
                 files.insert(path.clone(), render_source_facts(&checkpoint.facts[&path]));
             }
+            checkpoint.recovery_chunk = None;
+            checkpoint.recovery_pending.clear();
+            checkpoint.recovery_records.clear();
             checkpoint.next_chunk = index + 1;
             checkpoint.files = files.clone();
             if let Err(err) = save_checkpoint(&checkpoint_file, &checkpoint) {
@@ -1084,10 +1209,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         // NO_MESSAGE_DEFINITIONS during extraction. Persist progress per window.
         // Only genuinely missing identities are admitted; existing specs are
         // never overwritten by the coverage pass.
-        let coverage_prompt = format!(
-            "{requirements}\n\n{}",
-            r#"Independently find protocol message identities missing from KNOWN MESSAGES. Return ONLY JSON: {"files":[{"path":"messages/<lowercase-slug>.md","facts":[{"statement":"one atomic assertion","source_anchor":"unique exact substring from SOURCE, at least 12 characters"}]}]}. Empty result: {"files":[]}. Do not emit general.md or infrastructure.md. Do not invent identities from examples or encoded data. Every source_anchor must be copied verbatim from SOURCE. Do not output Markdown FILE records."#
-        );
+        let coverage_prompt = format!("{requirements}\n\n{}", JSON_COVERAGE_PROMPT);
         for (index, part) in parts
             .iter()
             .enumerate()
@@ -1165,7 +1287,9 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                         Err(reason) => {
                             println!("## [CHUNKED] IDENTITY WARNING: {reason}");
                             checkpoint.unresolved_findings = true;
-                            model_path
+                            // Coverage must not reintroduce facts rejected by
+                            // deterministic identity validation.
+                            continue;
                         }
                     };
                     if !coverage_message_path(&path) {

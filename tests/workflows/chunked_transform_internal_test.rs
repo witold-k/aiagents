@@ -19,6 +19,28 @@ mod checkpoint_review_tests {
     }
 
     #[test]
+    fn recovery_state_survives_checkpoint_roundtrip() {
+        let mut checkpoint: ExtractionCheckpoint = serde_json::from_str(
+            r#"{"version":6,"source_fingerprint":"test","next_chunk":23,"files":{},"unresolved_findings":false}"#,
+        )
+        .unwrap();
+        checkpoint.recovery_chunk = Some(23);
+        checkpoint.recovery_pending = vec!["next window".to_string()];
+        checkpoint.recovery_records = vec![(
+            "general.md".to_string(),
+            vec![(
+                "Previously verified.".to_string(),
+                Some("source quote here".to_string()),
+            )],
+        )];
+        let encoded = serde_json::to_string(&checkpoint).unwrap();
+        let resumed: ExtractionCheckpoint = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(resumed.recovery_chunk, Some(23));
+        assert_eq!(resumed.recovery_pending, vec!["next window"]);
+        assert_eq!(resumed.recovery_records, checkpoint.recovery_records);
+    }
+
+    #[test]
     fn detects_legacy_internal_envelopes() {
         assert!(internal_workflow_marker(
             "=== CONSOLIDATED SPECIFICATION ==="
@@ -152,6 +174,9 @@ mod message_identity_tests {
         );
         assert_eq!(facts["messages/s.md"].len(), 2);
         assert_eq!(facts["messages/s.md"][0].review, FactReview::Supported);
+        assert_eq!(facts["messages/s.md"][0].source_chunk, 1);
+        assert_eq!(facts["messages/s.md"][0].start_line, 3);
+        assert_eq!(facts["messages/s.md"][0].end_line, 4);
         assert_eq!(facts["messages/s.md"][1].source_chunk, 1);
     }
 }
@@ -370,5 +395,55 @@ mod structured_fact_tests {
         record_source_facts(&mut facts, "general.md", "Timeout is zero.", 0, 1, 3);
         record_source_facts(&mut facts, "general.md", "Timeout is nonzero.", 1, 4, 6);
         assert_eq!(facts["general.md"].len(), 2);
+    }
+}
+
+mod recovery_window_tests {
+    use super::*;
+
+    #[test]
+    fn recovery_windows_are_bounded_overlap_and_cover_all_characters() {
+        let source = "a".repeat(4000);
+        let windows = recovery_chunks(&source, 2000);
+        assert_eq!(windows.len(), 3);
+        assert!(windows.iter().all(|window| window.chars().count() <= 2000));
+        assert_eq!(windows[0].len(), 2000);
+        assert_eq!(windows[1].len(), 2000);
+        assert_eq!(windows[2].len(), 512);
+        assert_eq!(&windows[0][1744..], &windows[1][..256]);
+    }
+
+    #[test]
+    fn truncated_json_is_rejected_not_salvaged() {
+        let source = "The status message is emitted on every state change.";
+        let truncated = r#"{"files":[{"path":"general.md","facts":[{"statement":"Status changes"#;
+        assert!(parse_structured_window(truncated, source).is_err());
+        assert!(serde_json::from_str::<ExtractedWindow>(truncated).is_err_and(|err| err.is_eof()));
+    }
+    #[test]
+    fn unfinished_json_fence_is_recognized_as_eof() {
+        let source = "The status message is emitted on every state change.";
+        let response = "```json\n{\"files\":[{\"path\":\"general.md\",\"facts\":[";
+        let normalized = strip_code_fences(response);
+        assert!(normalized.starts_with("{"));
+        assert!(
+            serde_json::from_str::<ExtractedWindow>(&normalized).is_err_and(|err| err.is_eof())
+        );
+        assert!(parse_structured_window(response, source).is_err());
+    }
+
+    #[test]
+    fn recovery_windows_preserve_unicode_and_order() {
+        let source = "é漢🦀".repeat(800);
+        let windows = recovery_chunks(&source, 700);
+        assert!(windows.len() > 1);
+        assert!(windows.iter().all(|window| window.chars().count() <= 700));
+        let overlap = 175;
+        for pair in windows.windows(2) {
+            let end = pair[0].chars().rev().take(overlap).collect::<String>();
+            let end = end.chars().rev().collect::<String>();
+            let beginning = pair[1].chars().take(overlap).collect::<String>();
+            assert_eq!(end, beginning);
+        }
     }
 }

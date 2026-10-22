@@ -57,8 +57,18 @@ pub fn strip_code_fences(input: &str) -> String {
         return first.content.trim().to_string();
     }
 
-    // 3. Otherwise raw text
-    input.trim().to_string()
+    // 3. A truncated fenced response may have no closing fence. Strip only
+    // the opening fence; leave the JSON itself untouched for strict parsing.
+    let trimmed = input.trim();
+    if let Some(rest) = trimmed.strip_prefix("```")
+        && let Some((language, content)) = rest.split_once('\n')
+        && (language.trim().is_empty() || language.trim().eq_ignore_ascii_case("json"))
+    {
+        return content.trim().to_string();
+    }
+
+    // 4. Otherwise raw text
+    trimmed.to_string()
 }
 
 /// Match a model quotation against the source without changing punctuation,

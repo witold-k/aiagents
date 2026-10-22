@@ -1,5 +1,12 @@
 # Chunked Transform — Evidence-based Audit Decision
 
+> **Legacy / inactive for `extract_message_tables` v6.** This prompt is not
+> called by the current JSON-based `chunked_transform` runtime. The active
+> extraction and coverage prompts are defined in
+> `src/workflows/chunked_transform.rs`. The historical instructions below
+> describe an earlier workflow and must not be treated as its current contract.
+
+
 Compare the existing destination specification with the supplied bounded
 evidence. Determine whether it contains an actionable omission, unsupported
 claim, contradiction, or an unused/missing generic helper contract.

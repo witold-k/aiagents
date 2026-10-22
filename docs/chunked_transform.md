@@ -13,12 +13,10 @@ owns source slicing, destination validation, identity normalization,
 checkpointing, evidence-string verification and output publication.
 
 The original design merged whole Markdown files and repeatedly asked an LLM
-to rewrite and approve them. The OpenAMIP 55-window run exposed four failure
-modes: accumulated `general.md` exceeded the 20,000-character context
-limit; overlapping windows repeated assertions; a file-level audit repeatedly
-proposed rejected edits; and historical checkpoint material was attributed
-to source windows without proof. Raising the context limit or adding retries
-would not fix these architectural problems.
+to rewrite and approve them. Large-document testing exposed oversized
+intermediate results, repeated overlap facts, non-converging audit edits, and
+unreliable provenance from historical checkpoints. Raising context limits or
+adding retries would not address those architectural issues.
 
 The revised invariant is:
 
@@ -27,101 +25,48 @@ The revised invariant is:
 > by rewriting an entire destination file. A verbatim quote is necessary
 > evidence, not a proof that the claim is semantically correct.**
 
-## Architecture
+## Current pipeline
 
-Colors follow [BLT Execute Workflow](blt_execute.md):
-**blue = LLM**, **green = NON-LLM**. Labels repeat the distinction so the
-diagrams remain readable without color discrimination.
+The workflow uses bounded overlapping source windows (4,000 Unicode characters,
+1,000-character overlap) and masks opaque encoded payloads before extraction.
+The source document remains unchanged.
 
-```mermaid
-flowchart TD
-    I["NON-LLM: Read UTF-8 and mask opaque payloads"] --> W["NON-LLM: Create overlapping source windows"]
-    W --> E["LLM: EXTRACT source assertions"]
-    E --> V["LLM: VALIDATE extraction against window"]
-    V --> P["NON-LLM: Parse and reject malformed FILE records"]
-    P --> ID["NON-LLM: Canonicalize explicit message IDs"]
-    ID --> F["NON-LLM: Store distinct SourceFact records"]
-    F --> CP["NON-LLM: Atomic checkpoint"]
-    CP --> N{"NON-LLM: More windows?"}
-    N -->|yes| E
-    N -->|no| C["LLM: Independent missing-message coverage"]
-    C --> CC["NON-LLM: Accept only new message paths; checkpoint"]
-    CC --> A["LLM: Find evidence quote for one fact"]
-    A --> Q{"NON-LLM: Quote is verbatim in attributed source?"}
-    Q -->|yes| S["NON-LLM: Mark fact supported by quote"]
-    Q -->|no| U["NON-LLM: Mark fact unresolved"]
-    S --> R["NON-LLM: Save fact review and cursor"]
-    U --> R
-    R --> M{"NON-LLM: More facts?"}
-    M -->|yes| A
-    M -->|no| O["NON-LLM: Render Markdown from facts and export facts.json"]
-    O --> PUB["NON-LLM: Publish verified or -unverified diagnostic output"]
+1. **LLM — extract:** propose atomic statements and source anchors as a JSON
+   `files` array. Empty windows return `{"files":[]}`.
+2. **NON-LLM — validate:** parse JSON, validate destination paths, check source
+   anchors against the current window, deduplicate exact statements, and reject
+   conflicting explicit message identities. Unmatched evidence remains
+   unresolved; a malformed response may trigger one retry.
+3. **NON-LLM — checkpoint:** persist facts, source windows, and cursors.
+4. **LLM — coverage:** independently look for omitted message identities in
+   each source window, returning the same JSON structure. It may add message
+   facts but not general or infrastructure destinations.
+5. **NON-LLM / conditional LLM — audit:** already supported quotes are checked
+   against their attributed window without a model call. Other facts may need
+   one bounded LLM evidence request; Rust validates the returned quote.
+6. **NON-LLM — publish:** render Markdown projections and `facts.json`,
+   `manifest.json`, and an index into the output directory.
 
-    classDef llm fill:#dbeafe,stroke:#1d4ed8,color:#111827;
-    classDef nonllm fill:#dcfce7,stroke:#15803d,color:#111827;
-    class E,V,C,A llm;
-    class I,W,P,ID,F,CP,N,CC,Q,S,U,R,M,O,PUB nonllm;
-```
+**Deterministic operations take precedence over LLM calls.** A verbatim quote
+establishes the presence of source text, not the semantic truth of a claim.
+The workflow does not guarantee complete protocol extraction.
 
-A second diagram emphasizes the **data ownership** boundary:
+## JSON contract and identity handling
 
-```mermaid
-flowchart LR
-    SRC["NON-LLM: Original source window"] --> EX["LLM: Extract assertion"]
-    EX --> FACT["NON-LLM: SourceFact in checkpoint"]
-    SRC --> QUOTE["LLM: Select source quotation"]
-    QUOTE --> VERIFY["NON-LLM: Exact substring and minimum length"]
-    VERIFY --> FACT
-    FACT --> JSON["NON-LLM: facts.json with review status"]
-    FACT --> MD["NON-LLM: Render Markdown"]
-    classDef llm fill:#dbeafe,stroke:#1d4ed8,color:#111827;
-    classDef nonllm fill:#dcfce7,stroke:#15803d,color:#111827;
-    class EX,QUOTE llm;
-    class SRC,FACT,VERIFY,JSON,MD nonllm;
-```
+Runtime extraction and coverage prompts use JSON, not the historical
+`FILE / END FILE` Markdown framing. Each fact has `statement` and
+`source_anchor`; allowed paths are `general.md`, `infrastructure.md`,
+and `messages/<lowercase-slug>.md` (coverage: message paths only).
 
-## Source windows and extraction
+A message path can be canonicalized from an explicit single-character message
+or command identity. Descriptive filenames are not assumed to be identities.
+Conflicting explicit identities are logged and rejected from both extraction
+and coverage; the run is marked unverified. Rejected facts are not yet stored
+in a separate conflict report.
 
-Source text is split into windows of **4,000 Unicode characters** with
-**1,000-character overlap**. Each window records its source line range.
-Explicit image data URIs and very long encoded runs are masked while keeping
-character positions; the source file is not changed. Long single lines can
-produce multiple windows with the same line range.
-
-For every nonempty window the LLM performs EXTRACT followed by an independent
-VALIDATE request. The accepted response must contain `=== FILE: ... ===`
-records or `NO_MESSAGE_DEFINITIONS`. Rust rejects nested, truncated,
-unsafe or otherwise malformed records. The parser is a **framing validator**,
-not a semantic protocol validator.
-
-Allowed destinations are `general.md`, `infrastructure.md`, and
-`messages/<lowercase-slug>.md`. An explicit `Message X` or `Command X`
-heading can canonicalize a single-character protocol identifier to
-`messages/x.md`. Descriptive aliases without an explicit identifier are
-**not guessed**. Identity collisions and semantic aliases still need
-additional source-grounded normalization.
-
-## JSON extraction and unmatched evidence
-
-Extraction now requests a JSON `files` array containing atomic assertions and
-source quotations. The model must copy evidence from the source window without
-reconstructing grammar productions, punctuation or HTML entities. Rust accepts
-only quotations that match the source (allowing whitespace differences and
-supported HTML entity encodings) and stores the original source bytes.
-
-An unmatched quote is **not** proof. The workflow retries once with instructions
-to omit any assertion for which no verbatim quotation can be found. If both
-responses are structurally valid, supported assertions from either response are
-combined. Any assertion still lacking a matching quotation is retained as
-`unresolved`, with its source window and no `evidence_quote`; it is never
-silently marked supported. This also marks the run unverified and allows the
-next source window to proceed. Malformed JSON or unsafe paths still fail if
-both attempts cannot produce a structurally valid response.
-
-The existing v5 checkpoint and fingerprint remain compatible so already
-completed source windows do not need to be re-extracted. The later fact audit
-may establish missing evidence; unresolved output is published separately
-rather than presented as reviewed.
+Unmatched source anchors do not become verified evidence. Such facts are kept
+for audit without an evidence quote, and the run is marked unverified.
+Statements are deduplicated by exact text, not by semantic similarity.
 
 ## Persistent facts and projections
 
@@ -177,26 +122,14 @@ another section of the protocol does not contradict it. Consequently
 Manual review is still required before using the output to generate
 production protocol code.
 
-## Checkpoints, compatibility and resume
+## Checkpoints and resume
 
-The existing v5 checkpoint filename is retained:
-`<input-stem>_messages.v5.checkpoint.json`. It contains extraction progress,
-coverage progress, files, facts and fact-review cursor. Existing extraction
-results are preserved when upgrading from the old file-audit workflow; the
-obsolete file-audit cursor is discarded.
-
-Historical checkpoints may have missing or inaccurate per-fact provenance.
-A file without fact records is imported with an explicit **unattributed**
-source marker rather than fabricating a source window. Such facts are
-unresolved. Facts already migrated by earlier interim versions may have
-window-level attribution that is not reliable; the presence of a quote
-does not retroactively repair that historical uncertainty. Existing
-`unresolved_findings` flags remain sticky.
-
-An interrupted run resumes at the last checkpointed fact. Keep the checkpoint:
-deleting it would require repeating expensive LLM extraction and coverage.
-If the source or extraction prompts change, fingerprint validation rejects
-an incompatible resume.
+The current checkpoint format is **v6**, stored at
+`<input-stem>_messages.v6.checkpoint.json`. Older checkpoint versions are
+not migrated. The fingerprint covers the input source, task requirements, and
+actual JSON extraction and coverage prompts. Incompatible checkpoints are
+rejected rather than silently reused. The source-window and fact-audit cursors
+are persisted for restart. An unverified run retains its checkpoint.
 
 ## Output and safety boundary
 
@@ -204,7 +137,7 @@ Output is staged and published without overwriting an existing directory.
 The generated tree includes:
 
 ```text
-<input-stem>_messages[-unverified]/
+<input-stem>_messages-json[-unverified]/
 ├── README.md
 ├── facts.json
 ├── general.md

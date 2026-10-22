@@ -1,13 +1,13 @@
 # Extract Message Tables — Formal Specification
 
 Transform a potentially very large, unknown-format text document into a
-**directory of formal Markdown specifications** for a separate, future
+**directory of source-grounded JSON facts and Markdown specifications** for a separate, future
 code-generation task. Do not generate code, implementations, or build files.
 
 Input: one `.md` or `.txt` file.
-Output: `<input_stem>_messages/` beside the source, containing:
+Output: `<input_stem>_messages-json/` beside the source, containing:
 
-- `README.md`: index of message files, source identity, unresolved issues.
+- `README.md`: generated index of message files and unresolved issues.
 - `general.md`: shared protocol rules, framing, encodings, global constraints.
 - `infrastructure.md`: formal contracts for required helpers (e.g. bounded
   string parser, byte reader, checksum validator, buffer management).
@@ -32,40 +32,40 @@ bounded Unicode character windows. A definition can span windows or occur in
 distant places. Deduplicate overlap and consolidate fragments by stable message
 identity without discarding contradictory evidence.
 
-## Exchange format for each extraction/review response
+## Exchange format for extraction and coverage
 
-Return one or more Markdown file records, each using these exact delimiters:
+Return exactly one JSON object with a `files` array. Each file contains a
+safe destination `path` and an array of atomic `facts`. Each fact contains a
+`statement` and a verbatim `source_anchor` copied from the current source
+window. For example:
 
-=== FILE: general.md ===
-<Markdown content>
-=== END FILE ===
+```json
+{"files":[{"path":"messages/status.md","facts":[{"statement":"Status is transmitted periodically.","source_anchor":"Status is transmitted periodically."}]}]}
+```
 
-=== FILE: infrastructure.md ===
-<Markdown content>
-=== END FILE ===
+Allowed extraction destinations are `general.md`, `infrastructure.md`, and
+`messages/<lowercase-slug>.md`. Coverage discovers message identities only
+and may emit only `messages/<lowercase-slug>.md`. For an empty result return
+`{"files":[]}`. Do not return Markdown file delimiters, empty markers, or
+prose around the JSON. Never generate `README.md`; the workflow builds the
+index deterministically.
 
-=== FILE: messages/<stable-id>.md ===
-<Markdown content>
-=== END FILE ===
-
-Only these three path patterns are permitted. The stable ID is a lowercase
-ASCII slug (letters, digits, hyphen, underscore), derived from the documented
-message identifier/name, including version where needed. Reuse the same ID
-for the same message in different chunks. Do not emit README.md; it is generated
-from the final message index. Each record must be a self-contained, factual
-fragment with source line references and explicit continuation/uncertainty
-notes. Return exactly `NO_MESSAGE_DEFINITIONS` only if the excerpt has no
-relevant message, shared protocol, or infrastructure facts.
+Use only source-supported identities and statements. An anchor must be a
+contiguous exact substring of the supplied window, at least 12 characters
+long and occurring only once there. Rust checks the anchor, normalizes safe
+paths, deduplicates exact facts and validates explicit identity conflicts.
+These checks are deterministic; do not attempt to emulate them with prose.
+Do not infer a protocol message from encoded payloads, illustrations, or
+incidental mentions.
 
 ## Post-assembly verification
 
-The assembled knowledge must undergo iterative, independent checks against
+The assembled knowledge must undergo source-grounded checks against
 the original source excerpts and other generated specifications. Detect both
 omissions and unsupported inventions. Pay special attention to
 `infrastructure.md`: each generic helper must be needed by a concrete
 message or documented global rule. Identify missing necessary helpers and
-remove unjustified abstractions. Revisit corrections until a full audit pass
-makes no changes or the finite limit is reached. Do not claim successful
+remove unjustified abstractions. Flag unresolved evidence explicitly rather than inventing corrections. Do not claim successful
 verification if the audit fails to converge.
 
 Never emit source code, file-system commands, or conversational commentary.

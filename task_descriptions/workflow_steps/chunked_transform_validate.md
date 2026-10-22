@@ -1,5 +1,12 @@
 # Chunked Transform — Independent Source Review
 
+> **Legacy / inactive for `extract_message_tables` v6.** This prompt is not
+> called by the current JSON-based `chunked_transform` runtime. The active
+> extraction and coverage prompts are defined in
+> `src/workflows/chunked_transform.rs`. The historical instructions below
+> describe an earlier workflow and must not be treated as its current contract.
+
+
 Compare every extracted file fragment against the provided original excerpt.
 Return the **complete corrected set of file records**, in exactly the
 task-level FILE / END FILE exchange format.
