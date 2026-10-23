@@ -13,7 +13,9 @@ use std::{
 
 use crate::generated_tasks::Tasks;
 use crate::runtimetools::llmcall::LlmCall;
-use crate::utils::stringutils::{resolve_source_quote, strip_code_fences};
+use crate::utils::stringutils::{normalize_html_tables, resolve_source_quote, strip_code_fences};
+// Preserve the existing workflow API while the string processing lives in stringutils.
+pub use crate::utils::stringutils::{mask_embedded_data_uris, mask_opaque_lines};
 use crate::workflows::workflow::{Workflow, WorkflowResult};
 
 const CHUNK_CHARS: usize = 4_000;
@@ -25,7 +27,7 @@ const MAX_MERGE_CHARS: usize = 20_000;
 const MAX_AUDIT_PASSES: usize = 2;
 const AUDIT_VERIFICATION_PASS: usize = MAX_AUDIT_PASSES;
 
-const CHECKPOINT_VERSION: u32 = 6;
+const CHECKPOINT_VERSION: u32 = 10;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ExtractionCheckpoint {
@@ -91,6 +93,7 @@ fn verified_fact_quote(response: &str, source: &str) -> Result<String, String> {
         .ok_or_else(|| "Fact quote is too short or absent from the attributed source window".into())
 }
 
+#[cfg(test)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ExtractedFact {
@@ -101,6 +104,7 @@ struct ExtractedFact {
     evidence_quote: Option<String>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ExtractedFile {
@@ -108,6 +112,7 @@ struct ExtractedFile {
     facts: Vec<ExtractedFact>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ExtractedWindow {
@@ -115,6 +120,260 @@ struct ExtractedWindow {
 }
 
 type ExtractedRecords = Vec<(String, Vec<(String, Option<String>)>)>;
+
+#[derive(Debug)]
+struct EvidenceSegment {
+    id: String,
+    text: String,
+}
+
+fn evidence_segments(source: &str) -> Vec<EvidenceSegment> {
+    let mut segments = Vec::new();
+    for line in source.split_inclusive('\n') {
+        let mut rest = line;
+        while !rest.is_empty() {
+            let offsets: Vec<usize> = rest
+                .char_indices()
+                .map(|(i, _)| i)
+                .chain(std::iter::once(rest.len()))
+                .collect();
+            let limit = 320.min(offsets.len() - 1);
+            let mut end = offsets[limit];
+            if limit < offsets.len() - 1 {
+                // Prefer a complete table cell; fall back to a UTF-8-safe
+                // character boundary only for an oversized individual cell.
+                if let Some(cell_end) = rest[..end].rfind(" | ")
+                    && cell_end > 0
+                {
+                    end = cell_end + 3;
+                }
+            }
+            let text = &rest[..end];
+            if !text.trim().is_empty() {
+                segments.push(EvidenceSegment {
+                    id: format!("S{}", segments.len() + 1),
+                    text: text.to_owned(),
+                });
+            }
+            rest = &rest[end..];
+        }
+    }
+    segments
+}
+
+fn segmented_source(source: &str) -> String {
+    evidence_segments(source)
+        .iter()
+        .map(|segment| format!("[{}] {}\n", segment.id, segment.text.trim_end_matches('\n')))
+        .collect()
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SegmentedFact {
+    statement: String,
+    // Legacy model responses may use source_anchor for the locator.
+    // Only an actual local S-number resolves to evidence; arbitrary
+    // copied text never becomes an authoritative quote.
+    #[serde(alias = "source_anchor")]
+    segment_id: String,
+    // Some models repeat the file identity inside each fact. Accept this
+    // specific misplaced field, but validate it against the source below.
+    #[serde(default)]
+    identity_segment_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SegmentedFile {
+    path: String,
+    #[serde(default)]
+    identity_segment_id: Option<String>,
+    facts: Vec<SegmentedFact>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SegmentedWindow {
+    files: Vec<SegmentedFile>,
+}
+
+// Preserve the case of one-letter protocol types. OpenAMIP uses distinct
+// uppercase modem and lowercase antenna messages (e.g. X and x).
+// Legacy messages/x.md is accepted for uppercase X only when no lowercase
+// x declaration exists. In the ambiguous case, uppercase uses upper_x.md.
+fn declared_message_identity(path: &str, source: &str) -> bool {
+    let slug = path
+        .strip_prefix("messages/")
+        .and_then(|s| s.strip_suffix(".md"))
+        .unwrap_or("");
+    let (wanted, explicit_upper) = if let Some(letter) = slug.strip_prefix("upper_") {
+        (letter, true)
+    } else {
+        (slug, false)
+    };
+    if wanted.len() != 1 || !wanted.bytes().all(|b| b.is_ascii_lowercase()) {
+        return false;
+    }
+    let letter = wanted.as_bytes()[0];
+    let mut has_upper = false;
+    let mut has_lower = false;
+    for line in source.lines() {
+        let text = line.trim().trim_start_matches('#').trim();
+        let declared = [
+            "Type:", "Command:", "Message:", "Command ", "Message ", "Cmd ",
+        ]
+        .iter()
+        .find_map(|prefix| {
+            text.get(..prefix.len())
+                .filter(|head| head.eq_ignore_ascii_case(prefix))
+                .map(|_| text[prefix.len()..].trim_start())
+        })
+        .or_else(|| {
+            // Markdown tables emitted by PDF-to-text tools also declare
+            // types. Only a single-letter first cell is authoritative.
+            let rest = text.strip_prefix('|')?.trim_start();
+            Some(rest)
+        });
+        if let Some(value) = declared {
+            let token = value
+                .trim_start_matches(|c: char| c.is_whitespace() || c == '|')
+                .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                .next()
+                .unwrap_or("");
+            if token.len() == 1 && token.as_bytes()[0].to_ascii_lowercase() == letter {
+                has_upper |= token.as_bytes()[0].is_ascii_uppercase();
+                has_lower |= token.as_bytes()[0].is_ascii_lowercase();
+            }
+        }
+    }
+    if explicit_upper {
+        has_upper
+    } else {
+        has_lower || (has_upper && !has_lower)
+    }
+}
+
+#[cfg(test)]
+fn parse_segmented_window(response: &str, source: &str) -> Result<ExtractedRecords, String> {
+    parse_segmented_window_with_identity(response, source, source)
+}
+
+// The declaration may be in a different chunk from the supporting fact.
+// Identity comes only from deterministic declarations in the full normalized
+// document; fact evidence IDs remain local to the current source window.
+fn parse_segmented_window_with_identity(
+    response: &str,
+    source: &str,
+    identity_source: &str,
+) -> Result<ExtractedRecords, String> {
+    let parsed: SegmentedWindow =
+        serde_json::from_str(strip_code_fences(response.trim()).trim())
+            .map_err(|err| format!("Invalid segmented extraction JSON: {err}"))?;
+    let segments = evidence_segments(source);
+    let mut result = Vec::new();
+    for file in parsed.files {
+        if !valid_spec_path(&file.path) {
+            return Err(format!("Invalid specification path: {}", file.path));
+        }
+        // Normalize the common model spelling "type_g" only when the source
+        // explicitly declares Type: G. Never infer identity from the filename.
+        let mut path = file.path.clone();
+        if let Some(slug) = path
+            .strip_prefix("messages/type_")
+            .and_then(|name| name.strip_suffix(".md"))
+            && slug.len() == 1
+            && slug.bytes().all(|byte| byte.is_ascii_lowercase())
+        {
+            let candidate = format!("messages/{slug}.md");
+            let declared = declared_message_identity(&candidate, identity_source);
+            if declared {
+                path = candidate;
+            }
+        }
+        let mut identity_id = file.identity_segment_id.as_deref();
+        for fact in &file.facts {
+            if let Some(id) = fact.identity_segment_id.as_deref() {
+                if identity_id.is_some_and(|existing| existing != id) {
+                    return Err(format!(
+                        "Conflicting identity segment IDs for {}",
+                        file.path
+                    ));
+                }
+                identity_id = Some(id);
+            }
+        }
+        if path.starts_with("messages/")
+            && !declared_message_identity(&path, identity_source)
+            && !identity_id
+                .and_then(|id| segments.iter().find(|segment| segment.id == id))
+                .is_some_and(|segment| declared_message_identity(&path, &segment.text))
+        {
+            return Err(format!(
+                "Missing or invalid source-declared identity for {}",
+                file.path
+            ));
+        }
+        let mut entries = Vec::new();
+        for fact in file.facts {
+            let statement = fact.statement.trim();
+            if statement.is_empty() || statement.chars().count() > 4_000 {
+                return Err("Empty or oversized extracted fact".into());
+            }
+            let quote = segments
+                .iter()
+                .find(|segment| segment.id == fact.segment_id)
+                .map(|segment| segment.text.clone())
+                .filter(|text| !text.trim().is_empty());
+            entries.push((statement.to_owned(), quote));
+        }
+        result.push((path, entries));
+    }
+    Ok(result)
+}
+
+// Isolate semantically invalid file entries only when the outer JSON is
+// complete and valid. This avoids retrying an entire window because one
+// hallucinated identity was mixed with legitimate facts. The caller MUST
+// mark the resulting output unverified when any entry was discarded.
+fn parse_segmented_window_recoverable(
+    response: &str,
+    source: &str,
+    identity_source: &str,
+) -> Result<(ExtractedRecords, usize), String> {
+    if let Ok(records) = parse_segmented_window_with_identity(response, source, identity_source) {
+        return Ok((records, 0));
+    }
+    let normalized = strip_code_fences(response.trim());
+    let root: serde_json::Value = serde_json::from_str(normalized.trim())
+        .map_err(|err| format!("Invalid segmented extraction JSON: {err}"))?;
+    let object = root
+        .as_object()
+        .ok_or("Segmented extraction must be an object")?;
+    if object.len() != 1 || !object.contains_key("files") {
+        return Err("Segmented extraction must contain only files".into());
+    }
+    let files = object["files"]
+        .as_array()
+        .ok_or("Segmented extraction files must be an array")?;
+    let mut records = Vec::new();
+    let mut rejected = 0;
+    for file in files {
+        let isolated = serde_json::json!({"files": [file]});
+        match parse_segmented_window_with_identity(&isolated.to_string(), source, identity_source) {
+            Ok(found) => records.extend(found),
+            Err(reason) => {
+                rejected += 1;
+                println!("## [CHUNKED] REJECT FILE: {reason}");
+            }
+        }
+    }
+    // A complete JSON response with only rejected entries is still a
+    // completed extraction window, not a transport/JSON failure. The caller
+    // records the loss as unresolved and continues with the next window.
+    // Otherwise a hallucinated identity can trigger an expensive split tree.
+    Ok((records, rejected))
+}
 
 fn unsupported_quote_count(records: &ExtractedRecords) -> usize {
     records
@@ -124,6 +383,7 @@ fn unsupported_quote_count(records: &ExtractedRecords) -> usize {
         .count()
 }
 
+#[cfg(test)]
 fn parse_structured_window(response: &str, source: &str) -> Result<ExtractedRecords, String> {
     let normalized = strip_code_fences(response.trim());
     let parsed: ExtractedWindow = serde_json::from_str(normalized.trim())
@@ -162,6 +422,47 @@ fn parse_structured_window(response: &str, source: &str) -> Result<ExtractedReco
     Ok(result)
 }
 
+// A segment locator proves that source text exists, not that the model's
+// assertion is semantically supported. Always require the later fact audit.
+fn record_segmented_facts(
+    facts: &mut BTreeMap<String, Vec<SourceFact>>,
+    path: &str,
+    entries: Vec<(String, Option<String>)>,
+    chunk: usize,
+    start_line: usize,
+    end_line: usize,
+) {
+    let destination = facts.entry(path.to_owned()).or_default();
+    for (statement, quote) in entries {
+        if let Some(existing) = destination
+            .iter_mut()
+            .find(|fact| fact.statement == statement)
+        {
+            // A later source locator may replace a missing one, but never
+            // silently turn an unreviewed assertion into a supported fact.
+            if existing.evidence_quote.is_none()
+                && let Some(quote) = quote
+            {
+                existing.evidence_quote = Some(quote);
+                existing.source_chunk = chunk;
+                existing.start_line = start_line;
+                existing.end_line = end_line;
+                existing.review = FactReview::Pending;
+            }
+            continue;
+        }
+        destination.push(SourceFact {
+            statement,
+            source_chunk: chunk,
+            start_line,
+            end_line,
+            evidence_quote: quote,
+            review: FactReview::Pending,
+        });
+    }
+}
+
+#[cfg(test)]
 fn record_verified_facts(
     facts: &mut BTreeMap<String, Vec<SourceFact>>,
     path: &str,
@@ -320,7 +621,7 @@ fn extraction_fingerprint(source: &str, prompts: &[&str]) -> String {
 }
 
 fn checkpoint_path(output: &Path) -> PathBuf {
-    output.with_extension("v6.checkpoint.json")
+    output.with_extension("v10.checkpoint.json")
 }
 
 /// Atomically replace a complete checkpoint; never save a half-merged chunk.
@@ -452,74 +753,6 @@ fn recovery_chunks(source: &str, limit: usize) -> Vec<String> {
         }
         start = end - overlap;
     }
-    result
-}
-
-/// Mask long encoded runs in Markdown data URIs, without interpreting the
-/// protocol source. Preserve newlines so source line references remain valid.
-/// This only targets explicit data URIs, never arbitrary base64-looking fields.
-pub fn mask_embedded_data_uris(text: &str) -> String {
-    let mut result = String::with_capacity(text.len().min(8_192));
-    let mut rest = text;
-    while let Some(start) = rest.find("data:image/") {
-        result.push_str(&rest[..start]);
-        let candidate = &rest[start..];
-        let Some(marker) = candidate.find(";base64,") else {
-            result.push_str("data:image/");
-            rest = &candidate["data:image/".len()..];
-            continue;
-        };
-        if marker > 100 || candidate[..marker].contains(['\n', '\r', ' ', '"', '\'']) {
-            result.push_str("data:image/");
-            rest = &candidate["data:image/".len()..];
-            continue;
-        }
-        let payload_start = marker + ";base64,".len();
-        let bytes = candidate.as_bytes();
-        let mut end = payload_start;
-        while end < bytes.len()
-            && (bytes[end].is_ascii_alphanumeric()
-                || matches!(bytes[end], b'+' | b'/' | b'=' | b'_' | b'-'))
-        {
-            end += 1;
-        }
-        if end - payload_start < 128 {
-            result.push_str(&candidate[..end]);
-        } else {
-            result.push_str(&candidate[..payload_start]);
-            for byte in &bytes[payload_start..end] {
-                result.push(if *byte == b'\n' { '\n' } else { ' ' });
-            }
-        }
-        rest = &candidate[end..];
-    }
-    result.push_str(rest);
-    result
-}
-
-/// Remove opaque spans from model evidence while preserving character and line
-/// positions. This is deliberately conservative: only very long lines with
-/// almost no word separators are considered encoded data.
-pub fn mask_opaque_lines(source: &str) -> String {
-    let mut result = String::with_capacity(source.len());
-    let mut run = String::new();
-    let flush = |run: &mut String, output: &mut String| {
-        if run.chars().count() >= 512 {
-            output.extend(std::iter::repeat_n(' ', run.chars().count()));
-        } else {
-            output.push_str(run);
-        }
-        run.clear();
-    };
-    for character in source.chars() {
-        if character.is_ascii_alphanumeric() || matches!(character, '+' | '/' | '=' | '_' | '-') {
-            run.push(character);
-        } else {
-            flush(&mut run, &mut result);
-            result.push(character);
-        }
-    }
-    flush(&mut run, &mut result);
     result
 }
 
@@ -873,8 +1106,8 @@ fn write_spec_directory(
 }
 
 // The runtime prompt contracts are fingerprinted together with the source.
-const JSON_EXTRACT_PROMPT: &str = r#"Extract all source-supported protocol facts in concise, atomic statements. Return exactly one JSON object: {"files":[{"path":"general.md","facts":[{"statement":"short assertion","source_anchor":"unique verbatim excerpt"}]}]}. Allowed paths: general.md, infrastructure.md, messages/<lowercase-slug>.md. Empty: {"files":[]}. Keep each statement concise without losing technical details. Each source_anchor should be the SHORTEST uniquely identifying contiguous substring from SOURCE (prefer 12-64 characters); do not copy whole paragraphs or repeat the statement as an anchor unless necessary. Rust resolves the excerpt to original source bytes. If no exact unique anchor exists, omit that fact. No Markdown fences, commentary, or invented rules."#;
-const JSON_COVERAGE_PROMPT: &str = r#"Independently find protocol message identities missing from KNOWN MESSAGES. Return ONLY JSON: {"files":[{"path":"messages/<lowercase-slug>.md","facts":[{"statement":"one atomic assertion","source_anchor":"unique exact substring from SOURCE, at least 12 characters"}]}]}. Empty result: {"files":[]}. Do not emit general.md or infrastructure.md. Do not invent identities from examples or encoded data. Every source_anchor must be copied verbatim from SOURCE. Do not output Markdown FILE records."#;
+const JSON_EXTRACT_PROMPT: &str = r#"Extract concise atomic protocol facts from numbered SOURCE segments. Return exactly one JSON object: {"files":[{"path":"general.md","facts":[{"statement":"short assertion","segment_id":"S1"}]}]}. Allowed paths: general.md, infrastructure.md, messages/<lowercase-slug>.md. For a messages/ file, include "identity_segment_id":"S2" ONLY when a local SOURCE segment explicitly declares its message name (for example Type: A). If the declaration is in another chunk, omit identity_segment_id; the workflow verifies identity against the full document. Every fact must cite one supporting segment_id. Never invent IDs. Put identity_segment_id ONLY on each file, NEVER inside facts. Do not invent paths such as messages/type_g.md when Type: G means messages/g.md. Keep uppercase and lowercase one-letter message types separate: when both X and x exist, write X to messages/upper_x.md and x to messages/x.md. Omit unsupported facts. Empty: {"files":[]}. No copied quotes, Markdown fences or commentary."#;
+const JSON_COVERAGE_PROMPT: &str = r#"Independently discover missing protocol messages from numbered SOURCE segments. Return exactly one JSON object: {"files":[{"path":"messages/<lowercase-slug>.md","identity_segment_id":"S1","facts":[{"statement":"short atomic assertion","segment_id":"S2"}]}]}. Empty: {"files":[]}. Include identity_segment_id only when a local SOURCE segment explicitly declares the message, not merely mentions it. Omit it when the declaration is elsewhere; the workflow validates the identity against the full document. Use existing segment IDs only. Put identity_segment_id ONLY on each file, NEVER inside facts. For one-letter message types, preserve case: when both X and x are declared, use messages/upper_x.md for X and messages/x.md for x. Never mix their facts. A Type: G row identifies messages/g.md, not messages/type_g.md. No general.md, infrastructure.md, copied quotes, Markdown or commentary."#;
 
 pub struct ChunkedTransformWorkflow<'a> {
     llm_call: LlmCall<'a>,
@@ -936,7 +1169,8 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 return WorkflowResult::Error(format!("Cannot read {}: {err}", input.display()));
             }
         };
-        let masked_source = mask_opaque_lines(&mask_embedded_data_uris(&source));
+        let masked_source =
+            normalize_html_tables(&mask_opaque_lines(&mask_embedded_data_uris(&source)));
         let parts = chunks(&masked_source, CHUNK_CHARS);
         if parts.is_empty() {
             return WorkflowResult::Error("Input document is empty".into());
@@ -960,7 +1194,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 requirements,
                 JSON_EXTRACT_PROMPT,
                 JSON_COVERAGE_PROMPT,
-                "structured-extraction-v2",
+                "segmented-evidence-v6-isolated-rejection",
             ],
         );
         let mut checkpoint = match load_checkpoint(&checkpoint_file, &fingerprint, parts.len()) {
@@ -1047,7 +1281,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                     ));
                 }
                 let window_context = if window == part.text {
-                    context.clone()
+                    context.replace(&part.text, &segmented_source(&window))
                 } else {
                     format!(
                         "SOURCE: {}\nCHUNK: {}/{} (recovery window)\nLINES: {}-{}\n\n=== SOURCE ===\n{}",
@@ -1056,7 +1290,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                         parts.len(),
                         part.start_line,
                         part.end_line,
-                        window
+                        segmented_source(&window)
                     )
                 };
                 let response = match self.llm_call.run_text_step_limited_with_temperature(
@@ -1068,10 +1302,10 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                     Ok(text) => text,
                     Err(err) => return WorkflowResult::LlmCallResult(err),
                 };
-                let parsed = parse_structured_window(&response, &window);
+                let parsed = parse_segmented_window_recoverable(&response, &window, &masked_source);
                 if let Err(reason) = &parsed {
                     let normalized = strip_code_fences(response.trim());
-                    let eof = serde_json::from_str::<ExtractedWindow>(&normalized)
+                    let eof = serde_json::from_str::<SegmentedWindow>(&normalized)
                         .is_err_and(|err| err.is_eof());
                     println!(
                         "## [CHUNKED] EXTRACT INVALID {}/{}: source_chars={}, response_chars={}, eof={}, recovery_window={}; {}",
@@ -1087,7 +1321,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 let parsed = match parsed {
                     Ok(found) => Ok(found),
                     Err(reason) => {
-                        let is_eof = serde_json::from_str::<ExtractedWindow>(
+                        let is_eof = serde_json::from_str::<SegmentedWindow>(
                             strip_code_fences(response.trim()).trim(),
                         )
                         .is_err_and(|err| err.is_eof());
@@ -1112,12 +1346,22 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                                     Ok(text) => text,
                                     Err(err) => return WorkflowResult::LlmCallResult(err),
                                 };
-                            parse_structured_window(&retried, &window)
+                            parse_segmented_window_recoverable(&retried, &window, &masked_source)
                         }
                     }
                 };
                 match parsed {
-                    Ok(found) => records.extend(found),
+                    Ok((found, rejected)) => {
+                        if rejected > 0 {
+                            checkpoint.unresolved_findings = true;
+                            println!(
+                                "## [CHUNKED] EXTRACT PARTIAL {}/{}: {rejected} invalid file entries discarded",
+                                index + 1,
+                                parts.len()
+                            );
+                        }
+                        records.extend(found);
+                    }
                     Err(reason) => {
                         let length = window.chars().count();
                         if length <= MIN_RECOVERY_CHARS {
@@ -1161,7 +1405,8 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                     index + 1,
                     parts.len()
                 );
-                checkpoint.unresolved_findings = true;
+                // The fact audit decides whether these assertions remain
+                // unresolved; a missing locator alone is not a permanent warning.
             }
             for (model_path, entries) in records {
                 let fragment = entries
@@ -1184,7 +1429,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 if !source_windows.contains(&index) {
                     source_windows.push(index);
                 }
-                record_verified_facts(
+                record_segmented_facts(
                     &mut checkpoint.facts,
                     &path,
                     entries,
@@ -1222,60 +1467,132 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                     .cloned()
                     .collect::<Vec<_>>()
                     .join(", ");
-                let context = format!(
-                    "SOURCE CHUNK {}/{} LINES {}-{}\n\n=== KNOWN MESSAGES ===\n{inventory}\n\n=== SOURCE ===\n{}",
-                    index + 1,
-                    parts.len(),
-                    part.start_line,
-                    part.end_line,
-                    part.text
-                );
-                if context.chars().count() > MAX_MERGE_CHARS {
-                    return WorkflowResult::Error(format!(
-                        "Coverage context exceeds {MAX_MERGE_CHARS} characters at chunk {}",
-                        index + 1
-                    ));
-                }
                 println!("## [CHUNKED] COVERAGE {}/{}", index + 1, parts.len());
-                let response = match self.llm_call.run_text_step_limited_with_temperature(
-                    &coverage_prompt,
-                    &context,
-                    MAX_TOKENS,
-                    0.0,
-                ) {
-                    Ok(text) => text,
-                    Err(err) => return WorkflowResult::LlmCallResult(err),
-                };
-                let records = match parse_structured_window(&response, &part.text) {
-                    Ok(records) => records,
-                    Err(first_error) => {
-                        println!("## [CHUNKED] COVERAGE RETRY {}/{}", index + 1, parts.len());
-                        let retry_prompt = format!(
-                            "{coverage_prompt}\n\nPrevious JSON response was invalid: {first_error}. Return a single valid JSON object only."
+                let mut pending = VecDeque::from([part.text.clone()]);
+                let mut records = Vec::new();
+                let mut windows_seen = 0;
+                while let Some(window) = pending.pop_front() {
+                    windows_seen += 1;
+                    if windows_seen > MAX_RECOVERY_WINDOWS {
+                        println!(
+                            "## [CHUNKED] COVERAGE WARNING {}/{}: exceeded {MAX_RECOVERY_WINDOWS} recovery windows; discovery incomplete",
+                            index + 1,
+                            parts.len()
                         );
-                        let retried = match self.llm_call.run_text_step_limited_with_temperature(
-                            &retry_prompt,
-                            &context,
-                            MAX_TOKENS * 2,
-                            0.0,
-                        ) {
-                            Ok(text) => text,
-                            Err(err) => return WorkflowResult::LlmCallResult(err),
-                        };
-                        match parse_structured_window(&retried, &part.text) {
-                            Ok(records) => records,
-                            Err(retry_error) => {
+                        checkpoint.unresolved_findings = true;
+                        break;
+                    }
+                    let context = format!(
+                        "SOURCE CHUNK {}/{} LINES {}-{}\n\n=== KNOWN MESSAGES ===\n{inventory}\n\n=== SOURCE ===\n{}",
+                        index + 1,
+                        parts.len(),
+                        part.start_line,
+                        part.end_line,
+                        segmented_source(&window)
+                    );
+                    if context.chars().count() > MAX_MERGE_CHARS {
+                        return WorkflowResult::Error(format!(
+                            "Coverage context exceeds {MAX_MERGE_CHARS} characters at chunk {}",
+                            index + 1
+                        ));
+                    }
+                    let response = match self.llm_call.run_text_step_limited_with_temperature(
+                        &coverage_prompt,
+                        &context,
+                        MAX_TOKENS,
+                        0.0,
+                    ) {
+                        Ok(text) => text,
+                        Err(err) => return WorkflowResult::LlmCallResult(err),
+                    };
+                    let parsed = match parse_segmented_window_recoverable(
+                        &response,
+                        &window,
+                        &masked_source,
+                    ) {
+                        Ok(found) => Ok(found),
+                        Err(first_error) => {
+                            let is_eof = serde_json::from_str::<SegmentedWindow>(
+                                strip_code_fences(response.trim()).trim(),
+                            )
+                            .is_err_and(|err| err.is_eof());
+                            if is_eof {
+                                Err(first_error)
+                            } else {
                                 println!(
-                                    "## [CHUNKED] COVERAGE WARNING {}/{}: invalid JSON after retry ({first_error}; {retry_error}); discovery incomplete",
+                                    "## [CHUNKED] COVERAGE RETRY {}/{}",
+                                    index + 1,
+                                    parts.len()
+                                );
+                                let retry_prompt = format!(
+                                    "{coverage_prompt}\n\nPrevious JSON response was invalid: {first_error}. Return a single valid JSON object only."
+                                );
+                                let retried =
+                                    match self.llm_call.run_text_step_limited_with_temperature(
+                                        &retry_prompt,
+                                        &context,
+                                        MAX_TOKENS * 2,
+                                        0.0,
+                                    ) {
+                                        Ok(text) => text,
+                                        Err(err) => return WorkflowResult::LlmCallResult(err),
+                                    };
+                                parse_segmented_window_recoverable(
+                                    &retried,
+                                    &window,
+                                    &masked_source,
+                                )
+                            }
+                        }
+                    };
+                    match parsed {
+                        Ok((found, rejected)) => {
+                            if rejected > 0 {
+                                checkpoint.unresolved_findings = true;
+                                println!(
+                                    "## [CHUNKED] COVERAGE PARTIAL {}/{}: {rejected} invalid file entries discarded",
+                                    index + 1,
+                                    parts.len()
+                                );
+                            }
+                            records.extend(found);
+                        }
+                        Err(reason) => {
+                            let length = window.chars().count();
+                            if length <= MIN_RECOVERY_CHARS {
+                                println!(
+                                    "## [CHUNKED] COVERAGE WARNING {}/{}: invalid JSON at {length} characters ({reason}); discovery incomplete",
                                     index + 1,
                                     parts.len()
                                 );
                                 checkpoint.unresolved_findings = true;
-                                Vec::new()
+                                continue;
+                            }
+                            let children = recovery_chunks(
+                                &window,
+                                length.div_ceil(2).max(MIN_RECOVERY_CHARS),
+                            );
+                            if children.len() < 2 || children.iter().any(|child| child == &window) {
+                                println!(
+                                    "## [CHUNKED] COVERAGE WARNING {}/{}: could not split window ({reason}); discovery incomplete",
+                                    index + 1,
+                                    parts.len()
+                                );
+                                checkpoint.unresolved_findings = true;
+                                continue;
+                            }
+                            println!(
+                                "## [CHUNKED] COVERAGE SPLIT {}/{}: {length} chars -> {} windows ({reason})",
+                                index + 1,
+                                parts.len(),
+                                children.len()
+                            );
+                            for child in children.into_iter().rev() {
+                                pending.push_front(child);
                             }
                         }
                     }
-                };
+                }
                 for (model_path, entries) in records {
                     let fragment = entries
                         .iter()
@@ -1305,10 +1622,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                             "Coverage fragment for {path} exceeds {MAX_MERGE_CHARS} characters"
                         ));
                     }
-                    if unsupported_quote_count(&vec![(path.clone(), entries.clone())]) > 0 {
-                        checkpoint.unresolved_findings = true;
-                    }
-                    record_verified_facts(
+                    record_segmented_facts(
                         &mut checkpoint.facts,
                         &path,
                         entries,
@@ -1447,6 +1761,15 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 return WorkflowResult::Error(err);
             }
         }
+        // A fact that never passed the audit must prevent verified publication.
+        if checkpoint
+            .facts
+            .values()
+            .flatten()
+            .any(|fact| fact.review != FactReview::Supported)
+        {
+            checkpoint.unresolved_findings = true;
+        }
         // JSON is the published projection of immutable extracted assertions. The
         // audit never rewrites it independently of the facts in facts.json.
         for (path, facts) in &checkpoint.facts {
@@ -1563,3 +1886,269 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
 #[cfg(test)]
 #[path = "../../tests/workflows/chunked_transform_internal_test.rs"]
 mod internal_tests;
+
+#[cfg(test)]
+mod segmented_evidence_tests {
+    use super::*;
+
+    #[test]
+    fn ids_are_stable_and_preserve_unicode_source() {
+        let source = "Command Q: query status\nÜnicode and evidence\n";
+        let segments = evidence_segments(source);
+        assert_eq!(segments[0].id, "S1");
+        assert_eq!(
+            segments.iter().map(|s| s.text.as_str()).collect::<String>(),
+            source
+        );
+        assert!(segmented_source(source).contains("[S2]"));
+    }
+
+    #[test]
+    fn known_segment_is_accepted_without_model_copied_quote() {
+        let source = "Command Q: query status\nA status query returns data.\n";
+        let response = r#"{"files":[{"path":"messages/q.md","identity_segment_id":"S1","facts":[{"statement":"Q queries status","segment_id":"S2"}]}]}"#;
+        let parsed = parse_segmented_window(response, source).unwrap();
+        assert_eq!(
+            parsed[0].1[0].1.as_deref(),
+            Some("A status query returns data.\n")
+        );
+    }
+
+    #[test]
+    fn fabricated_ids_and_ambiguous_identity_remain_unresolved() {
+        let source = "Q is mentioned as an example.\n";
+        let response = r#"{"files":[{"path":"messages/q.md","identity_segment_id":"S1","facts":[{"statement":"invented","segment_id":"S999"}]}]}"#;
+        assert!(parse_segmented_window(response, source).is_err());
+    }
+
+    #[test]
+    fn misplaced_fact_identity_is_validated_and_promoted() {
+        let source = "Type: G | Status request\nThe G message requests status.\n";
+        let response = r#"{"files":[{"path":"messages/type_g.md","facts":[{"statement":"G requests status","segment_id":"S2","identity_segment_id":"S1"}]}]}"#;
+        let parsed = parse_segmented_window(response, source).unwrap();
+        assert_eq!(parsed[0].0, "messages/g.md");
+        assert_eq!(
+            parsed[0].1[0].1.as_deref(),
+            Some("The G message requests status.\n")
+        );
+    }
+
+    #[test]
+    fn invalid_file_does_not_discard_valid_sibling() {
+        let source = "Type: G | Status request\n";
+        let response = r#"{"files":[{"path":"messages/g.md","identity_segment_id":"S1","facts":[{"statement":"G status","segment_id":"S1"}]},{"path":"messages/invented.md","identity_segment_id":"S1","facts":[{"statement":"invented","segment_id":"S1"}]}]}"#;
+        let (records, rejected) =
+            parse_segmented_window_recoverable(response, source, source).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].0, "messages/g.md");
+        assert_eq!(rejected, 1);
+    }
+
+    #[test]
+    fn all_invalid_files_do_not_trigger_json_recovery() {
+        let source = "Type: G | Status request\n";
+        let response = r#"{"files":[{"path":"messages/invented.md","identity_segment_id":"S1","facts":[{"statement":"invented","segment_id":"S1"}]}]}"#;
+        let (records, rejected) =
+            parse_segmented_window_recoverable(response, source, source).unwrap();
+        assert!(records.is_empty());
+        assert_eq!(rejected, 1);
+    }
+
+    #[test]
+    fn incomplete_json_cannot_be_salvaged() {
+        let source = "Type: G | Status request\n";
+        let response = r#"{"files":[{"path":"messages/g.md","facts":[{"statement":"G""#;
+        assert!(parse_segmented_window_recoverable(response, source, source).is_err());
+    }
+
+    #[test]
+    fn legacy_source_anchor_is_not_trusted_as_a_quote() {
+        let source = "Type: G | Status request\n";
+        let response = r#"{"files":[{"path":"messages/g.md","identity_segment_id":"S1","facts":[{"statement":"G status","source_anchor":"fabricated"}]}]}"#;
+        let parsed = parse_segmented_window(response, source).unwrap();
+        assert_eq!(parsed[0].1[0].1, None);
+    }
+
+    #[test]
+    fn globally_declared_identity_accepts_facts_from_later_window() {
+        let full_source =
+            "Type: G | Status request\nOther prose.\nThe G message requests status.\n";
+        let window = "The G message requests status.\n";
+        let response = r#"{"files":[{"path":"messages/g.md","facts":[{"statement":"G requests status","segment_id":"S1"}]}]}"#;
+        let parsed = parse_segmented_window_with_identity(response, window, full_source).unwrap();
+        assert_eq!(parsed[0].0, "messages/g.md");
+        assert_eq!(
+            parsed[0].1[0].1.as_deref(),
+            Some("The G message requests status.\n")
+        );
+    }
+
+    #[test]
+    fn uppercase_and_lowercase_messages_do_not_share_identity() {
+        let source = "Type: X | Modem command\nType: x | Antenna response\n";
+        assert!(declared_message_identity("messages/upper_x.md", source));
+        assert!(declared_message_identity("messages/x.md", source));
+        assert!(!declared_message_identity("messages/upper_y.md", source));
+        let only_upper = "Type: O | Modem command\n";
+        assert!(declared_message_identity("messages/o.md", only_upper));
+        assert!(declared_message_identity("messages/upper_o.md", only_upper));
+    }
+
+    #[test]
+    fn markdown_type_rows_declare_message_identity() {
+        let source =
+            "| Type | Description |\n| --- | --- |\n| O | Modem command |\n| o | Antenna reply |\n";
+        assert!(declared_message_identity("messages/upper_o.md", source));
+        assert!(declared_message_identity("messages/o.md", source));
+    }
+
+    #[test]
+    fn global_example_traffic_does_not_declare_identity() {
+        let full_source = "Example: G 10\nThe G message requests status.\n";
+        let window = "The G message requests status.\n";
+        let response = r#"{"files":[{"path":"messages/g.md","facts":[{"statement":"G requests status","segment_id":"S1"}]}]}"#;
+        assert!(parse_segmented_window_with_identity(response, window, full_source).is_err());
+    }
+
+    #[test]
+    fn repeated_locator_does_not_promote_unreviewed_fact() {
+        let mut facts = BTreeMap::new();
+        record_segmented_facts(
+            &mut facts,
+            "messages/g.md",
+            vec![("G is a status request".into(), None)],
+            0,
+            1,
+            1,
+        );
+        record_segmented_facts(
+            &mut facts,
+            "messages/g.md",
+            vec![(
+                "G is a status request".into(),
+                Some("Type: G | Status request".into()),
+            )],
+            1,
+            2,
+            2,
+        );
+        let fact = &facts["messages/g.md"][0];
+        assert_eq!(fact.review, FactReview::Pending);
+        assert_eq!(fact.source_chunk, 1);
+        assert_eq!(
+            fact.evidence_quote.as_deref(),
+            Some("Type: G | Status request")
+        );
+    }
+
+    #[test]
+    fn unknown_fact_fields_are_still_rejected() {
+        let source = "Type: G | Status request\n";
+        let response = r#"{"files":[{"path":"messages/g.md","identity_segment_id":"S1","facts":[{"statement":"G status","segment_id":"S1","invented_field":"unsafe"}]}]}"#;
+        assert!(parse_segmented_window(response, source).is_err());
+    }
+
+    #[test]
+    fn conflicting_fact_and_file_identity_is_rejected() {
+        let source = "Type: G | Status request\nType: H | Other request\n";
+        let response = r#"{"files":[{"path":"messages/g.md","identity_segment_id":"S1","facts":[{"statement":"G requests status","segment_id":"S1","identity_segment_id":"S2"}]}]}"#;
+        assert!(parse_segmented_window(response, source).is_err());
+    }
+
+    #[test]
+    fn invented_message_identity_is_rejected() {
+        let source = "Type: G | Status request\n";
+        let response = r#"{"files":[{"path":"messages/type_h.md","identity_segment_id":"S1","facts":[{"statement":"H is a message","segment_id":"S1"}]}]}"#;
+        assert!(parse_segmented_window(response, source).is_err());
+    }
+
+    #[test]
+    fn source_locator_is_not_a_semantic_fact_verification() {
+        let mut facts = BTreeMap::new();
+        record_segmented_facts(
+            &mut facts,
+            "messages/g.md",
+            vec![(
+                "G disables all safety checks".into(),
+                Some("Type: G | Status request\n".into()),
+            )],
+            0,
+            1,
+            1,
+        );
+        assert_eq!(facts["messages/g.md"][0].review, FactReview::Pending);
+    }
+
+    #[test]
+    fn invalid_paths_are_rejected() {
+        let response =
+            r#"{"files":[{"path":"../escape.md","facts":[{"statement":"x","segment_id":"S1"}]}]}"#;
+        assert!(parse_segmented_window(response, "source").is_err());
+    }
+}
+
+#[cfg(test)]
+mod openamip_structure_tests {
+    use super::*;
+
+    #[test]
+    fn unicode_html_rows_keep_utf8_boundaries() {
+        let source = "<table><tr><td>A</td><td>“Alive” – status</td></tr><tr><td>B</td><td>“Beam” – mode</td></tr></table>";
+        let normalized = normalize_html_tables(source);
+        assert!(normalized.contains("Type: A | “Alive” – status"));
+        assert!(normalized.contains("Type: B | “Beam” – mode"));
+        assert_eq!(normalized.matches("Type: ").count(), 2);
+    }
+    #[test]
+    fn table_23_type_cells_establish_message_identity() {
+        let source = "2.3 Message Types, Sender (M)\n<table><tr><td>Type</td><td>Description</td><td>No. of Parameter(s)</td><td>Name of the Parameters</td></tr><tr><td>A</td><td>Alive intervalAntenna should send a status message at least this often. 0 means never repeat.</td><td>1</td><td>int interval, seconds</td></tr></table>";
+        let normalized = normalize_html_tables(source);
+        assert!(normalized.contains("Type: A | Alive interval"));
+        assert!(declared_message_identity("messages/a.md", &normalized));
+        assert!(!declared_message_identity("messages/b.md", &normalized));
+        assert!(!normalized.contains("<table"));
+    }
+
+    #[test]
+    fn table_24_type_cells_and_rowspan_continuations() {
+        let source = "2.4 Message Types, Receiver (A)\n<table><tr><td rowspan=\"3\">B</td><td>Beat frequency oscillator</td><td>2(minimum)</td></tr><tr><td colspan=\"2\">Additional LO frequencies</td></tr></table>";
+        let normalized = normalize_html_tables(source);
+        assert!(normalized.contains("Type: B | Beat frequency oscillator"));
+        assert!(normalized.contains("Additional LO frequencies"));
+        assert_eq!(normalized.matches("Type: B").count(), 1);
+    }
+
+    #[test]
+    fn examples_28_are_not_identity_declarations() {
+        let source =
+            "2.8 Examples\n```txt\nA 10 # Alive\nB 18000.500 28000.500 rx2=18200\nL 1 1\n```\n";
+        assert!(!declared_message_identity("messages/a.md", source));
+        assert!(!declared_message_identity("messages/b.md", source));
+        assert!(!declared_message_identity("messages/l.md", source));
+    }
+
+    #[test]
+    fn embedded_image_is_masked_before_normalization() {
+        let original = format!(
+            "![](data:image/jpeg;base64,{})\n<table><tr><td>q</td><td>Query</td></tr></table>",
+            "A".repeat(200)
+        );
+        let masked = mask_embedded_data_uris(&original);
+        let normalized = normalize_html_tables(&mask_opaque_lines(&masked));
+        assert!(!normalized.contains(&"A".repeat(200)));
+        assert!(normalized.contains("Type: q | Query"));
+        assert!(original.contains(&"A".repeat(200)));
+    }
+
+    #[test]
+    fn segment_ids_reference_normalized_table_row() {
+        let source =
+            normalize_html_tables("<table><tr><td>s</td><td>Status message</td></tr></table>");
+        let segments = evidence_segments(&source);
+        assert_eq!(segments[0].id, "S1");
+        assert!(declared_message_identity(
+            "messages/s.md",
+            &segments[0].text
+        ));
+    }
+}

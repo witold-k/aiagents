@@ -6,11 +6,16 @@ target_dir       := `cargo metadata --no-deps --format-version=1 | jq -r '.targe
 
 default: build
 
+pull:
+	git pull --prune --rebase github
+
 build:
 	cargo build
 	RUST_BACKTRACE=1 cargo test
 	cargo clippy
 	cargo fmt --check
+
+gbuild: pull build install
 
 build-jvm:
     RUSTFLAGS="-C panic=unwind" cargo jvm build --bin aifix --no-default-features

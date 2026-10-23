@@ -287,3 +287,161 @@ pub fn raw_fence_to_string(encoded: &str) -> String {
 
     current_string
 }
+
+/// Make inline HTML tables legible to the LLM without changing the input file.
+/// The first cell of each OpenAMIP table row becomes an explicit Type marker;
+/// rowspan continuation rows do not invent new message identities.
+pub fn normalize_html_tables(source: &str) -> String {
+    let mut output = String::with_capacity(source.len());
+    let mut remaining = source;
+    while let Some(start) = remaining.find("<table") {
+        output.push_str(&remaining[..start]);
+        let table = &remaining[start..];
+        let Some(close) = table.find("</table>") else {
+            output.push_str(table);
+            return output;
+        };
+        let body = &table[..close];
+        let mut row_rest = body;
+        while let Some(row_start) = row_rest.find("<tr") {
+            let after = &row_rest[row_start..];
+            let Some(open_end) = after.find('>') else {
+                break;
+            };
+            let row = &after[open_end + 1..];
+            let Some(row_end) = row.find("</tr>") else {
+                break;
+            };
+            let row = &row[..row_end];
+            let mut cells = Vec::new();
+            let mut cell_rest = row;
+            loop {
+                let td = cell_rest.find("<td");
+                let th = cell_rest.find("<th");
+                let Some(pos) = (match (td, th) {
+                    (Some(a), Some(b)) => Some(a.min(b)),
+                    (Some(a), None) | (None, Some(a)) => Some(a),
+                    (None, None) => None,
+                }) else {
+                    break;
+                };
+                let after = &cell_rest[pos..];
+                let closing = if after.starts_with("<td") {
+                    "</td>"
+                } else {
+                    "</th>"
+                };
+                let Some(tag_end) = after.find('>') else {
+                    break;
+                };
+                let value_start = tag_end + 1;
+                let Some(value_end) = after[value_start..].find(closing) else {
+                    break;
+                };
+                let value = &after[value_start..value_start + value_end];
+                let plain = value
+                    .replace("<br/>", " ")
+                    .replace("<br>", " ")
+                    .replace("&nbsp;", " ")
+                    .replace("&amp;", "&");
+                cells.push(plain);
+                // Advance relative to the original remaining row, not the
+                // extracted cell contents (which may be only one character).
+                cell_rest = &after[value_start + value_end + closing.len()..];
+            }
+            if !cells.is_empty() {
+                if cells[0].trim().eq_ignore_ascii_case("Type") {
+                    output.push_str("Type | Description | Parameters\n");
+                } else if cells[0].trim().len() <= 8
+                    && cells[0].trim().chars().all(|c| c.is_ascii_alphanumeric())
+                {
+                    output.push_str("Type: ");
+                    output.push_str(cells[0].trim());
+                    for cell in cells.iter().skip(1) {
+                        output.push_str(" | ");
+                        output.push_str(cell.trim());
+                    }
+                    output.push('\n');
+                } else {
+                    output.push_str(&cells.join(" | "));
+                    output.push('\n');
+                }
+            }
+            // row_end is relative to `row`, which starts after the <tr> tag.
+            // Include both the row prefix and opening tag when advancing.
+            let next_row = row_start + open_end + 1 + row_end + "</tr>".len();
+            row_rest = &row_rest[next_row..];
+        }
+        remaining = &table[close + "</table>".len()..];
+    }
+    output.push_str(remaining);
+    output
+}
+
+/// Mask long encoded runs in Markdown data URIs, without interpreting the
+/// protocol source. Preserve newlines so source line references remain valid.
+/// This only targets explicit data URIs, never arbitrary base64-looking fields.
+pub fn mask_embedded_data_uris(text: &str) -> String {
+    let mut result = String::with_capacity(text.len().min(8_192));
+    let mut rest = text;
+    while let Some(start) = rest.find("data:image/") {
+        result.push_str(&rest[..start]);
+        let candidate = &rest[start..];
+        let Some(marker) = candidate.find(";base64,") else {
+            result.push_str("data:image/");
+            rest = &candidate["data:image/".len()..];
+            continue;
+        };
+        if marker > 100 || candidate[..marker].contains(['\n', '\r', ' ', '"', '\'']) {
+            result.push_str("data:image/");
+            rest = &candidate["data:image/".len()..];
+            continue;
+        }
+        let payload_start = marker + ";base64,".len();
+        let bytes = candidate.as_bytes();
+        let mut end = payload_start;
+        while end < bytes.len()
+            && (bytes[end].is_ascii_alphanumeric()
+                || matches!(bytes[end], b'+' | b'/' | b'=' | b'_' | b'-'))
+        {
+            end += 1;
+        }
+        if end - payload_start < 128 {
+            result.push_str(&candidate[..end]);
+        } else {
+            result.push_str(&candidate[..payload_start]);
+            for byte in &bytes[payload_start..end] {
+                result.push(if *byte == b'\n' { '\n' } else { ' ' });
+            }
+        }
+        rest = &candidate[end..];
+    }
+    result.push_str(rest);
+    result
+}
+
+/// Remove opaque spans from model evidence while preserving character and line
+/// positions. This is deliberately conservative: only very long lines with
+/// almost no word separators are considered encoded data.
+pub fn mask_opaque_lines(source: &str) -> String {
+    let mut result = String::with_capacity(source.len());
+    let mut run = String::new();
+    let flush = |run: &mut String, output: &mut String| {
+        if run.chars().count() >= 512 {
+            output.extend(std::iter::repeat_n(' ', run.chars().count()));
+        } else {
+            output.push_str(run);
+        }
+        run.clear();
+    };
+    for character in source.chars() {
+        if character.is_ascii_alphanumeric() || matches!(character, '+' | '/' | '=' | '_' | '-') {
+            run.push(character);
+        } else {
+            flush(&mut run, &mut result);
+            result.push(character);
+        }
+    }
+    flush(&mut run, &mut result);
+    result
+}
