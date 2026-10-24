@@ -67,6 +67,14 @@ struct ExtractionCheckpoint {
     recovery_candidates: Vec<message_identity::MessageCandidate>,
 }
 
+// v7 stored the projection generation in the fact-review version field.
+// Recognize that already-completed projection without replaying LLM work.
+fn migrate_identity_projection_version(checkpoint: &mut ExtractionCheckpoint) {
+    if checkpoint.identity_projection_version == 0 && checkpoint.fact_audit_version == 7 {
+        checkpoint.identity_projection_version = 1;
+    }
+}
+
 /// One source-attributed, independently deduplicated specification assertion.
 /// A source window is evidence location, not a claim of verbatim verification.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -2036,9 +2044,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         // The version gate makes checkpoint resume idempotent.
         // Migrate already projected v7 checkpoints without replaying the
         // extraction or invalidating their completed fact review.
-        if checkpoint.identity_projection_version == 0 && checkpoint.fact_audit_version == 7 {
-            checkpoint.identity_projection_version = 1;
-        }
+        migrate_identity_projection_version(&mut checkpoint);
         if checkpoint.identity_projection_version != 1 {
             let source_windows: Vec<&str> = parts.iter().map(|part| part.text.as_str()).collect();
             let (groups, mut unresolved) =
