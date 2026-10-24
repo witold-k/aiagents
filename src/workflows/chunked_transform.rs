@@ -2031,6 +2031,50 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             diagnostics.no_source_type,
             diagnostics.conflicting_type,
         );
+        // Explicit, read-only deterministic replay. This deliberately stops
+        // before fact auditing and publication; neither invokes the model nor
+        // mutates the checkpoint or an existing output directory.
+        if std::env::var_os("AIFIX_IDENTITY_REPLAY").is_some() {
+            let (groups, unresolved) =
+                message_identity::resolved_source_facts(&checkpoint.candidates, &source_windows);
+            let mut seen = std::collections::BTreeSet::new();
+            let mut duplicates = 0_usize;
+            let mut positioned = 0_usize;
+            let mut projected = 0_usize;
+            let mut by_message = BTreeMap::new();
+            for (path, occurrences) in groups {
+                for (window, fact) in occurrences {
+                    let Some(part) = parts.get(window) else {
+                        continue;
+                    };
+                    if let Some(offset) = fact.source_byte_offset {
+                        let Some(absolute) = part.start_byte.checked_add(offset) else {
+                            continue;
+                        };
+                        positioned += 1;
+                        if !seen.insert((
+                            path.clone(),
+                            fact.statement.clone(),
+                            absolute,
+                            fact.evidence_quote.clone(),
+                        )) {
+                            duplicates += 1;
+                            continue;
+                        }
+                    }
+                    projected += 1;
+                    *by_message.entry(path.clone()).or_insert(0_usize) += 1;
+                }
+            }
+            println!(
+                "## [CHUNKED] IDENTITY REPLAY (READ ONLY): projected={projected} duplicate_occurrences={duplicates} positioned={positioned} unresolved={unresolved} messages={}",
+                by_message.len()
+            );
+            for (path, count) in by_message {
+                println!("## [CHUNKED] IDENTITY REPLAY MESSAGE: {path} facts={count}");
+            }
+            return WorkflowResult::Ok;
+        }
         if files.is_empty() {
             return WorkflowResult::Error("No protocol specifications were extracted".into());
         }
