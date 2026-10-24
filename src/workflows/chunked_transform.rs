@@ -2149,7 +2149,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         // Migrate already projected v7 checkpoints without replaying the
         // extraction or invalidating their completed fact review.
         migrate_identity_projection_version(&mut checkpoint);
-        if checkpoint.identity_projection_version != 1 {
+        if checkpoint.identity_projection_version != 2 {
             let source_windows: Vec<&str> = parts.iter().map(|part| part.text.as_str()).collect();
             let (groups, mut unresolved) =
                 message_identity::resolved_source_facts(&checkpoint.candidates, &source_windows);
@@ -2228,8 +2228,8 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             println!(
                 "## [CHUNKED] IDENTITY CONSOLIDATION: {accepted} source-backed candidate occurrences -> {consolidated} distinct typed message facts; {unresolved} unresolved candidate facts kept in checkpoint, not published"
             );
-            checkpoint.identity_projection_version = 1;
-            checkpoint.fact_audit_version = 7;
+            checkpoint.identity_projection_version = 2;
+            checkpoint.fact_audit_version = 8;
             checkpoint.fact_audit_cursor = 0;
             if checkpoint.audit.is_some() {
                 checkpoint.unresolved_findings = true;
