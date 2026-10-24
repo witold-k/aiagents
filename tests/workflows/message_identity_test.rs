@@ -58,7 +58,6 @@ fn document_context_rejects_mismatched_absolute_quote() {
     );
 }
 
-
 fn fact(statement: &str) -> CandidateFact {
     CandidateFact {
         statement: statement.into(),
