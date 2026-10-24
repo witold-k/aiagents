@@ -41,6 +41,31 @@ mod checkpoint_review_tests {
     }
 
     #[test]
+    fn v7_checkpoint_migrates_projection_without_resetting_audit() {
+        let mut checkpoint: ExtractionCheckpoint = serde_json::from_str(
+            r#"{"version":16,"source_fingerprint":"test","next_chunk":53,"files":{},"unresolved_findings":false,"fact_audit_version":7,"fact_audit_cursor":404}"#,
+        )
+        .unwrap();
+        assert_eq!(checkpoint.identity_projection_version, 0);
+        migrate_identity_projection_version(&mut checkpoint);
+        assert_eq!(checkpoint.identity_projection_version, 1);
+        assert_eq!(checkpoint.fact_audit_version, 7);
+        assert_eq!(checkpoint.fact_audit_cursor, 404);
+        migrate_identity_projection_version(&mut checkpoint);
+        assert_eq!(checkpoint.identity_projection_version, 1);
+    }
+
+    #[test]
+    fn unprojected_checkpoint_is_not_falsely_migrated() {
+        let mut checkpoint: ExtractionCheckpoint = serde_json::from_str(
+            r#"{"version":16,"source_fingerprint":"test","next_chunk":0,"files":{},"unresolved_findings":false,"fact_audit_version":0}"#,
+        )
+        .unwrap();
+        migrate_identity_projection_version(&mut checkpoint);
+        assert_eq!(checkpoint.identity_projection_version, 0);
+    }
+
+    #[test]
     fn detects_legacy_internal_envelopes() {
         assert!(internal_workflow_marker(
             "=== CONSOLIDATED SPECIFICATION ==="
