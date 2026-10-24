@@ -451,9 +451,15 @@ fn parse_segmented_window_with_identity(
     let mut value: serde_json::Value =
         serde_json::from_str(strip_code_fences(response.trim()).trim())
             .map_err(|err| format!("Invalid segmented extraction JSON: {err}"))?;
-    if let Some(files) = value.get_mut("files").and_then(serde_json::Value::as_array_mut) {
+    if let Some(files) = value
+        .get_mut("files")
+        .and_then(serde_json::Value::as_array_mut)
+    {
         for file in files {
-            if let Some(facts) = file.get_mut("facts").and_then(serde_json::Value::as_array_mut) {
+            if let Some(facts) = file
+                .get_mut("facts")
+                .and_then(serde_json::Value::as_array_mut)
+            {
                 for fact in facts {
                     if let Some(fields) = fact.as_object_mut()
                         && let (Some(anchor), Some(segment)) =
