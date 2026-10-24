@@ -16,7 +16,6 @@ fn conflicting_legacy_locator_aliases_are_rejected() {
     assert!(result.unwrap_err().contains("Conflicting source_anchor"));
 }
 
-
 #[test]
 fn audit_review_is_not_reused_across_distinct_occurrences() {
     let mut previous = SourceFact {
