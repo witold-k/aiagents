@@ -504,7 +504,7 @@ mod tests {
     }
 
     #[test]
-    fn contradictory_heading_and_table_ownership_remains_unresolved() {
+    fn nearest_table_declaration_overrides_distant_section_heading() {
         let source = "Type: A\n| Type: B | command |\n| field | value |";
         let candidate = MessageCandidate {
             id: "window-0-candidate-0".into(),
@@ -517,10 +517,9 @@ mod tests {
                 source_locator_ambiguous: false,
             }],
         };
-        let (groups, unresolved) = resolved_source_facts(&[candidate.clone()], &[source]);
-        assert!(groups.is_empty());
-        assert_eq!(unresolved, 1);
-        assert_eq!(resolution_diagnostics(&[candidate], &[source]).conflicting_type, 1);
+        let (groups, unresolved) = resolved_source_facts(&[candidate], &[source]);
+        assert_eq!(unresolved, 0);
+        assert_eq!(groups["messages/upper_b.md"].len(), 1);
     }
 
     #[test]
