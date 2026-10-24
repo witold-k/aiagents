@@ -346,6 +346,113 @@ fn resolve_fact_type(source: &str, fact: &CandidateFact) -> Result<u8, Resolutio
     Ok(source_type)
 }
 
+// Resolve against the complete normalized document, using the verified
+// chunk-relative byte offset. This preserves ownership across chunk boundaries
+// without trusting the model's proposed filename or its remembered context.
+fn resolve_fact_type_in_document(
+    window: &str,
+    window_start: usize,
+    document: &str,
+    fact: &CandidateFact,
+) -> Result<u8, ResolutionFailure> {
+    let local = resolve_fact_type(window, fact);
+    if !matches!(local, Err(ResolutionFailure::NoSourceType)) {
+        return local;
+    }
+    let offset = fact.source_byte_offset.ok_or(ResolutionFailure::InvalidLocator)?;
+    let quote = fact.evidence_quote.as_deref().ok_or(ResolutionFailure::MissingEvidence)?;
+    let absolute = window_start
+        .checked_add(offset)
+        .ok_or(ResolutionFailure::InvalidLocator)?;
+    let end = absolute
+        .checked_add(quote.len())
+        .ok_or(ResolutionFailure::InvalidLocator)?;
+    if document.get(absolute..end) != Some(quote) {
+        return Err(ResolutionFailure::InvalidLocator);
+    }
+    let line = crate::utils::stringutils::line_index_at_byte_offset(document, absolute)
+        .ok_or(ResolutionFailure::InvalidLocator)?;
+    let source_line = document.lines().nth(line).ok_or(ResolutionFailure::InvalidLocator)?;
+    let mut declared = None;
+    for signal in [
+        super::explicit_type_label(source_line),
+        super::section_type_for_line(document, line),
+        table_block_type_for_line(document, line),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if declared.is_some_and(|old| old != signal) {
+            return Err(ResolutionFailure::ConflictingType);
+        }
+        declared = Some(signal);
+    }
+    let letter = declared.ok_or(ResolutionFailure::NoSourceType)?;
+    if super::explicit_type_label(&fact.statement).is_some_and(|stated| stated != letter) {
+        return Err(ResolutionFailure::ConflictingType);
+    }
+    Ok(letter)
+}
+
+pub(super) fn resolution_diagnostics_in_document(
+    candidates: &[MessageCandidate],
+    sources: &[&str],
+    starts: &[usize],
+    document: &str,
+) -> ResolutionDiagnostics {
+    let mut result = ResolutionDiagnostics::default();
+    for candidate in candidates {
+        let window = source_window_index(&candidate.id);
+        for fact in &candidate.facts {
+            let Some((source, start)) = window
+                .and_then(|i| sources.get(i).zip(starts.get(i)))
+            else {
+                result.invalid_window += 1;
+                continue;
+            };
+            match resolve_fact_type_in_document(source, *start, document, fact) {
+                Ok(_) => {}
+                Err(ResolutionFailure::AmbiguousLocator) => result.ambiguous_locator += 1,
+                Err(ResolutionFailure::MissingEvidence) => result.missing_evidence += 1,
+                Err(ResolutionFailure::InvalidLocator) => result.invalid_offset_or_quote += 1,
+                Err(ResolutionFailure::NoSourceType) => result.no_source_type += 1,
+                Err(ResolutionFailure::ConflictingType) => result.conflicting_type += 1,
+            }
+        }
+    }
+    result
+}
+
+pub(super) fn resolved_source_facts_in_document(
+    candidates: &[MessageCandidate],
+    sources: &[&str],
+    starts: &[usize],
+    document: &str,
+) -> (std::collections::BTreeMap<String, Vec<(usize, CandidateFact)>>, usize) {
+    let mut groups = std::collections::BTreeMap::new();
+    let mut unresolved = 0;
+    for candidate in candidates {
+        let Some(window) = source_window_index(&candidate.id) else {
+            unresolved += candidate.facts.len();
+            continue;
+        };
+        let Some((source, start)) = sources.get(window).zip(starts.get(window)) else {
+            unresolved += candidate.facts.len();
+            continue;
+        };
+        for fact in &candidate.facts {
+            match resolve_fact_type_in_document(source, *start, document, fact) {
+                Ok(letter) => groups
+                    .entry(canonical_type_path(letter))
+                    .or_insert_with(Vec::new)
+                    .push((window, fact.clone())),
+                Err(_) => unresolved += 1,
+            }
+        }
+    }
+    (groups, unresolved)
+}
+
 fn source_fact_type(source: &str, fact: &CandidateFact) -> Option<u8> {
     resolve_fact_type(source, fact).ok()
 }
