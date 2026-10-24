@@ -852,6 +852,16 @@ fn record_positioned_candidate_fact(
     }
 }
 
+/// A reviewed assertion may only be reused for the exact same positioned
+/// occurrence. Legacy window-only locations deliberately cannot share reviews.
+fn same_source_occurrence_for_audit(previous: &SourceFact, current: &SourceFact) -> bool {
+    current.source_byte_offset.is_some()
+        && previous.source_byte_offset == current.source_byte_offset
+        && previous.source_chunk == current.source_chunk
+        && previous.statement == current.statement
+        && previous.review != FactReview::Pending
+}
+
 fn render_source_facts(facts: &[SourceFact]) -> String {
     facts
         .iter()
@@ -2265,11 +2275,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 .iter()
                 .filter_map(|(previous_path, previous_index)| {
                     let previous = &checkpoint.facts[previous_path][*previous_index];
-                    (fact.source_byte_offset.is_some()
-                        && previous.source_byte_offset == fact.source_byte_offset
-                        && previous.source_chunk == fact.source_chunk
-                        && previous.statement == fact.statement
-                        && previous.review != FactReview::Pending)
+                    same_source_occurrence_for_audit(previous, &fact)
                         .then_some((previous.review, previous.evidence_quote.clone()))
                 })
                 .find(|(review, quote)| {
@@ -2504,6 +2510,33 @@ mod internal_tests;
 #[cfg(test)]
 mod segmented_evidence_tests {
     use super::*;
+
+    #[test]
+    fn audit_review_is_not_reused_across_distinct_occurrences() {
+        let mut previous = SourceFact {
+            statement: "same assertion".into(),
+            source_chunk: 0,
+            start_line: 2,
+            end_line: 2,
+            source_byte_offset: Some(15),
+            evidence_quote: Some("source quotation".into()),
+            evidence_occurrences: Vec::new(),
+            review: FactReview::Supported,
+        };
+        let mut current = previous.clone();
+        assert!(same_source_occurrence_for_audit(&previous, &current));
+        current.source_byte_offset = Some(90);
+        assert!(!same_source_occurrence_for_audit(&previous, &current));
+        current.source_byte_offset = Some(15);
+        current.source_chunk = 1;
+        assert!(!same_source_occurrence_for_audit(&previous, &current));
+        current.source_chunk = 0;
+        current.source_byte_offset = None;
+        assert!(!same_source_occurrence_for_audit(&previous, &current));
+        previous.review = FactReview::Pending;
+        current.source_byte_offset = Some(15);
+        assert!(!same_source_occurrence_for_audit(&previous, &current));
+    }
 
     #[test]
     fn positioned_candidate_facts_keep_distinct_source_lines() {
