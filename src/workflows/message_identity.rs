@@ -298,6 +298,11 @@ fn flattened_message_table_type(source: &str, line_index: usize) -> Option<u8> {
             // A row declaration is not an open-ended standalone heading.
             return line.contains('|').then_some(letter);
         }
+        // An unrecognized/OCR-damaged declaration still ends the previous
+        // row's ownership. Never carry N across a source row "Type: 0".
+        if line.starts_with("Type:") || line.starts_with("| Type:") {
+            break;
+        }
     }
     None
 }
