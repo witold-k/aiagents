@@ -441,3 +441,22 @@ protocol rules.
 Checkpoint migration: a legacy checkpoint with `fact_audit_version = 7` and no
 `identity_projection_version` is recognized as projection generation 1. The
 migration does not clear completed audit results or require another model run.
+
+### Deterministic identity replay from an existing checkpoint
+
+For a **completed** extraction and coverage checkpoint, run the same extraction
+command with `AIFIX_IDENTITY_REPLAY=1` in its environment, for example:
+
+```sh
+AIFIX_IDENTITY_REPLAY=1 aifix -t extract_message_tables -a document.md
+```
+
+This performs the current source-grounded identity resolver again using the
+stored candidates and the unchanged source. It prints per-message counts,
+unresolved facts, positioned occurrences and overlapping duplicates, then
+returns **before audit and publication**. It does not write the checkpoint,
+call the model or overwrite previously published output. Incomplete checkpoints
+are rejected before extraction. Remove the environment variable for normal
+workflow operation. This is a **diagnostic replay**, not a new publication or
+semantic verification; the resolver still has format-specific identity
+assumptions.
