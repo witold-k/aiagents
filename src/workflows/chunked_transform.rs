@@ -52,6 +52,9 @@ struct ExtractionCheckpoint {
     fact_audit_cursor: usize,
     #[serde(default)]
     fact_audit_version: u32,
+    /// Version of the deterministic candidate-to-message projection, separate from review.
+    #[serde(default)]
+    identity_projection_version: u32,
     #[serde(default)]
     recovery_chunk: Option<usize>,
     #[serde(default)]
@@ -1495,6 +1498,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 audit: None,
                 fact_audit_cursor: 0,
                 fact_audit_version: 0,
+                identity_projection_version: 0,
                 recovery_chunk: None,
                 recovery_pending: Vec::new(),
                 recovery_records: Vec::new(),
@@ -2030,7 +2034,12 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         // BEFORE reviewing facts. The model's proposed filenames are never
         // used as canonical identities. Existing non-message facts survive.
         // The version gate makes checkpoint resume idempotent.
-        if checkpoint.fact_audit_version != 7 {
+        // Migrate already projected v7 checkpoints without replaying the
+        // extraction or invalidating their completed fact review.
+        if checkpoint.identity_projection_version == 0 && checkpoint.fact_audit_version == 7 {
+            checkpoint.identity_projection_version = 1;
+        }
+        if checkpoint.identity_projection_version != 1 {
             let source_windows: Vec<&str> = parts.iter().map(|part| part.text.as_str()).collect();
             let (groups, mut unresolved) =
                 message_identity::resolved_source_facts(&checkpoint.candidates, &source_windows);
@@ -2108,6 +2117,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             println!(
                 "## [CHUNKED] IDENTITY CONSOLIDATION: {accepted} source-backed candidate occurrences -> {consolidated} distinct typed message facts; {unresolved} unresolved candidate facts kept in checkpoint, not published"
             );
+            checkpoint.identity_projection_version = 1;
             checkpoint.fact_audit_version = 7;
             checkpoint.fact_audit_cursor = 0;
             if checkpoint.audit.is_some() {
