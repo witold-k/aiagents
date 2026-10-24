@@ -1,5 +1,35 @@
 use super::*;
 
+#[test]
+fn extraction_context_preserves_previous_type_and_excludes_current_evidence() {
+    let source = "## Type: G\nG description\ncontinued G parameters\n";
+    let part = Chunk {
+        start_byte: "## Type: G\nG description\n".len(),
+        start_line: 3,
+        end_line: 3,
+        text: "continued G parameters\n".to_owned(),
+    };
+    let context = preceding_extraction_context(source, &part, &part.text);
+    assert!(context.contains("Type: G"));
+    assert!(!context.contains("continued G parameters"));
+    assert!(context.contains("not evidence"));
+}
+
+#[test]
+fn recovery_context_stops_at_subwindow_boundary() {
+    let source = "Type: G\nfirst fact\nType: g\nsecond fact\n";
+    let part = Chunk {
+        start_byte: 0,
+        start_line: 1,
+        end_line: 4,
+        text: source.to_owned(),
+    };
+    let context = preceding_extraction_context(source, &part, "second fact\n");
+    assert!(context.contains("Type: g"));
+    assert!(!context.contains("second fact"));
+}
+
+
 mod checkpoint_review_tests {
     use super::*;
 
