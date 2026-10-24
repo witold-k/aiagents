@@ -807,7 +807,7 @@ fn record_source_facts(
                 end_line,
                 evidence_quote: None,
                 source_byte_offset: None,
-            evidence_occurrences: Vec::new(),
+                evidence_occurrences: Vec::new(),
                 review: FactReview::Pending,
             });
         }
@@ -835,18 +835,30 @@ fn record_positioned_candidate_fact(
         (part.start_line, part.end_line)
     };
     record_segmented_facts(
-        facts, path, vec![(statement.clone(), Some(quote.clone()))],
-        source_chunk, start_line, end_line,
+        facts,
+        path,
+        vec![(statement.clone(), Some(quote.clone()))],
+        source_chunk,
+        start_line,
+        end_line,
     );
-    let Some(fact) = facts.get_mut(path).and_then(|entries| entries.iter_mut().find(|f| f.statement == statement)) else {
+    let Some(fact) = facts
+        .get_mut(path)
+        .and_then(|entries| entries.iter_mut().find(|f| f.statement == statement))
+    else {
         return;
     };
-    if fact.source_chunk == source_chunk && fact.start_line == start_line && fact.end_line == end_line {
+    if fact.source_chunk == source_chunk
+        && fact.start_line == start_line
+        && fact.end_line == end_line
+    {
         fact.source_byte_offset = offset;
     }
     if let Some(occurrence) = fact.evidence_occurrences.iter_mut().find(|o| {
-        o.source_chunk == source_chunk && o.start_line == start_line &&
-        o.end_line == end_line && o.evidence_quote.as_deref() == Some(quote.as_str())
+        o.source_chunk == source_chunk
+            && o.start_line == start_line
+            && o.end_line == end_line
+            && o.evidence_quote.as_deref() == Some(quote.as_str())
     }) {
         occurrence.source_byte_offset = offset;
     }
@@ -2542,24 +2554,40 @@ mod segmented_evidence_tests {
     fn positioned_candidate_facts_keep_distinct_source_lines() {
         let source = "Type: A | command\n| first | value |\n| second | value |\n";
         let part = Chunk {
-            start_byte: 0, start_line: 1, end_line: 3, text: source.into(),
+            start_byte: 0,
+            start_line: 1,
+            end_line: 3,
+            text: source.into(),
         };
         let mut facts = BTreeMap::new();
         let q1 = "| first | value |";
         let q2 = "| second | value |";
         record_positioned_candidate_fact(
-            &mut facts, "messages/upper_a.md", "first".into(), q1.into(),
-            0, &part, Some(source.find(q1).unwrap()),
+            &mut facts,
+            "messages/upper_a.md",
+            "first".into(),
+            q1.into(),
+            0,
+            &part,
+            Some(source.find(q1).unwrap()),
         );
         record_positioned_candidate_fact(
-            &mut facts, "messages/upper_a.md", "second".into(), q2.into(),
-            0, &part, Some(source.find(q2).unwrap()),
+            &mut facts,
+            "messages/upper_a.md",
+            "second".into(),
+            q2.into(),
+            0,
+            &part,
+            Some(source.find(q2).unwrap()),
         );
         let found = &facts["messages/upper_a.md"];
         assert_eq!((found[0].start_line, found[0].end_line), (2, 2));
         assert_eq!((found[1].start_line, found[1].end_line), (3, 3));
         assert_ne!(found[0].source_byte_offset, found[1].source_byte_offset);
-        assert_eq!(found[0].evidence_occurrences[0].source_byte_offset, found[0].source_byte_offset);
+        assert_eq!(
+            found[0].evidence_occurrences[0].source_byte_offset,
+            found[0].source_byte_offset
+        );
     }
 
     #[test]
