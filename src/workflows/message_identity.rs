@@ -316,18 +316,28 @@ fn resolve_fact_type(source: &str, fact: &CandidateFact) -> Result<u8, Resolutio
                 .ok_or(Failure::InvalidLocator)?
         }
     };
-    let source_type = super::explicit_type_label(
-        source
-            .lines()
-            .nth(line_index)
-            .ok_or(Failure::InvalidLocator)?
-            .trim()
-            .trim_start_matches('#')
-            .trim(),
-    )
-    .or_else(|| super::section_type_for_line(source, line_index))
-    .or_else(|| table_block_type_for_line(source, line_index))
-    .ok_or(Failure::NoSourceType)?;
+    // Independent ownership signals must agree. A nearby heading cannot
+    // silently override a contradictory declaration in a table.
+    let line = source
+        .lines()
+        .nth(line_index)
+        .ok_or(Failure::InvalidLocator)?
+        .trim()
+        .trim_start_matches('#')
+        .trim();
+    let signals = [
+        super::explicit_type_label(line),
+        super::section_type_for_line(source, line_index),
+        table_block_type_for_line(source, line_index),
+    ];
+    let mut declared = None;
+    for signal in signals.into_iter().flatten() {
+        if declared.is_some_and(|previous| previous != signal) {
+            return Err(Failure::ConflictingType);
+        }
+        declared = Some(signal);
+    }
+    let source_type = declared.ok_or(Failure::NoSourceType)?;
     if let Some(stated) = super::explicit_type_label(&fact.statement)
         && stated != source_type
     {
@@ -491,6 +501,26 @@ mod tests {
         let (groups, unresolved) = resolved_source_facts(&[candidate], &[&source]);
         assert_eq!(unresolved, 0);
         assert_eq!(groups["messages/upper_a.md"].len(), 1);
+    }
+
+    #[test]
+    fn contradictory_heading_and_table_ownership_remains_unresolved() {
+        let source = "Type: A\n| Type: B | command |\n| field | value |";
+        let candidate = MessageCandidate {
+            id: "window-0-candidate-0".into(),
+            proposed_name: "messages/upper_a.md".into(),
+            facts: vec![CandidateFact {
+                statement: "field".into(),
+                segment_id: "S3".into(),
+                evidence_quote: Some("| field | value |".into()),
+                source_byte_offset: Some(source.find("| field").unwrap()),
+                source_locator_ambiguous: false,
+            }],
+        };
+        let (groups, unresolved) = resolved_source_facts(&[candidate.clone()], &[source]);
+        assert!(groups.is_empty());
+        assert_eq!(unresolved, 1);
+        assert_eq!(resolution_diagnostics(&[candidate], &[source]).conflicting_type, 1);
     }
 
     #[test]
