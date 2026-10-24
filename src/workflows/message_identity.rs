@@ -402,6 +402,88 @@ fn resolve_fact_type_in_document(
     Ok(letter)
 }
 
+/// A source-ordered history probe. This is deliberately diagnostic: a previous
+/// type declaration is context, not automatically proof of ownership. The
+/// replay can expose where the current strict resolver loses that context.
+pub(super) fn unresolved_history_samples(
+    candidates: &[MessageCandidate],
+    sources: &[&str],
+    starts: &[usize],
+    document: &str,
+    limit: usize,
+) -> Vec<String> {
+    let mut facts = Vec::new();
+    for candidate in candidates {
+        let Some(index) = source_window_index(&candidate.id) else {
+            continue;
+        };
+        let Some((window, start)) = sources.get(index).zip(starts.get(index)) else {
+            continue;
+        };
+        for fact in &candidate.facts {
+            if !matches!(
+                resolve_fact_type_in_document(window, *start, document, fact),
+                Err(ResolutionFailure::NoSourceType)
+            ) {
+                continue;
+            }
+            let Some(offset) = fact.source_byte_offset else {
+                continue;
+            };
+            let Some(absolute) = start.checked_add(offset) else {
+                continue;
+            };
+            facts.push((absolute, fact.statement.as_str()));
+        }
+    }
+    facts.sort_unstable();
+    let mut samples = Vec::new();
+    let mut last_offset = None;
+    for (absolute, statement) in facts {
+        if last_offset == Some(absolute) {
+            continue;
+        }
+        last_offset = Some(absolute);
+        let Some(prefix) = document.get(..absolute) else {
+            continue;
+        };
+        let line_number = prefix.bytes().filter(|byte| *byte == b'\n').count() + 1;
+        let mut last_declaration = None;
+        let mut last_heading = None;
+        for (index, line) in prefix.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.starts_with('#') {
+                last_heading = Some((index + 1, trimmed));
+            }
+            // Only a standalone declaration is eligible for a history hint.
+            // Inline table references and examples are not active headings.
+            let heading = trimmed.trim_start_matches('#').trim();
+            if heading.starts_with("Type:")
+                && super::explicit_type_label(heading).is_some()
+                && heading
+                    .strip_prefix("Type:")
+                    .is_some_and(|rest| rest.trim().len() == 1)
+            {
+                last_declaration = Some((index + 1, heading));
+            }
+        }
+        let declaration = last_declaration
+            .map(|(line, value)| format!("line {line}: {value}"))
+            .unwrap_or_else(|| "none".into());
+        let heading = last_heading
+            .map(|(line, value)| format!("line {line}: {value}"))
+            .unwrap_or_else(|| "none".into());
+        let excerpt: String = statement.chars().take(100).collect();
+        samples.push(format!(
+            "line={line_number} last_type=[{declaration}] last_heading=[{heading}] statement={excerpt:?}"
+        ));
+        if samples.len() >= limit {
+            break;
+        }
+    }
+    samples
+}
+
 pub(super) fn resolution_diagnostics_in_document(
     candidates: &[MessageCandidate],
     sources: &[&str],
