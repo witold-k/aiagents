@@ -169,8 +169,7 @@ fn misplaced_fact_identity_is_validated_and_promoted() {
 fn invalid_file_does_not_discard_valid_sibling() {
     let source = "Type: G | Status request\n";
     let response = r#"{"files":[{"path":"messages/g.md","identity_segment_id":"S1","facts":[{"statement":"G status","segment_id":"S1"}]},{"path":"messages/invented.md","identity_segment_id":"S1","facts":[{"statement":"invented","segment_id":"S1"}]}]}"#;
-    let (records, rejected) =
-        parse_segmented_window_recoverable(response, source, source).unwrap();
+    let (records, rejected) = parse_segmented_window_recoverable(response, source, source).unwrap();
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].0, "messages/g.md");
     assert_eq!(rejected, 1);
@@ -180,8 +179,7 @@ fn invalid_file_does_not_discard_valid_sibling() {
 fn invalid_fact_does_not_discard_valid_siblings() {
     let source = "Type: A | Alive interval\nType: B | Beam selection\n";
     let response = r#"{"files":[{"path":"messages/a.md","facts":[{"statement":"Alive interval","segment_id":"S1"},{"statement":"Wrong beam","segment_id":"S2"},{"statement":"Keepalive interval","segment_id":"S1"}]}]}"#;
-    let (records, rejected) =
-        parse_segmented_window_recoverable(response, source, source).unwrap();
+    let (records, rejected) = parse_segmented_window_recoverable(response, source, source).unwrap();
     assert_eq!(rejected, 1);
     let kept: Vec<&str> = records
         .iter()
@@ -195,8 +193,7 @@ fn invalid_fact_does_not_discard_valid_siblings() {
 fn conflicting_fact_identities_are_not_salvaged_individually() {
     let source = "Type: A | Alive interval\n";
     let response = r#"{"files":[{"path":"messages/a.md","facts":[{"statement":"First","segment_id":"S1","identity_segment_id":"S1"},{"statement":"Second","segment_id":"S1","identity_segment_id":"S2"}]}]}"#;
-    let (records, rejected) =
-        parse_segmented_window_recoverable(response, source, source).unwrap();
+    let (records, rejected) = parse_segmented_window_recoverable(response, source, source).unwrap();
     assert!(records.is_empty());
     assert_eq!(rejected, 1);
 }
@@ -205,8 +202,7 @@ fn conflicting_fact_identities_are_not_salvaged_individually() {
 fn all_invalid_files_do_not_trigger_json_recovery() {
     let source = "Type: G | Status request\n";
     let response = r#"{"files":[{"path":"messages/invented.md","identity_segment_id":"S1","facts":[{"statement":"invented","segment_id":"S1"}]}]}"#;
-    let (records, rejected) =
-        parse_segmented_window_recoverable(response, source, source).unwrap();
+    let (records, rejected) = parse_segmented_window_recoverable(response, source, source).unwrap();
     assert!(records.is_empty());
     assert_eq!(rejected, 1);
 }
@@ -228,8 +224,7 @@ fn legacy_source_anchor_is_not_trusted_as_a_quote() {
 
 #[test]
 fn globally_declared_identity_accepts_facts_from_later_window() {
-    let full_source =
-        "Type: G | Status request\nOther prose.\nThe G message requests status.\n";
+    let full_source = "Type: G | Status request\nOther prose.\nThe G message requests status.\n";
     let window = "The G message requests status.\n";
     let response = r#"{"files":[{"path":"messages/g.md","facts":[{"statement":"G requests status","segment_id":"S1"}]}]}"#;
     let parsed = parse_segmented_window_with_identity(response, window, full_source).unwrap();
@@ -258,8 +253,7 @@ fn canonical_paths_preserve_uppercase_and_lowercase() {
 fn mixed_case_facts_route_to_distinct_files() {
     let source = "Type: A | Modem alive\nType: a | Antenna alive\n";
     let response = r#"{"files":[{"path":"messages/a.md","facts":[{"statement":"Type: A | Modem alive","segment_id":"S1"},{"statement":"Type: a | Antenna alive","segment_id":"S2"}]}]}"#;
-    let (records, rejected) =
-        parse_segmented_window_recoverable(response, source, source).unwrap();
+    let (records, rejected) = parse_segmented_window_recoverable(response, source, source).unwrap();
     assert_eq!(rejected, 0);
     assert_eq!(records.len(), 2);
     assert_eq!(records[0].0, "messages/upper_a.md");
@@ -270,8 +264,7 @@ fn mixed_case_facts_route_to_distinct_files() {
 fn mixed_case_untyped_fact_is_not_guessed() {
     let source = "Type: A | Modem alive\nType: a | Antenna alive\nOther detail\n";
     let response = r#"{"files":[{"path":"messages/a.md","facts":[{"statement":"Unattributed detail","segment_id":"S3"},{"statement":"Type: A | Modem alive","segment_id":"S1"}]}]}"#;
-    let (records, rejected) =
-        parse_segmented_window_recoverable(response, source, source).unwrap();
+    let (records, rejected) = parse_segmented_window_recoverable(response, source, source).unwrap();
     assert_eq!(rejected, 1);
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].0, "messages/upper_a.md");
@@ -290,8 +283,7 @@ fn standalone_type_heading_owns_contiguous_evidence_lines() {
     let source = "Type: A\nAlive interval parameter\nModem keepalive timeout\n";
     let wrong = r#"{"files":[{"path":"messages/b.md","facts":[{"statement":"Keepalive timeout","segment_id":"S3"}]}]}"#;
     let identity_source = format!("{source}Type: B\n");
-    let err =
-        parse_segmented_window_with_identity(wrong, source, &identity_source).unwrap_err();
+    let err = parse_segmented_window_with_identity(wrong, source, &identity_source).unwrap_err();
     assert!(err.contains("Evidence declares Type: A"), "{err}");
     let right = r#"{"files":[{"path":"messages/a.md","facts":[{"statement":"Keepalive timeout","segment_id":"S3"}]}]}"#;
     assert!(parse_segmented_window(right, source).is_ok());
