@@ -834,34 +834,40 @@ fn record_positioned_candidate_fact(
     } else {
         (part.start_line, part.end_line)
     };
-    record_segmented_facts(
-        facts,
-        path,
-        vec![(statement.clone(), Some(quote.clone()))],
+    let occurrence = FactEvidenceOccurrence {
         source_chunk,
         start_line,
         end_line,
-    );
-    let Some(fact) = facts
-        .get_mut(path)
-        .and_then(|entries| entries.iter_mut().find(|f| f.statement == statement))
-    else {
-        return;
+        evidence_quote: Some(quote.clone()),
+        source_byte_offset: offset,
     };
-    if fact.source_chunk == source_chunk
-        && fact.start_line == start_line
-        && fact.end_line == end_line
-    {
-        fact.source_byte_offset = offset;
+    let destination = facts.entry(path.to_owned()).or_default();
+    if let Some(existing) = destination.iter_mut().find(|fact| fact.statement == statement) {
+        // Exact position is part of occurrence identity: two quotes on the
+        // same line must not overwrite each other's source byte offsets.
+        if !existing.evidence_occurrences.contains(&occurrence) {
+            existing.evidence_occurrences.push(occurrence);
+        }
+        if existing.evidence_quote.is_none() {
+            existing.evidence_quote = Some(quote);
+            existing.source_chunk = source_chunk;
+            existing.start_line = start_line;
+            existing.end_line = end_line;
+            existing.source_byte_offset = offset;
+            existing.review = FactReview::Pending;
+        }
+        return;
     }
-    if let Some(occurrence) = fact.evidence_occurrences.iter_mut().find(|o| {
-        o.source_chunk == source_chunk
-            && o.start_line == start_line
-            && o.end_line == end_line
-            && o.evidence_quote.as_deref() == Some(quote.as_str())
-    }) {
-        occurrence.source_byte_offset = offset;
-    }
+    destination.push(SourceFact {
+        statement,
+        source_chunk,
+        start_line,
+        end_line,
+        evidence_quote: Some(quote),
+        source_byte_offset: offset,
+        evidence_occurrences: vec![occurrence],
+        review: FactReview::Pending,
+    });
 }
 
 /// A reviewed assertion may only be reused for the exact same positioned
@@ -2548,6 +2554,50 @@ mod segmented_evidence_tests {
         previous.review = FactReview::Pending;
         current.source_byte_offset = Some(15);
         assert!(!same_source_occurrence_for_audit(&previous, &current));
+    }
+
+    #[test]
+    fn repeated_statement_same_line_preserves_both_exact_offsets() {
+        let source = "Type: A\nrepeat here and repeat here";
+        let part = Chunk {
+            start_byte: 0,
+            start_line: 1,
+            end_line: 2,
+            text: source.into(),
+        };
+        let mut facts = BTreeMap::new();
+        let offsets: Vec<usize> = source.match_indices("repeat").map(|(i, _)| i).collect();
+        for &offset in &offsets {
+            record_positioned_candidate_fact(
+                &mut facts,
+                "messages/upper_a.md",
+                "identical assertion".into(),
+                "repeat".into(),
+                0,
+                &part,
+                Some(offset),
+            );
+        }
+        // One published assertion, two independently located occurrences.
+        let found = &facts["messages/upper_a.md"];
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].evidence_occurrences.len(), 2);
+        assert_eq!(found[0].source_byte_offset, Some(offsets[0]));
+        assert_eq!(
+            found[0].evidence_occurrences.iter().map(|o| o.source_byte_offset).collect::<Vec<_>>(),
+            offsets.iter().copied().map(Some).collect::<Vec<_>>()
+        );
+        assert!(found[0].evidence_occurrences.iter().all(|o| o.start_line == 2));
+        record_positioned_candidate_fact(
+            &mut facts,
+            "messages/upper_a.md",
+            "identical assertion".into(),
+            "repeat".into(),
+            0,
+            &part,
+            Some(offsets[0]),
+        );
+        assert_eq!(facts["messages/upper_a.md"][0].evidence_occurrences.len(), 2);
     }
 
     #[test]
