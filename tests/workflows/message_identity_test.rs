@@ -58,6 +58,28 @@ fn document_context_rejects_mismatched_absolute_quote() {
     );
 }
 
+#[test]
+fn unresolved_history_reports_previous_declaration_without_promoting_fact() {
+    let document = "Type: G\n\n# Other section\nUnrelated statement\n";
+    let start = document.find("Unrelated statement").unwrap();
+    let window = &document[start..];
+    let candidate = MessageCandidate {
+        id: "window-0-candidate-0".into(),
+        proposed_name: "messages/g.md".into(),
+        facts: vec![CandidateFact {
+            statement: "Unrelated statement".into(),
+            segment_id: "S1".into(),
+            evidence_quote: Some("Unrelated statement".into()),
+            source_byte_offset: Some(0),
+            source_locator_ambiguous: false,
+        }],
+    };
+    let samples = unresolved_history_samples(&[candidate], &[window], &[start], document, 5);
+    assert_eq!(samples.len(), 1);
+    assert!(samples[0].contains("last_type=[line 1: Type: G]"));
+    assert!(samples[0].contains("last_heading=[line 3: # Other section]"));
+}
+
 fn fact(statement: &str) -> CandidateFact {
     CandidateFact {
         statement: statement.into(),
