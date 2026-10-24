@@ -209,20 +209,8 @@ fn evidence_segments(source: &str) -> Vec<EvidenceSegment> {
 // previous model response. This makes resume and recovery splits deterministic.
 // It is a hint to the model, not evidence for a fact or a message identity.
 fn preceding_extraction_context(source: &str, part: &Chunk, window: &str) -> String {
-    let preceding_lines = part.start_line.saturating_sub(1);
-    let line_start = source
-        .split_inclusive('\n')
-        .take(preceding_lines)
-        .map(str::len)
-        .sum::<usize>();
-    // A chunk may begin in the middle of a source line. Locate its exact
-    // bytes instead of treating start_line as a byte-accurate chunk start.
-    let part_offset = source[line_start..]
-        .find(&part.text)
-        .map(|offset| line_start + offset)
-        .unwrap_or(line_start);
     let local_offset = part.text.find(window).unwrap_or(0);
-    let before = &source[..(part_offset + local_offset).min(source.len())];
+    let before = &source[..(part.start_byte + local_offset).min(source.len())];
     let tail_start = before
         .char_indices()
         .rev()
