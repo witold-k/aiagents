@@ -121,7 +121,7 @@ fn flattened_table_stops_at_any_new_heading() {
 }
 
 #[test]
-fn document_identity_conflict_overrides_local_success() {
+fn document_identity_agrees_with_local_explicit_declaration() {
     let document = "## 7.8 Message Types\nType: A | Query\nType: B | Other\n";
     let start = document.find("Type: B").unwrap();
     let window = &document[start..];
