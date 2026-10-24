@@ -447,3 +447,24 @@ mod recovery_window_tests {
         }
     }
 }
+
+mod absolute_chunk_provenance_tests {
+    use super::*;
+
+    #[test]
+    fn overlapping_unicode_windows_retain_exact_absolute_offsets() {
+        let source = "é漢🦀".repeat(900);
+        let windows = chunks(&source, 700);
+        assert!(windows.len() > 1);
+        for window in &windows {
+            let end = window.start_byte + window.text.len();
+            assert_eq!(source.get(window.start_byte..end), Some(window.text.as_str()));
+            assert!(source.is_char_boundary(window.start_byte));
+            assert!(source.is_char_boundary(end));
+        }
+        for pair in windows.windows(2) {
+            assert!(pair[0].start_byte < pair[1].start_byte);
+            assert!(pair[0].start_byte + pair[0].text.len() > pair[1].start_byte);
+        }
+    }
+}
