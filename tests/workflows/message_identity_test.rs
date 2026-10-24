@@ -222,7 +222,8 @@ fn never_merges_upper_and_lower_or_untyped_candidates() {
 
 #[test]
 fn source_section_resolves_untyped_fact_independently_of_candidate_name() {
-    let source = "Type: A\nfield one is required\nfield two is optional\n\nType: a\nfield three is required";
+    let source =
+        "Type: A\nfield one is required\nfield two is optional\n\nType: a\nfield three is required";
     let candidates = vec![MessageCandidate {
         id: "window-0-candidate-0".into(),
         proposed_name: "messages/unknown.md".into(),
