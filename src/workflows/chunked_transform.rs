@@ -2181,13 +2181,12 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         // before fact auditing and publication; neither invokes the model nor
         // mutates the checkpoint or an existing output directory.
         if std::env::var_os("AIFIX_IDENTITY_REPLAY").is_some() {
-            let (groups, unresolved) =
-                message_identity::resolved_source_facts_in_document(
-                    &checkpoint.candidates,
-                    &source_windows,
-                    &source_starts,
-                    &masked_source,
-                );
+            let (groups, unresolved) = message_identity::resolved_source_facts_in_document(
+                &checkpoint.candidates,
+                &source_windows,
+                &source_starts,
+                &masked_source,
+            );
             let mut seen = std::collections::BTreeSet::new();
             let mut duplicates = 0_usize;
             let mut positioned = 0_usize;
@@ -2242,13 +2241,12 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         migrate_identity_projection_version(&mut checkpoint);
         if checkpoint.identity_projection_version != 2 {
             let source_windows: Vec<&str> = parts.iter().map(|part| part.text.as_str()).collect();
-            let (groups, mut unresolved) =
-                message_identity::resolved_source_facts_in_document(
-                    &checkpoint.candidates,
-                    &source_windows,
-                    &source_starts,
-                    &masked_source,
-                );
+            let (groups, mut unresolved) = message_identity::resolved_source_facts_in_document(
+                &checkpoint.candidates,
+                &source_windows,
+                &source_starts,
+                &masked_source,
+            );
             checkpoint
                 .facts
                 .retain(|path, _| !path.starts_with("messages/"));
