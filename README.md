@@ -424,7 +424,7 @@ Apache-2.0 © 2026 Witold Kaminski. See [LICENSE](LICENSE).
 
 ### Follow-up: source provenance and identity ownership (experimental)
 
-P4 projection version 7 stores the absolute starting byte of each normalized
+P4 projection generation 1 (formerly tracked as fact-audit version 7) stores the absolute starting byte of each normalized
 source chunk, rejects conflicting independently detected ownership signals,
 and suppresses duplicate positioned fact occurrences from overlapping chunks.
 Legacy candidates without exact byte offsets are not deduplicated by guessed
@@ -434,6 +434,10 @@ resets message-fact reviews.
 These safeguards do **not** make the resolver format-independent: explicit
 `Type:` labels, single-character identities and message path conventions are
 still heuristic assumptions. A generic, document-derived definition model,
-separate projection/audit versioning and semantic fact verification remain
+semantic fact verification and a fully generic definition model remain
 follow-up work. OpenAMIP is a regression fixture, not a source of hard-coded
 protocol rules.
+
+Checkpoint migration: a legacy checkpoint with `fact_audit_version = 7` and no
+`identity_projection_version` is recognized as projection generation 1. The
+migration does not clear completed audit results or require another model run.
