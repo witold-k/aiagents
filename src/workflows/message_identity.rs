@@ -437,13 +437,16 @@ pub(super) fn unresolved_history_samples(
         }
     }
     facts.sort_unstable();
+    // Sample across the whole document instead of showing only the first
+    // unresolved rows (which tend to cluster in the same early table).
+    facts.dedup_by_key(|(absolute, _)| *absolute);
+    let count = facts.len();
+    if limit == 0 {
+        return Vec::new();
+    }
+    let stride = count.div_ceil(limit);
     let mut samples = Vec::new();
-    let mut last_offset = None;
-    for (absolute, statement) in facts {
-        if last_offset == Some(absolute) {
-            continue;
-        }
-        last_offset = Some(absolute);
+    for (absolute, statement) in facts.into_iter().step_by(stride.max(1)) {
         let Some(prefix) = document.get(..absolute) else {
             continue;
         };
@@ -474,8 +477,18 @@ pub(super) fn unresolved_history_samples(
             .map(|(line, value)| format!("line {line}: {value}"))
             .unwrap_or_else(|| "none".into());
         let excerpt: String = statement.chars().take(100).collect();
+        let lines: Vec<&str> = document.lines().collect();
+        let from = line_number.saturating_sub(4);
+        let to = (line_number + 2).min(lines.len());
+        let nearby = (from..to)
+            .map(|i| {
+                let content: String = lines[i].chars().take(140).collect();
+                format!("{}:{content}", i + 1)
+            })
+            .collect::<Vec<_>>()
+            .join(" || ");
         samples.push(format!(
-            "line={line_number} last_type=[{declaration}] last_heading=[{heading}] statement={excerpt:?}"
+            "line={line_number} last_type=[{declaration}] last_heading=[{heading}] statement={excerpt:?} nearby=[{nearby}]"
         ));
         if samples.len() >= limit {
             break;
