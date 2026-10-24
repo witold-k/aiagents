@@ -29,7 +29,6 @@ fn recovery_context_stops_at_subwindow_boundary() {
     assert!(!context.contains("second fact"));
 }
 
-
 mod checkpoint_review_tests {
     use super::*;
 
