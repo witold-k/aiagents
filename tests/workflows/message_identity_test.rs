@@ -1,5 +1,64 @@
 use super::*;
 
+#[test]
+fn document_context_resolves_table_type_across_chunk_boundary() {
+    let document = "| Type: G | Modem message |\n| field | one |\n| field | two |\n";
+    let start = document.find("| field | two |").unwrap();
+    let window = &document[start..];
+    let fact = CandidateFact {
+        statement: "field two".into(),
+        segment_id: "S1".into(),
+        evidence_quote: Some("| field | two |".into()),
+        source_byte_offset: Some(0),
+        source_locator_ambiguous: false,
+    };
+    assert_eq!(
+        resolve_fact_type_in_document(window, start, document, &fact),
+        Ok(b'G')
+    );
+    assert_eq!(
+        resolve_fact_type(window, &fact),
+        Err(ResolutionFailure::NoSourceType)
+    );
+}
+
+#[test]
+fn document_context_does_not_cross_blank_table_boundary() {
+    let document = "| Type: G | Modem message |\n\n| field | two |\n";
+    let start = document.find("| field | two |").unwrap();
+    let window = &document[start..];
+    let fact = CandidateFact {
+        statement: "field two".into(),
+        segment_id: "S1".into(),
+        evidence_quote: Some("| field | two |".into()),
+        source_byte_offset: Some(0),
+        source_locator_ambiguous: false,
+    };
+    assert_eq!(
+        resolve_fact_type_in_document(window, start, document, &fact),
+        Err(ResolutionFailure::NoSourceType)
+    );
+}
+
+#[test]
+fn document_context_rejects_mismatched_absolute_quote() {
+    let document = "| Type: G | Modem message |\n| field | two |\n";
+    let start = document.find("| field | two |").unwrap();
+    let window = &document[start..];
+    let fact = CandidateFact {
+        statement: "field two".into(),
+        segment_id: "S1".into(),
+        evidence_quote: Some("| field | two |".into()),
+        source_byte_offset: Some(0),
+        source_locator_ambiguous: false,
+    };
+    assert_eq!(
+        resolve_fact_type_in_document(window, start + 1, document, &fact),
+        Err(ResolutionFailure::InvalidLocator)
+    );
+}
+
+
 fn fact(statement: &str) -> CandidateFact {
     CandidateFact {
         statement: statement.into(),
