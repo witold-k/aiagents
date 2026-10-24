@@ -958,6 +958,8 @@ pub fn parse_audit_decision(response: &str) -> Result<bool, String> {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Chunk {
+    /// Absolute byte position in the normalized document.
+    pub start_byte: usize,
     pub start_line: usize,
     pub end_line: usize,
     pub text: String,
@@ -994,6 +996,7 @@ pub fn chunks(source: &str, limit: usize) -> Vec<Chunk> {
         let newlines = text.bytes().filter(|byte| *byte == b'\n').count();
         let end_line = start_line + newlines - usize::from(text.ends_with('\n'));
         result.push(Chunk {
+            start_byte,
             start_line,
             end_line,
             text: text.to_owned(),
@@ -2027,7 +2030,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         // BEFORE reviewing facts. The model's proposed filenames are never
         // used as canonical identities. Existing non-message facts survive.
         // The version gate makes checkpoint resume idempotent.
-        if checkpoint.fact_audit_version != 6 {
+        if checkpoint.fact_audit_version != 7 {
             let source_windows: Vec<&str> = parts.iter().map(|part| part.text.as_str()).collect();
             let (groups, mut unresolved) =
                 message_identity::resolved_source_facts(&checkpoint.candidates, &source_windows);
@@ -2036,6 +2039,8 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 .retain(|path, _| !path.starts_with("messages/"));
             files.retain(|path, _| !path.starts_with("messages/"));
             let mut accepted = 0_usize;
+            let mut overlapping_duplicates = 0_usize;
+            let mut seen_locations = std::collections::BTreeSet::new();
             for (path, occurrences) in groups {
                 for (source_chunk, candidate_fact) in occurrences {
                     let Some(part) = parts.get(source_chunk) else {
@@ -2057,6 +2062,24 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                         unresolved += 1;
                         continue;
                     }
+                    // Overlapping chunks may report the same physical source
+                    // location. Deduplicate only exact positioned occurrences;
+                    // legacy facts without offsets remain separate.
+                    if let Some(offset) = candidate_fact.source_byte_offset {
+                        let Some(absolute) = part.start_byte.checked_add(offset) else {
+                            unresolved += 1;
+                            continue;
+                        };
+                        if !seen_locations.insert((
+                            path.clone(),
+                            candidate_fact.statement.clone(),
+                            absolute,
+                            quote.clone(),
+                        )) {
+                            overlapping_duplicates += 1;
+                            continue;
+                        }
+                    }
                     record_segmented_facts(
                         &mut checkpoint.facts,
                         &path,
@@ -2067,6 +2090,11 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                     );
                     accepted += 1;
                 }
+            }
+            if overlapping_duplicates > 0 {
+                println!(
+                    "## [CHUNKED] P4 OVERLAP DEDUP: {overlapping_duplicates} duplicate source occurrences"
+                );
             }
             if unresolved > 0 {
                 checkpoint.unresolved_findings = true;
@@ -2080,7 +2108,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             println!(
                 "## [CHUNKED] IDENTITY CONSOLIDATION: {accepted} source-backed candidate occurrences -> {consolidated} distinct typed message facts; {unresolved} unresolved candidate facts kept in checkpoint, not published"
             );
-            checkpoint.fact_audit_version = 6;
+            checkpoint.fact_audit_version = 7;
             checkpoint.fact_audit_cursor = 0;
             if checkpoint.audit.is_some() {
                 checkpoint.unresolved_findings = true;
