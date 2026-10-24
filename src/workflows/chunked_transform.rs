@@ -842,7 +842,10 @@ fn record_positioned_candidate_fact(
         source_byte_offset: offset,
     };
     let destination = facts.entry(path.to_owned()).or_default();
-    if let Some(existing) = destination.iter_mut().find(|fact| fact.statement == statement) {
+    if let Some(existing) = destination
+        .iter_mut()
+        .find(|fact| fact.statement == statement)
+    {
         // Exact position is part of occurrence identity: two quotes on the
         // same line must not overwrite each other's source byte offsets.
         if !existing.evidence_occurrences.contains(&occurrence) {
@@ -2584,10 +2587,19 @@ mod segmented_evidence_tests {
         assert_eq!(found[0].evidence_occurrences.len(), 2);
         assert_eq!(found[0].source_byte_offset, Some(offsets[0]));
         assert_eq!(
-            found[0].evidence_occurrences.iter().map(|o| o.source_byte_offset).collect::<Vec<_>>(),
+            found[0]
+                .evidence_occurrences
+                .iter()
+                .map(|o| o.source_byte_offset)
+                .collect::<Vec<_>>(),
             offsets.iter().copied().map(Some).collect::<Vec<_>>()
         );
-        assert!(found[0].evidence_occurrences.iter().all(|o| o.start_line == 2));
+        assert!(
+            found[0]
+                .evidence_occurrences
+                .iter()
+                .all(|o| o.start_line == 2)
+        );
         record_positioned_candidate_fact(
             &mut facts,
             "messages/upper_a.md",
@@ -2597,7 +2609,10 @@ mod segmented_evidence_tests {
             &part,
             Some(offsets[0]),
         );
-        assert_eq!(facts["messages/upper_a.md"][0].evidence_occurrences.len(), 2);
+        assert_eq!(
+            facts["messages/upper_a.md"][0].evidence_occurrences.len(),
+            2
+        );
     }
 
     #[test]
