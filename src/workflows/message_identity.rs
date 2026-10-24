@@ -453,6 +453,7 @@ pub(super) fn resolved_source_facts_in_document(
     (groups, unresolved)
 }
 
+#[cfg(test)]
 fn source_fact_type(source: &str, fact: &CandidateFact) -> Option<u8> {
     resolve_fact_type(source, fact).ok()
 }
@@ -480,6 +481,7 @@ pub(super) struct ResolutionDiagnostics {
     pub conflicting_type: usize,
 }
 
+#[cfg(test)]
 pub(super) fn resolution_diagnostics(
     candidates: &[MessageCandidate],
     sources: &[&str],
@@ -507,6 +509,7 @@ pub(super) fn resolution_diagnostics(
 
 /// Consolidate on a per-fact basis, with original source context. Unknown
 /// identities remain in the checkpoint and never enter canonical output.
+#[cfg(test)]
 pub(super) fn resolved_source_facts(
     candidates: &[MessageCandidate],
     sources: &[&str],
