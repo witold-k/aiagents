@@ -1686,7 +1686,10 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 }
                 let preceding = preceding_extraction_context(&masked_source, part, &window);
                 let window_context = if window == part.text {
-                    format!("{preceding}{}", context.replace(&part.text, &segmented_source(&window)))
+                    format!(
+                        "{preceding}{}",
+                        context.replace(&part.text, &segmented_source(&window))
+                    )
                 } else {
                     format!(
                         "{preceding}SOURCE: {}\nCHUNK: {}/{} (recovery window)\nLINES: {}-{}\n\n=== SOURCE ===\n{}",
@@ -1915,8 +1918,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                         checkpoint.unresolved_findings = true;
                         break;
                     }
-                    let preceding =
-                        preceding_extraction_context(&masked_source, part, &window);
+                    let preceding = preceding_extraction_context(&masked_source, part, &window);
                     let context = format!(
                         "{preceding}SOURCE CHUNK {}/{} LINES {}-{}\n\n=== KNOWN MESSAGES ===\n{inventory}\n\n=== SOURCE ===\n{}",
                         index + 1,
