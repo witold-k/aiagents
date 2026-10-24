@@ -110,7 +110,8 @@ fn flattened_history_never_claims_semantics_or_appendix() {
 
 #[test]
 fn flattened_table_detection_is_independent_of_section_number() {
-    let document = "# Protocol\n## 7.8 Message Types, Sender (Device)\nType: Q | Query\nA continuation line\n";
+    let document =
+        "# Protocol\n## 7.8 Message Types, Sender (Device)\nType: Q | Query\nA continuation line\n";
     assert_eq!(flattened_message_table_type(document, 3), Some(b'Q'));
 }
 
