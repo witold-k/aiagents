@@ -272,12 +272,14 @@ fn flattened_message_table_type(source: &str, line_index: usize) -> Option<u8> {
     let mut in_message_table = false;
     for line in lines.iter().take(line_index + 1) {
         let trimmed = line.trim();
-        if trimmed.starts_with("## 2.3 Message Types")
-            || trimmed.starts_with("## 2.4 Message Types")
-        {
-            in_message_table = true;
-        } else if trimmed.starts_with("## ") || trimmed.starts_with("# Appendix") {
-            in_message_table = false;
+        if trimmed.starts_with('#') {
+            // Structural context, not a specification-specific section number.
+            // A new heading always ends the preceding table's ownership.
+            in_message_table = trimmed
+                .trim_start_matches('#')
+                .trim()
+                .to_ascii_lowercase()
+                .contains("message types");
         }
     }
     if !in_message_table {
@@ -401,7 +403,15 @@ fn resolve_fact_type_in_document(
     fact: &CandidateFact,
 ) -> Result<u8, ResolutionFailure> {
     let local = resolve_fact_type(window, fact);
-    if !matches!(local, Err(ResolutionFailure::NoSourceType)) {
+    if matches!(
+        local,
+        Err(
+            ResolutionFailure::AmbiguousLocator
+                | ResolutionFailure::MissingEvidence
+                | ResolutionFailure::InvalidLocator
+                | ResolutionFailure::ConflictingType
+        )
+    ) {
         return local;
     }
     let offset = fact
@@ -441,7 +451,12 @@ fn resolve_fact_type_in_document(
         }
         declared = Some(signal);
     }
-    let letter = declared.ok_or(ResolutionFailure::NoSourceType)?;
+    if let (Ok(local_letter), Some(document_letter)) = (&local, declared)
+        && *local_letter != document_letter
+    {
+        return Err(ResolutionFailure::ConflictingType);
+    }
+    let letter = declared.or_else(|| local.ok()).ok_or(ResolutionFailure::NoSourceType)?;
     if super::explicit_type_label(&fact.statement).is_some_and(|stated| stated != letter) {
         return Err(ResolutionFailure::ConflictingType);
     }
