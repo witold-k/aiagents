@@ -2181,6 +2181,15 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         // before fact auditing and publication; neither invokes the model nor
         // mutates the checkpoint or an existing output directory.
         if std::env::var_os("AIFIX_IDENTITY_REPLAY").is_some() {
+            for sample in message_identity::unresolved_history_samples(
+                &checkpoint.candidates,
+                &source_windows,
+                &source_starts,
+                &masked_source,
+                30,
+            ) {
+                println!("## [CHUNKED] IDENTITY HISTORY UNRESOLVED: {sample}");
+            }
             let (groups, unresolved) = message_identity::resolved_source_facts_in_document(
                 &checkpoint.candidates,
                 &source_windows,
