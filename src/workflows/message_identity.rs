@@ -574,6 +574,89 @@ pub(super) fn unresolved_history_samples(
     samples
 }
 
+/// Read-only triage of facts with no proven message identity. These are
+/// structural hints, not assertions of semantic ownership or irrelevance.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(super) struct UnresolvedTriage {
+    pub example_line: usize,
+    pub parameter_table_row: usize,
+    pub other: usize,
+}
+
+fn unresolved_source_shape(document: &str, line_index: usize) -> &'static str {
+    let lines: Vec<&str> = document.lines().collect();
+    let mut fenced = false;
+    for line in lines.iter().take(line_index + 1) {
+        if line.trim_start().starts_with("```") {
+            fenced = !fenced;
+        }
+    }
+    let line = lines.get(line_index).copied().unwrap_or("").trim();
+    if fenced
+        && line
+            .as_bytes()
+            .first()
+            .is_some_and(|c| c.is_ascii_alphabetic())
+        && line.as_bytes().get(1).is_some_and(|c| c.is_ascii_whitespace())
+    {
+        return "example";
+    }
+    if line.starts_with('|') {
+        // Look for a column header in this uninterrupted Markdown table.
+        for prior in lines[..line_index].iter().rev() {
+            let prior = prior.trim();
+            if prior.is_empty() || prior.starts_with('#') || !prior.starts_with('|') {
+                break;
+            }
+            let lower = prior.to_ascii_lowercase();
+            if lower.contains("parameter") && lower.contains("description") {
+                return "parameter";
+            }
+        }
+    }
+    "other"
+}
+
+pub(super) fn unresolved_triage_in_document(
+    candidates: &[MessageCandidate],
+    sources: &[&str],
+    starts: &[usize],
+    document: &str,
+) -> UnresolvedTriage {
+    let mut result = UnresolvedTriage::default();
+    for candidate in candidates {
+        let Some((window, start)) = source_window_index(&candidate.id)
+            .and_then(|index| sources.get(index).zip(starts.get(index)))
+        else {
+            continue;
+        };
+        for fact in &candidate.facts {
+            if !matches!(
+                resolve_fact_type_in_document(window, *start, document, fact),
+                Err(ResolutionFailure::NoSourceType)
+            ) {
+                continue;
+            }
+            let Some(absolute) = fact.source_byte_offset.and_then(|offset| start.checked_add(offset))
+            else {
+                result.other += 1;
+                continue;
+            };
+            let Some(line) = crate::utils::stringutils::line_index_at_byte_offset(document, absolute)
+            else {
+                result.other += 1;
+                continue;
+            };
+            match unresolved_source_shape(document, line) {
+                "example" => result.example_line += 1,
+                "parameter" => result.parameter_table_row += 1,
+                _ => result.other += 1,
+            }
+        }
+    }
+    result
+}
+
 pub(super) fn resolution_diagnostics_in_document(
     candidates: &[MessageCandidate],
     sources: &[&str],
