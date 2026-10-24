@@ -458,7 +458,10 @@ mod absolute_chunk_provenance_tests {
         assert!(windows.len() > 1);
         for window in &windows {
             let end = window.start_byte + window.text.len();
-            assert_eq!(source.get(window.start_byte..end), Some(window.text.as_str()));
+            assert_eq!(
+                source.get(window.start_byte..end),
+                Some(window.text.as_str())
+            );
             assert!(source.is_char_boundary(window.start_byte));
             assert!(source.is_char_boundary(end));
         }
