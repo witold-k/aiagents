@@ -445,9 +445,31 @@ fn parse_segmented_window_with_identity(
     source: &str,
     identity_source: &str,
 ) -> Result<ExtractedRecords, String> {
-    let parsed: SegmentedWindow =
+    // Models occasionally emit both the legacy source_anchor and segment_id
+    // for the same fact. Serde treats these aliases as a duplicate field.
+    // Accept only an identical pair; conflicting locators remain invalid.
+    let mut value: serde_json::Value =
         serde_json::from_str(strip_code_fences(response.trim()).trim())
             .map_err(|err| format!("Invalid segmented extraction JSON: {err}"))?;
+    if let Some(files) = value.get_mut("files").and_then(serde_json::Value::as_array_mut) {
+        for file in files {
+            if let Some(facts) = file.get_mut("facts").and_then(serde_json::Value::as_array_mut) {
+                for fact in facts {
+                    if let Some(fields) = fact.as_object_mut()
+                        && let (Some(anchor), Some(segment)) =
+                            (fields.get("source_anchor"), fields.get("segment_id"))
+                    {
+                        if anchor != segment {
+                            return Err("Conflicting source_anchor and segment_id".into());
+                        }
+                        fields.remove("source_anchor");
+                    }
+                }
+            }
+        }
+    }
+    let parsed: SegmentedWindow = serde_json::from_value(value)
+        .map_err(|err| format!("Invalid segmented extraction JSON: {err}"))?;
     let segments = evidence_segments(source);
     let mut result: ExtractedRecords = Vec::new();
     for file in parsed.files {
