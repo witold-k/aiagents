@@ -205,6 +205,29 @@ fn evidence_segments(source: &str) -> Vec<EvidenceSegment> {
     segments
 }
 
+// Context is read from the source before the current window, never from a
+// previous model response. This makes resume and recovery splits deterministic.
+// It is a hint to the model, not evidence for a fact or a message identity.
+fn preceding_extraction_context(source: &str, part: &Chunk, window: &str) -> String {
+    let preceding_lines = part.start_line.saturating_sub(1);
+    let prefix_bytes = source
+        .split_inclusive('\n')
+        .take(preceding_lines)
+        .map(str::len)
+        .sum::<usize>();
+    let local_offset = part.text.find(window).unwrap_or(0);
+    let before = &source[..(prefix_bytes + local_offset).min(source.len())];
+    let tail_start = before
+        .char_indices()
+        .rev()
+        .nth(1_199)
+        .map_or(0, |(offset, _)| offset);
+    let tail = &before[tail_start..];
+    format!(
+        "=== PRECEDING SOURCE CONTEXT (read-only; not evidence) ===\n{tail}\n=== END PRECEDING CONTEXT ===\n         Use this context only to understand the current section or message type.          A type remains applicable only while the source structure supports it.          A new heading, message declaration, table boundary or unrelated section may end it.          Preserve uppercase/lowercase exactly (Type: G differs from Type: g).          Every emitted fact must cite an S-number from CURRENT SOURCE below;          never cite the preceding context as evidence.\n\n"
+    )
+}
+
 fn segmented_source(source: &str) -> String {
     evidence_segments(source)
         .iter()
@@ -1667,11 +1690,12 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                         index + 1
                     ));
                 }
+                let preceding = preceding_extraction_context(&masked_source, part, &window);
                 let window_context = if window == part.text {
-                    context.replace(&part.text, &segmented_source(&window))
+                    format!("{preceding}{}", context.replace(&part.text, &segmented_source(&window)))
                 } else {
                     format!(
-                        "SOURCE: {}\nCHUNK: {}/{} (recovery window)\nLINES: {}-{}\n\n=== SOURCE ===\n{}",
+                        "{preceding}SOURCE: {}\nCHUNK: {}/{} (recovery window)\nLINES: {}-{}\n\n=== SOURCE ===\n{}",
                         input.display(),
                         index + 1,
                         parts.len(),
