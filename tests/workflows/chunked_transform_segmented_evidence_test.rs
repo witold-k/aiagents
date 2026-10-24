@@ -1,6 +1,23 @@
 use super::*;
 
 #[test]
+fn matching_legacy_locator_aliases_are_accepted() {
+    let source = "Type: A\nType: A is a message.\n";
+    let response = r#"{"files":[{"path":"messages/a.md","facts":[{"statement":"Type: A is a message.","segment_id":"S2","source_anchor":"S2"}]}]}"#;
+    let result = parse_segmented_window_with_identity(response, source, source);
+    assert!(result.is_ok(), "{result:?}");
+}
+
+#[test]
+fn conflicting_legacy_locator_aliases_are_rejected() {
+    let source = "Type: A\nType: A is a message.\n";
+    let response = r#"{"files":[{"path":"messages/a.md","facts":[{"statement":"Type: A is a message.","segment_id":"S2","source_anchor":"S1"}]}]}"#;
+    let result = parse_segmented_window_with_identity(response, source, source);
+    assert!(result.unwrap_err().contains("Conflicting source_anchor"));
+}
+
+
+#[test]
 fn audit_review_is_not_reused_across_distinct_occurrences() {
     let mut previous = SourceFact {
         statement: "same assertion".into(),
