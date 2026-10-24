@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Witold Kaminski
 
+/// Return the zero-based line containing a valid UTF-8 byte offset.
+pub fn line_index_at_byte_offset(source: &str, offset: usize) -> Option<usize> {
+    source
+        .get(..offset)
+        .map(|prefix| prefix.bytes().filter(|b| *b == b'\n').count())
+}
+
 #[derive(Debug)]
 pub struct FencedCodeBlock<'a> {
     pub lang: Option<&'a str>,

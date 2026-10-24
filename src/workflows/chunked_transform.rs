@@ -3,6 +3,10 @@
 
 //! Bounded, source-aware document transformation with independent review.
 
+// P4 staging preserves source-attributed candidates before identity resolution.
+#[path = "message_identity.rs"]
+mod message_identity;
+
 use serde::{Deserialize, Serialize};
 
 use std::{
@@ -27,7 +31,7 @@ const MAX_MERGE_CHARS: usize = 20_000;
 const MAX_AUDIT_PASSES: usize = 2;
 const AUDIT_VERIFICATION_PASS: usize = MAX_AUDIT_PASSES;
 
-const CHECKPOINT_VERSION: u32 = 10;
+const CHECKPOINT_VERSION: u32 = 16;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ExtractionCheckpoint {
@@ -54,6 +58,10 @@ struct ExtractionCheckpoint {
     recovery_pending: Vec<String>,
     #[serde(default)]
     recovery_records: ExtractedRecords,
+    #[serde(default)]
+    candidates: Vec<message_identity::MessageCandidate>,
+    #[serde(default)]
+    recovery_candidates: Vec<message_identity::MessageCandidate>,
 }
 
 /// One source-attributed, independently deduplicated specification assertion.
@@ -66,8 +74,19 @@ struct SourceFact {
     end_line: usize,
     #[serde(default)]
     evidence_quote: Option<String>,
+    /// All distinct source occurrences retained when identical statements merge.
+    #[serde(default)]
+    evidence_occurrences: Vec<FactEvidenceOccurrence>,
     #[serde(default)]
     review: FactReview,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct FactEvidenceOccurrence {
+    source_chunk: usize,
+    start_line: usize,
+    end_line: usize,
+    evidence_quote: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -125,12 +144,17 @@ type ExtractedRecords = Vec<(String, Vec<(String, Option<String>)>)>;
 struct EvidenceSegment {
     id: String,
     text: String,
+    line_index: usize,
+    /// Byte offset within the source window passed to evidence_segments.
+    byte_offset: usize,
 }
 
 fn evidence_segments(source: &str) -> Vec<EvidenceSegment> {
     let mut segments = Vec::new();
-    for line in source.split_inclusive('\n') {
+    let mut line_start = 0;
+    for (line_index, line) in source.split_inclusive('\n').enumerate() {
         let mut rest = line;
+        let mut consumed = 0;
         while !rest.is_empty() {
             let offsets: Vec<usize> = rest
                 .char_indices()
@@ -153,10 +177,14 @@ fn evidence_segments(source: &str) -> Vec<EvidenceSegment> {
                 segments.push(EvidenceSegment {
                     id: format!("S{}", segments.len() + 1),
                     text: text.to_owned(),
+                    line_index,
+                    byte_offset: line_start + consumed,
                 });
             }
             rest = &rest[end..];
+            consumed += end;
         }
+        line_start += line.len();
     }
     segments
 }
@@ -168,7 +196,7 @@ fn segmented_source(source: &str) -> String {
         .collect()
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 struct SegmentedFact {
     statement: String,
@@ -259,6 +287,123 @@ fn parse_segmented_window(response: &str, source: &str) -> Result<ExtractedRecor
     parse_segmented_window_with_identity(response, source, source)
 }
 
+// An explicit type label inside an assertion is stronger evidence of ownership
+// than the destination chosen by the model. Reject contradictory labels instead
+// of allowing a later quote audit to mark the wrong message as supported.
+fn explicit_type_label(statement: &str) -> Option<u8> {
+    let text = statement.trim_start().trim_start_matches('|').trim_start();
+    let rest = text.strip_prefix("Type:")?.trim_start();
+    let letter = rest.as_bytes().first().copied()?;
+    if !letter.is_ascii_alphabetic() {
+        return None;
+    }
+    if rest
+        .as_bytes()
+        .get(1)
+        .is_some_and(|next| next.is_ascii_alphanumeric() || *next == b'_')
+    {
+        return None;
+    }
+    Some(letter)
+}
+
+fn message_path_type(path: &str, identity_source: &str) -> Option<u8> {
+    let slug = path.strip_prefix("messages/")?.strip_suffix(".md")?;
+    if let Some(upper) = slug.strip_prefix("upper_") {
+        return (upper.len() == 1 && upper.as_bytes()[0].is_ascii_lowercase())
+            .then(|| upper.as_bytes()[0].to_ascii_uppercase());
+    }
+    if slug.len() != 1 || !slug.as_bytes()[0].is_ascii_lowercase() {
+        return None;
+    }
+    let lower = slug.as_bytes()[0];
+    let upper_path = format!("messages/upper_{slug}.md");
+    let has_upper = declared_message_identity(&upper_path, identity_source);
+    let has_lower = identity_source
+        .lines()
+        .any(|line| explicit_type_label(line.trim().trim_start_matches('#').trim()) == Some(lower));
+    if has_upper && has_lower {
+        None
+    } else {
+        Some(if has_upper {
+            lower.to_ascii_uppercase()
+        } else {
+            lower
+        })
+    }
+}
+
+// When both cases are declared, legacy messages/x.md is ambiguous. Only
+// an explicit statement or source identity may resolve it.
+fn fact_message_path(
+    path: &str,
+    fact_type: Option<u8>,
+    identity_source: &str,
+) -> Result<String, String> {
+    let Some(slug) = path
+        .strip_prefix("messages/")
+        .and_then(|p| p.strip_suffix(".md"))
+    else {
+        return Ok(path.to_owned());
+    };
+    if slug.len() != 1 || !slug.as_bytes()[0].is_ascii_lowercase() {
+        return Ok(path.to_owned());
+    }
+    let lower = slug.as_bytes()[0];
+    let upper_path = format!("messages/upper_{slug}.md");
+    let has_upper = declared_message_identity(&upper_path, identity_source);
+    let has_lower = identity_source
+        .lines()
+        .any(|line| explicit_type_label(line.trim().trim_start_matches('#').trim()) == Some(lower));
+    if has_upper && has_lower {
+        return match fact_type {
+            Some(letter) if letter == lower => Ok(path.to_owned()),
+            Some(letter) if letter == lower.to_ascii_uppercase() => Ok(upper_path),
+            Some(letter) => Err(format!(
+                "Fact declares Type: {} but destination {} is a different message",
+                letter as char, path
+            )),
+            None => Err(format!(
+                "Ambiguous uppercase/lowercase identity for {path}: fact has no explicit type evidence"
+            )),
+        };
+    }
+    Ok(path.to_owned())
+}
+
+// Only an isolated Type: heading owns subsequent lines. A table row or a
+// descriptive Type: A | ... entry does not establish an open-ended section.
+// Blank lines and new headings end ownership; unrelated source material must
+// remain unclassified rather than inherit a distant message type.
+fn section_type_for_line(source: &str, line_index: usize) -> Option<u8> {
+    let lines: Vec<&str> = source.lines().collect();
+    if line_index >= lines.len() {
+        return None;
+    }
+    for distance in 0..=12 {
+        let Some(index) = line_index.checked_sub(distance) else {
+            break;
+        };
+        let text = lines[index].trim();
+        if text.is_empty() {
+            break;
+        }
+        let heading = text.trim_start_matches('#').trim();
+        if let Some(letter) = explicit_type_label(heading)
+            && heading.strip_prefix("Type:").is_some_and(|rest| {
+                let rest = rest.trim();
+                rest.len() == 1 && rest.as_bytes()[0].is_ascii_alphabetic()
+            })
+        {
+            return Some(letter);
+        }
+        if distance > 0 && (text.starts_with('#') || explicit_type_label(text).is_some()) {
+            break;
+        }
+    }
+    None
+}
+
 // The declaration may be in a different chunk from the supporting fact.
 // Identity comes only from deterministic declarations in the full normalized
 // document; fact evidence IDs remain local to the current source window.
@@ -271,7 +416,7 @@ fn parse_segmented_window_with_identity(
         serde_json::from_str(strip_code_fences(response.trim()).trim())
             .map_err(|err| format!("Invalid segmented extraction JSON: {err}"))?;
     let segments = evidence_segments(source);
-    let mut result = Vec::new();
+    let mut result: ExtractedRecords = Vec::new();
     for file in parsed.files {
         if !valid_spec_path(&file.path) {
             return Err(format!("Invalid specification path: {}", file.path));
@@ -314,20 +459,72 @@ fn parse_segmented_window_with_identity(
                 file.path
             ));
         }
-        let mut entries = Vec::new();
         for fact in file.facts {
             let statement = fact.statement.trim();
             if statement.is_empty() || statement.chars().count() > 4_000 {
                 return Err("Empty or oversized extracted fact".into());
+            }
+            if let (Some(actual), Some(expected)) = (
+                explicit_type_label(statement),
+                message_path_type(&path, identity_source),
+            ) && actual != expected
+            {
+                return Err(format!(
+                    "Fact declares Type: {} but destination {} requires Type: {}",
+                    actual as char, path, expected as char
+                ));
             }
             let quote = segments
                 .iter()
                 .find(|segment| segment.id == fact.segment_id)
                 .map(|segment| segment.text.clone())
                 .filter(|text| !text.trim().is_empty());
-            entries.push((statement.to_owned(), quote));
+            // A verbatim source segment can prove that a fact belongs to a
+            // different message even when the model omits the Type: prefix
+            // from its statement. Do not infer ownership from generic rows.
+            if let (Some(evidence_type), Some(expected)) = (
+                segments
+                    .iter()
+                    .find(|segment| segment.id == fact.segment_id)
+                    .and_then(|segment| {
+                        explicit_type_label(&segment.text)
+                            .or_else(|| section_type_for_line(source, segment.line_index))
+                    }),
+                message_path_type(&path, identity_source),
+            ) && evidence_type != expected
+            {
+                return Err(format!(
+                    "Evidence declares Type: {} but destination {} requires Type: {}",
+                    evidence_type as char, path, expected as char
+                ));
+            }
+            let evidence_type = segments
+                .iter()
+                .find(|segment| segment.id == fact.segment_id)
+                .and_then(|segment| {
+                    explicit_type_label(&segment.text)
+                        .or_else(|| section_type_for_line(source, segment.line_index))
+                });
+            let statement_type = explicit_type_label(statement);
+            if let (Some(a), Some(b)) = (statement_type, evidence_type)
+                && a != b
+            {
+                return Err(format!(
+                    "Fact Type: {} contradicts evidence Type: {}",
+                    a as char, b as char
+                ));
+            }
+            let destination =
+                fact_message_path(&path, statement_type.or(evidence_type), identity_source)?;
+            if let Some((_, existing)) = result
+                .iter_mut()
+                .find(|(existing_path, _)| existing_path == &destination)
+            {
+                existing.push((statement.to_owned(), quote));
+            } else {
+                result.push((destination, vec![(statement.to_owned(), quote)]));
+            }
         }
-        result.push((path, entries));
     }
     Ok(result)
 }
@@ -363,6 +560,53 @@ fn parse_segmented_window_recoverable(
         match parse_segmented_window_with_identity(&isolated.to_string(), source, identity_source) {
             Ok(found) => records.extend(found),
             Err(reason) => {
+                // Only split a structurally valid file. Malformed fields,
+                // paths and conflicting identity declarations are file-level
+                // failures, not permission to bypass validation.
+                let parsed_file = serde_json::from_value::<SegmentedFile>(file.clone());
+                if let Ok(parsed_file) = parsed_file {
+                    let mut identity = parsed_file.identity_segment_id.as_deref();
+                    let mut conflicting = false;
+                    for fact in &parsed_file.facts {
+                        if let Some(id) = fact.identity_segment_id.as_deref() {
+                            if identity.is_some_and(|previous| previous != id) {
+                                conflicting = true;
+                                break;
+                            }
+                            identity = Some(id);
+                        }
+                    }
+                    if !conflicting && !parsed_file.facts.is_empty() {
+                        let mut accepted = 0;
+                        for fact in &parsed_file.facts {
+                            let isolated = serde_json::json!({"files": [{
+                                "path": parsed_file.path,
+                                "identity_segment_id": parsed_file.identity_segment_id,
+                                "facts": [fact],
+                            }]});
+                            match parse_segmented_window_with_identity(
+                                &isolated.to_string(),
+                                source,
+                                identity_source,
+                            ) {
+                                Ok(found) => {
+                                    records.extend(found);
+                                    accepted += 1;
+                                }
+                                Err(fact_reason) => {
+                                    rejected += 1;
+                                    println!("## [CHUNKED] REJECT FACT: {fact_reason}");
+                                }
+                            }
+                        }
+                        if accepted > 0 {
+                            continue;
+                        }
+                        // All facts were rejected; the count already records
+                        // the loss and must not be incremented a second time.
+                        continue;
+                    }
+                }
                 rejected += 1;
                 println!("## [CHUNKED] REJECT FILE: {reason}");
             }
@@ -438,6 +682,15 @@ fn record_segmented_facts(
             .iter_mut()
             .find(|fact| fact.statement == statement)
         {
+            let occurrence = FactEvidenceOccurrence {
+                source_chunk: chunk,
+                start_line,
+                end_line,
+                evidence_quote: quote.clone(),
+            };
+            if !existing.evidence_occurrences.contains(&occurrence) {
+                existing.evidence_occurrences.push(occurrence);
+            }
             // A later source locator may replace a missing one, but never
             // silently turn an unreviewed assertion into a supported fact.
             if existing.evidence_quote.is_none()
@@ -456,6 +709,12 @@ fn record_segmented_facts(
             source_chunk: chunk,
             start_line,
             end_line,
+            evidence_occurrences: vec![FactEvidenceOccurrence {
+                source_chunk: chunk,
+                start_line,
+                end_line,
+                evidence_quote: quote.clone(),
+            }],
             evidence_quote: quote,
             review: FactReview::Pending,
         });
@@ -501,6 +760,7 @@ fn record_verified_facts(
             start_line,
             end_line,
             evidence_quote: quote,
+            evidence_occurrences: Vec::new(),
             review,
         });
     }
@@ -524,6 +784,7 @@ fn record_source_facts(
                 start_line,
                 end_line,
                 evidence_quote: None,
+                evidence_occurrences: Vec::new(),
                 review: FactReview::Pending,
             });
         }
@@ -548,51 +809,62 @@ fn canonical_message_path(path: &str, fragment: &str) -> Result<String, String> 
         .strip_prefix("messages/")
         .and_then(|name| name.strip_suffix(".md"))
         .unwrap_or("");
-    // A filename is authoritative only for explicit one-letter message names.
-    let filename_identity = if slug.len() == 1 && slug.bytes().all(|b| b.is_ascii_lowercase()) {
-        Some(slug)
+    // Preserve an already resolved case-sensitive identity. Never collapse
+    // messages/upper_a.md into messages/a.md during checkpoint merging.
+    let filename_identity = if let Some(letter) = slug.strip_prefix("upper_") {
+        (letter.len() == 1 && letter.bytes().all(|b| b.is_ascii_lowercase()))
+            .then(|| letter.as_bytes()[0].to_ascii_uppercase())
+    } else if slug.len() == 1 && slug.bytes().all(|b| b.is_ascii_lowercase()) {
+        Some(slug.as_bytes()[0])
     } else {
         ["_message", "_command"].iter().find_map(|suffix| {
             let letter = slug.strip_suffix(suffix)?;
-            (letter.len() == 1 && letter.bytes().all(|b| b.is_ascii_lowercase())).then_some(letter)
+            (letter.len() == 1 && letter.bytes().all(|b| b.is_ascii_lowercase()))
+                .then(|| letter.as_bytes()[0])
         })
     };
-    let mut heading_identity: Option<String> = None;
+    let mut heading_identity: Option<u8> = None;
     for line in fragment.lines().take(12) {
-        // Only an actual Markdown heading can declare an identity. A fact
-        // mentioning another command must never silently rename its file.
         let trimmed = line.trim();
         if !trimmed.starts_with('#') {
             continue;
         }
         let heading = trimmed.trim_start_matches('#').trim();
-        let lower = heading.to_ascii_lowercase();
         for prefix in ["message ", "command ", "message: ", "command: "] {
-            if let Some(rest) = lower.strip_prefix(prefix) {
-                let token = rest
+            if heading
+                .get(..prefix.len())
+                .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
+            {
+                let token = heading[prefix.len()..]
                     .split_whitespace()
                     .next()
                     .unwrap_or("")
                     .trim_matches(|c: char| !c.is_ascii_alphanumeric());
-                if token.len() == 1 && token.bytes().all(|b| b.is_ascii_lowercase()) {
-                    if heading_identity.as_deref().is_some_and(|old| old != token) {
+                if token.len() == 1 && token.as_bytes()[0].is_ascii_alphabetic() {
+                    let letter = token.as_bytes()[0];
+                    if heading_identity.is_some_and(|old| old != letter) {
                         return Err(format!("Conflicting message headings in {path}"));
                     }
-                    heading_identity = Some(token.to_owned());
+                    heading_identity = Some(letter);
                 }
                 break;
             }
         }
     }
-    if let (Some(filename), Some(heading)) = (filename_identity, heading_identity.as_deref())
+    if let (Some(filename), Some(heading)) = (filename_identity, heading_identity)
         && filename != heading
     {
         return Err(format!(
-            "Conflicting message identity in {path}: filename {filename}, heading {heading}"
+            "Conflicting message identity in {path}: filename {}, heading {}",
+            filename as char, heading as char
         ));
     }
-    match filename_identity.or(heading_identity.as_deref()) {
-        Some(identity) => Ok(format!("messages/{identity}.md")),
+    match filename_identity.or(heading_identity) {
+        Some(identity) if identity.is_ascii_uppercase() => Ok(format!(
+            "messages/upper_{}.md",
+            (identity as char).to_ascii_lowercase()
+        )),
+        Some(identity) => Ok(format!("messages/{}.md", identity as char)),
         None => Ok(path.to_owned()),
     }
 }
@@ -652,7 +924,9 @@ fn load_checkpoint(
             .recovery_chunk
             .is_some_and(|index| index != checkpoint.next_chunk || index >= total_chunks)
         || (checkpoint.recovery_chunk.is_none()
-            && (!checkpoint.recovery_pending.is_empty() || !checkpoint.recovery_records.is_empty()))
+            && (!checkpoint.recovery_pending.is_empty()
+                || !checkpoint.recovery_records.is_empty()
+                || !checkpoint.recovery_candidates.is_empty()))
         || checkpoint.files.keys().any(|path| !valid_spec_path(path))
         || checkpoint.source_windows.iter().any(|(path, indices)| {
             !valid_spec_path(path) || indices.iter().any(|index| *index >= total_chunks)
@@ -1194,7 +1468,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 requirements,
                 JSON_EXTRACT_PROMPT,
                 JSON_COVERAGE_PROMPT,
-                "segmented-evidence-v6-isolated-rejection",
+                "segmented-evidence-v12-deferred-candidates",
             ],
         );
         let mut checkpoint = match load_checkpoint(&checkpoint_file, &fingerprint, parts.len()) {
@@ -1221,6 +1495,8 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 recovery_chunk: None,
                 recovery_pending: Vec::new(),
                 recovery_records: Vec::new(),
+                candidates: Vec::new(),
+                recovery_candidates: Vec::new(),
             },
             Err(err) => return WorkflowResult::Error(err),
         };
@@ -1268,6 +1544,11 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             };
             let mut records: ExtractedRecords = if checkpoint.recovery_chunk == Some(index) {
                 checkpoint.recovery_records.clone()
+            } else {
+                Vec::new()
+            };
+            let mut staged_candidates = if checkpoint.recovery_chunk == Some(index) {
+                checkpoint.recovery_candidates.clone()
             } else {
                 Vec::new()
             };
@@ -1319,23 +1600,31 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                     );
                 }
                 let parsed = match parsed {
-                    Ok(found) => Ok(found),
+                    Ok(found) => Ok((found, response.clone())),
                     Err(reason) => {
                         let is_eof = serde_json::from_str::<SegmentedWindow>(
                             strip_code_fences(response.trim()).trim(),
                         )
                         .is_err_and(|err| err.is_eof());
-                        if is_eof {
-                            Err(reason)
-                        } else {
+                        // A truncated response is worth one explicit compact
+                        // retry before recursively splitting the source. This
+                        // also applies to the smallest recovery windows, where
+                        // another split is impossible.
+                        {
                             println!(
                                 "## [CHUNKED] EXTRACT RETRY {}/{}: {reason}",
                                 index + 1,
                                 parts.len()
                             );
-                            let retry_prompt = format!(
-                                "{json_prompt}\n\nPrevious response was invalid: {reason}. Return valid JSON only."
-                            );
+                            let retry_prompt = if is_eof {
+                                format!(
+                                    "{json_prompt}\n\nPrevious JSON was truncated. Return a COMPLETE, COMPACT JSON object with a closed files array. Prefer fewer facts over incomplete JSON; do not invent or omit closing delimiters."
+                                )
+                            } else {
+                                format!(
+                                    "{json_prompt}\n\nPrevious response was invalid: {reason}. Return valid JSON only."
+                                )
+                            };
                             let retried =
                                 match self.llm_call.run_text_step_limited_with_temperature(
                                     &retry_prompt,
@@ -1347,11 +1636,27 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                                     Err(err) => return WorkflowResult::LlmCallResult(err),
                                 };
                             parse_segmented_window_recoverable(&retried, &window, &masked_source)
+                                .map(|found| (found, retried))
                         }
                     }
                 };
                 match parsed {
-                    Ok((found, rejected)) => {
+                    Ok(((found, rejected), accepted_response)) => {
+                        let next_id = staged_candidates
+                            .iter()
+                            .filter_map(|candidate| {
+                                candidate.id.rsplit('-').next()?.parse::<usize>().ok()
+                            })
+                            .max()
+                            .map_or(0, |last| last + 1);
+                        let staged = message_identity::parse_candidates_in_parent(
+                            &accepted_response,
+                            &window,
+                            &part.text,
+                            index,
+                            next_id,
+                        );
+                        staged_candidates.extend(staged);
                         if rejected > 0 {
                             checkpoint.unresolved_findings = true;
                             println!(
@@ -1394,10 +1699,12 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 checkpoint.recovery_chunk = Some(index);
                 checkpoint.recovery_pending = pending.iter().cloned().collect();
                 checkpoint.recovery_records = records.clone();
+                checkpoint.recovery_candidates = staged_candidates.clone();
                 if let Err(err) = save_checkpoint(&checkpoint_file, &checkpoint) {
                     return WorkflowResult::Error(err);
                 }
             }
+            checkpoint.candidates.extend(staged_candidates);
             let unsupported = unsupported_quote_count(&records);
             if unsupported > 0 {
                 println!(
@@ -1442,6 +1749,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             checkpoint.recovery_chunk = None;
             checkpoint.recovery_pending.clear();
             checkpoint.recovery_records.clear();
+            checkpoint.recovery_candidates.clear();
             checkpoint.next_chunk = index + 1;
             checkpoint.files = files.clone();
             if let Err(err) = save_checkpoint(&checkpoint_file, &checkpoint) {
@@ -1470,6 +1778,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 println!("## [CHUNKED] COVERAGE {}/{}", index + 1, parts.len());
                 let mut pending = VecDeque::from([part.text.clone()]);
                 let mut records = Vec::new();
+                let mut coverage_candidates = Vec::new();
                 let mut windows_seen = 0;
                 while let Some(window) = pending.pop_front() {
                     windows_seen += 1;
@@ -1510,7 +1819,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                         &window,
                         &masked_source,
                     ) {
-                        Ok(found) => Ok(found),
+                        Ok(found) => Ok((found, response)),
                         Err(first_error) => {
                             let is_eof = serde_json::from_str::<SegmentedWindow>(
                                 strip_code_fences(response.trim()).trim(),
@@ -1542,11 +1851,30 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                                     &window,
                                     &masked_source,
                                 )
+                                .map(|found| (found, retried))
                             }
                         }
                     };
                     match parsed {
-                        Ok((found, rejected)) => {
+                        Ok(((found, rejected), accepted_response)) => {
+                            let next_id = coverage_candidates
+                                .iter()
+                                .filter_map(|candidate: &message_identity::MessageCandidate| {
+                                    candidate.id.rsplit('-').next()?.parse::<usize>().ok()
+                                })
+                                .max()
+                                .map_or(0, |last| last + 1);
+                            let mut staged = message_identity::parse_candidates_in_parent(
+                                &accepted_response,
+                                &window,
+                                &part.text,
+                                index,
+                                next_id,
+                            );
+                            for candidate in &mut staged {
+                                candidate.id.insert_str(0, "coverage-");
+                            }
+                            coverage_candidates.extend(staged);
                             if rejected > 0 {
                                 checkpoint.unresolved_findings = true;
                                 println!(
@@ -1593,6 +1921,18 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                         }
                     }
                 }
+                let staged_facts: usize = coverage_candidates
+                    .iter()
+                    .map(|candidate| candidate.facts.len())
+                    .sum();
+                println!(
+                    "## [CHUNKED] COVERAGE CANDIDATES {}/{}: {} candidates, {} source-attributed facts",
+                    index + 1,
+                    parts.len(),
+                    coverage_candidates.len(),
+                    staged_facts
+                );
+                checkpoint.candidates.extend(coverage_candidates);
                 for (model_path, entries) in records {
                     let fragment = entries
                         .iter()
@@ -1644,6 +1984,38 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             }
         }
 
+        let candidate_facts: usize = checkpoint
+            .candidates
+            .iter()
+            .map(|candidate| candidate.facts.len())
+            .sum();
+        println!(
+            "## [CHUNKED] DEFERRED IDENTITY: {} candidates, {} source-attributed facts retained for later resolution",
+            checkpoint.candidates.len(),
+            candidate_facts
+        );
+        let distinct_candidate_facts =
+            message_identity::distinct_source_fact_count(&checkpoint.candidates);
+        println!(
+            "## [CHUNKED] SOURCE FACT INVENTORY: {distinct_candidate_facts} distinct statement/evidence pairs from {candidate_facts} candidate facts; identities not merged"
+        );
+        let (resolved, unresolved, unresolved_facts) =
+            message_identity::identity_counts(&checkpoint.candidates);
+        println!(
+            "## [CHUNKED] IDENTITY CLASSIFICATION: {resolved} explicitly typed candidates, {unresolved} unresolved candidates ({unresolved_facts} facts); no automatic alias merging"
+        );
+        let source_windows: Vec<&str> = parts.iter().map(|part| part.text.as_str()).collect();
+        let diagnostics =
+            message_identity::resolution_diagnostics(&checkpoint.candidates, &source_windows);
+        println!(
+            "## [CHUNKED] P4 UNRESOLVED DIAGNOSTICS: invalid_window={}, ambiguous_locator={}, missing_evidence={}, invalid_offset_or_quote={}, no_source_type={}, conflicting_type={}",
+            diagnostics.invalid_window,
+            diagnostics.ambiguous_locator,
+            diagnostics.missing_evidence,
+            diagnostics.invalid_offset_or_quote,
+            diagnostics.no_source_type,
+            diagnostics.conflicting_type,
+        );
         if files.is_empty() {
             return WorkflowResult::Error("No protocol specifications were extracted".into());
         }
@@ -1651,17 +2023,75 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             "# General Protocol Rules\n\nNo shared rules were established from the source.".into()
         });
         files.entry("infrastructure.md".into()).or_insert_with(|| "# Infrastructure Contracts\n\nNo helper contracts were established from the source.".into());
-        // Review individual immutable facts against their attributed source windows.
-        // Fact audit v1 intentionally invalidates the old file-edit audit cursor.
-        // The extraction, coverage and source facts remain checkpointed.
-        if checkpoint.fact_audit_version != 1 {
-            checkpoint.fact_audit_version = 1;
+        // P4: build the auditable projection from source-backed candidates
+        // BEFORE reviewing facts. The model's proposed filenames are never
+        // used as canonical identities. Existing non-message facts survive.
+        // The version gate makes checkpoint resume idempotent.
+        if checkpoint.fact_audit_version != 6 {
+            let source_windows: Vec<&str> = parts.iter().map(|part| part.text.as_str()).collect();
+            let (groups, mut unresolved) =
+                message_identity::resolved_source_facts(&checkpoint.candidates, &source_windows);
+            checkpoint
+                .facts
+                .retain(|path, _| !path.starts_with("messages/"));
+            files.retain(|path, _| !path.starts_with("messages/"));
+            let mut accepted = 0_usize;
+            for (path, occurrences) in groups {
+                for (source_chunk, candidate_fact) in occurrences {
+                    let Some(part) = parts.get(source_chunk) else {
+                        unresolved += 1;
+                        continue;
+                    };
+                    let Some(quote) = candidate_fact.evidence_quote else {
+                        unresolved += 1;
+                        continue;
+                    };
+                    let source_matches = if let Some(offset) = candidate_fact.source_byte_offset {
+                        part.text.get(offset..offset.saturating_add(quote.len()))
+                            == Some(quote.as_str())
+                    } else {
+                        // Checkpoints created before exact source positions.
+                        part.text.contains(&quote)
+                    };
+                    if !source_matches {
+                        unresolved += 1;
+                        continue;
+                    }
+                    record_segmented_facts(
+                        &mut checkpoint.facts,
+                        &path,
+                        vec![(candidate_fact.statement, Some(quote))],
+                        source_chunk,
+                        part.start_line,
+                        part.end_line,
+                    );
+                    accepted += 1;
+                }
+            }
+            if unresolved > 0 {
+                checkpoint.unresolved_findings = true;
+            }
+            let consolidated: usize = checkpoint
+                .facts
+                .iter()
+                .filter(|(path, _)| path.starts_with("messages/"))
+                .map(|(_, facts)| facts.len())
+                .sum();
+            println!(
+                "## [CHUNKED] IDENTITY CONSOLIDATION: {accepted} source-backed candidate occurrences -> {consolidated} distinct typed message facts; {unresolved} unresolved candidate facts kept in checkpoint, not published"
+            );
+            checkpoint.fact_audit_version = 6;
             checkpoint.fact_audit_cursor = 0;
             if checkpoint.audit.is_some() {
                 checkpoint.unresolved_findings = true;
             }
             checkpoint.audit = None;
-            println!("## [CHUNKED] RESET AUDIT: switching to source-grounded fact review");
+            // Persist the rebuilt projection too: resuming audit v2 must not
+            // resurrect stale P3 message files from the checkpoint.
+            checkpoint.files = files.clone();
+            println!(
+                "## [CHUNKED] RESET AUDIT: candidate consolidation before source-grounded fact review"
+            );
             if let Err(err) = save_checkpoint(&checkpoint_file, &checkpoint) {
                 return WorkflowResult::Error(err);
             }
@@ -1677,6 +2107,39 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         while checkpoint.fact_audit_cursor < fact_keys.len() {
             let (path, index) = &fact_keys[checkpoint.fact_audit_cursor];
             let fact = checkpoint.facts[path][*index].clone();
+            // Facts may appear under several candidate identities. Reuse an
+            // already completed evidence review only for the same statement
+            // and original source window; never infer identity from this.
+            // Restrict the lookup to earlier cursor entries so resume behavior
+            // is deterministic and an unreviewed sibling cannot be promoted.
+            let prior_review = fact_keys[..checkpoint.fact_audit_cursor]
+                .iter()
+                .filter_map(|(previous_path, previous_index)| {
+                    let previous = &checkpoint.facts[previous_path][*previous_index];
+                    (previous.source_chunk == fact.source_chunk
+                        && previous.statement == fact.statement
+                        && previous.review != FactReview::Pending)
+                        .then_some((previous.review, previous.evidence_quote.clone()))
+                })
+                .find(|(review, quote)| {
+                    *review == FactReview::Unresolved
+                        || quote.as_ref().is_some_and(|quote| {
+                            parts.get(fact.source_chunk).is_some_and(|part| {
+                                quote.chars().count() >= 12 && part.text.contains(quote)
+                            })
+                        })
+                });
+            if let Some((review, quote)) = prior_review {
+                let current =
+                    &mut checkpoint.facts.get_mut(path).expect("fact path exists")[*index];
+                current.review = review;
+                current.evidence_quote = quote;
+                checkpoint.fact_audit_cursor += 1;
+                if let Err(err) = save_checkpoint(&checkpoint_file, &checkpoint) {
+                    return WorkflowResult::Error(err);
+                }
+                continue;
+            }
             if fact.review == FactReview::Supported
                 && fact.evidence_quote.as_ref().is_some_and(|quote| {
                     parts.get(fact.source_chunk).is_some_and(|part| {
@@ -1945,6 +2408,31 @@ mod segmented_evidence_tests {
     }
 
     #[test]
+    fn invalid_fact_does_not_discard_valid_siblings() {
+        let source = "Type: A | Alive interval\nType: B | Beam selection\n";
+        let response = r#"{"files":[{"path":"messages/a.md","facts":[{"statement":"Alive interval","segment_id":"S1"},{"statement":"Wrong beam","segment_id":"S2"},{"statement":"Keepalive interval","segment_id":"S1"}]}]}"#;
+        let (records, rejected) =
+            parse_segmented_window_recoverable(response, source, source).unwrap();
+        assert_eq!(rejected, 1);
+        let kept: Vec<&str> = records
+            .iter()
+            .flat_map(|(_, entries)| entries.iter().map(|(statement, _)| statement.as_str()))
+            .collect();
+        assert_eq!(kept, vec!["Alive interval", "Keepalive interval"]);
+        assert!(records.iter().all(|(path, _)| path == "messages/a.md"));
+    }
+
+    #[test]
+    fn conflicting_fact_identities_are_not_salvaged_individually() {
+        let source = "Type: A | Alive interval\n";
+        let response = r#"{"files":[{"path":"messages/a.md","facts":[{"statement":"First","segment_id":"S1","identity_segment_id":"S1"},{"statement":"Second","segment_id":"S1","identity_segment_id":"S2"}]}]}"#;
+        let (records, rejected) =
+            parse_segmented_window_recoverable(response, source, source).unwrap();
+        assert!(records.is_empty());
+        assert_eq!(rejected, 1);
+    }
+
+    #[test]
     fn all_invalid_files_do_not_trigger_json_recovery() {
         let source = "Type: G | Status request\n";
         let response = r#"{"files":[{"path":"messages/invented.md","identity_segment_id":"S1","facts":[{"statement":"invented","segment_id":"S1"}]}]}"#;
@@ -1981,6 +2469,106 @@ mod segmented_evidence_tests {
             parsed[0].1[0].1.as_deref(),
             Some("The G message requests status.\n")
         );
+    }
+
+    #[test]
+    fn canonical_paths_preserve_uppercase_and_lowercase() {
+        assert_eq!(
+            canonical_message_path("messages/upper_a.md", "").unwrap(),
+            "messages/upper_a.md"
+        );
+        assert_eq!(
+            canonical_message_path("messages/a.md", "").unwrap(),
+            "messages/a.md"
+        );
+        assert!(canonical_message_path("messages/upper_a.md", "# Message a").is_err());
+        assert!(canonical_message_path("messages/a.md", "# Message A").is_err());
+    }
+
+    #[test]
+    fn mixed_case_facts_route_to_distinct_files() {
+        let source = "Type: A | Modem alive\nType: a | Antenna alive\n";
+        let response = r#"{"files":[{"path":"messages/a.md","facts":[{"statement":"Type: A | Modem alive","segment_id":"S1"},{"statement":"Type: a | Antenna alive","segment_id":"S2"}]}]}"#;
+        let (records, rejected) =
+            parse_segmented_window_recoverable(response, source, source).unwrap();
+        assert_eq!(rejected, 0);
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].0, "messages/upper_a.md");
+        assert_eq!(records[1].0, "messages/a.md");
+    }
+
+    #[test]
+    fn mixed_case_untyped_fact_is_not_guessed() {
+        let source = "Type: A | Modem alive\nType: a | Antenna alive\nOther detail\n";
+        let response = r#"{"files":[{"path":"messages/a.md","facts":[{"statement":"Unattributed detail","segment_id":"S3"},{"statement":"Type: A | Modem alive","segment_id":"S1"}]}]}"#;
+        let (records, rejected) =
+            parse_segmented_window_recoverable(response, source, source).unwrap();
+        assert_eq!(rejected, 1);
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].0, "messages/upper_a.md");
+    }
+
+    #[test]
+    fn unrelated_lowercase_table_cell_does_not_override_uppercase_identity() {
+        let source = "Type: A | Modem alive interval\n| a | unrelated parameter |\n";
+        assert_eq!(message_path_type("messages/a.md", source), Some(b'A'));
+        let response = r#"{"files":[{"path":"messages/a.md","facts":[{"statement":"Type: A | Modem alive interval","segment_id":"S1"}]}]}"#;
+        assert!(parse_segmented_window(response, source).is_ok());
+    }
+
+    #[test]
+    fn standalone_type_heading_owns_contiguous_evidence_lines() {
+        let source = "Type: A\nAlive interval parameter\nModem keepalive timeout\n";
+        let wrong = r#"{"files":[{"path":"messages/b.md","facts":[{"statement":"Keepalive timeout","segment_id":"S3"}]}]}"#;
+        let identity_source = format!("{source}Type: B\n");
+        let err =
+            parse_segmented_window_with_identity(wrong, source, &identity_source).unwrap_err();
+        assert!(err.contains("Evidence declares Type: A"), "{err}");
+        let right = r#"{"files":[{"path":"messages/a.md","facts":[{"statement":"Keepalive timeout","segment_id":"S3"}]}]}"#;
+        assert!(parse_segmented_window(right, source).is_ok());
+    }
+
+    #[test]
+    fn blank_line_ends_standalone_type_ownership() {
+        let source = "Type: A\nAlive interval\n\nUnrelated appendix parameter\nType: B\n";
+        assert_eq!(section_type_for_line(source, 1), Some(b'A'));
+        assert_eq!(section_type_for_line(source, 3), None);
+    }
+
+    #[test]
+    fn evidence_type_must_match_message_even_without_statement_type() {
+        let source = "Type: A | Modem alive interval\nType: B | Beam selection\n";
+        let wrong = r#"{"files":[{"path":"messages/a.md","facts":[{"statement":"Beam selection","segment_id":"S2"}]}]}"#;
+        let err = parse_segmented_window(wrong, source).unwrap_err();
+        assert!(err.contains("Evidence declares Type: B"), "{err}");
+        let right = r#"{"files":[{"path":"messages/b.md","facts":[{"statement":"Beam selection","segment_id":"S2"}]}]}"#;
+        assert!(parse_segmented_window(right, source).is_ok());
+    }
+
+    #[test]
+    fn generic_evidence_does_not_invent_message_ownership() {
+        let source = "Type: A | Modem alive interval\nGeneric description without type\n";
+        let response = r#"{"files":[{"path":"messages/a.md","facts":[{"statement":"Generic description","segment_id":"S2"}]}]}"#;
+        assert!(parse_segmented_window(response, source).is_ok());
+    }
+
+    #[test]
+    fn explicitly_typed_facts_are_routed_without_losing_case() {
+        let source = "Type: A | Modem alive interval\nType: a | Antenna alive interval\n";
+        assert_eq!(source.lines().count(), 2);
+        assert!(declared_message_identity("messages/upper_a.md", source));
+        assert!(declared_message_identity("messages/a.md", source));
+        let response = r#"{"files":[{"path":"messages/a.md","facts":[{"statement":"Type: A | Modem alive interval","segment_id":"S1"}]}]}"#;
+        let routed = parse_segmented_window(response, source).unwrap();
+        assert_eq!(routed.len(), 1);
+        assert_eq!(routed[0].0, "messages/upper_a.md");
+
+        let correct = r#"{"files":[{"path":"messages/upper_a.md","facts":[{"statement":"Type: A | Modem alive interval","segment_id":"S1"}]}]}"#;
+        assert_eq!(parse_segmented_window(correct, source).unwrap(), routed);
+
+        let contradiction = r#"{"files":[{"path":"messages/a.md","facts":[{"statement":"Type: a | Antenna alive interval","segment_id":"S1"}]}]}"#;
+        let err = parse_segmented_window(contradiction, source).unwrap_err();
+        assert!(err.contains("contradicts evidence"), "{err}");
     }
 
     #[test]

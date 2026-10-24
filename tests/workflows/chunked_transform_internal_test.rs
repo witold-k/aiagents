@@ -340,12 +340,12 @@ mod structured_fact_tests {
     fn canonical_identity_requires_explicit_command_heading() {
         assert_eq!(
             canonical_message_path("messages/keepalive.md", "# Command A\n\nDescription").unwrap(),
-            "messages/a.md"
+            "messages/upper_a.md"
         );
         assert_eq!(
             canonical_message_path("messages/beat_frequency.md", "# Message B\n\nDescription")
                 .unwrap(),
-            "messages/b.md"
+            "messages/upper_b.md"
         );
         assert_eq!(
             canonical_message_path("messages/keepalive.md", "# Keepalive\n\nDescription").unwrap(),

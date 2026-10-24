@@ -104,24 +104,183 @@ only then applies edits. Deterministic build/lint/test execution remains the
 validation boundary. See [BLT Execute Workflow](docs/blt_execute.md).
 
 The `extract_message_tables` task uses a separate chunked document workflow
-to produce **Markdown protocol specifications, not code**. It extracts and
-reviews bounded overlapping source windows, accumulates reviewed fragments
-without rewriting earlier text, and runs an independent coverage sweep over
-all nonempty source windows. Exact duplicate fragments are skipped, but
-semantic deduplication is not guaranteed. An evidence-based audit permits
-two revision passes and, if needed, a final read-only verification pass.
-The additional checks increase LLM cost and reduce—but do not eliminate—the
-risk of omissions or unsupported facts.
+to extract **source-grounded protocol facts**, publish JSON specifications, and
+retain review metadata. It processes bounded overlapping source windows,
+performs a coverage sweep, and audits extracted facts. The output includes
+`facts.json`, a `manifest.json`, and per-topic JSON files such as
+`general.json` and `messages/a.json`. Publication is atomic and refuses
+to overwrite an existing output directory. See
+[Chunked Transform Workflow](docs/chunked_transform.md) for the detailed
+workflow; this section records current findings and limitations.
 
-Progress is stored beside the source in
-`<input-stem>_messages.v5.checkpoint.json`, including extraction,
-coverage, and audit cursors. Previous checkpoint versions are preserved but
-not reused; v5 begins a fresh extraction. Interrupted runs resume at the
-last completed step. Publication is atomic and refuses to overwrite an
-existing output directory.
+### Protocol identity: uppercase and lowercase are significant
 
-See [Chunked Transform Workflow](docs/chunked_transform.md) for details,
-Mermaid diagrams, limitations, and failure behavior.
+Protocol message identities must come from the **source specification**, not
+from a model-selected filename or a casual mention in an example. A lowercase
+filename is not evidence that the protocol type itself is lowercase. Where
+the source declares both cases, they must be distinguished through extraction,
+fact ownership, checkpoint merging, coverage, audit, and JSON output.
+
+The OpenAMIP 1.17 Revision F example establishes that `A` and `a` are
+**different messages**, despite both mentioning intervals:
+
+| Type | Sender | Meaning | Canonical path |
+| --- | --- | --- | --- |
+| `A` | Modem (M) | Configures the antenna status-report interval | `messages/upper_a.md` |
+| `a` | Antenna (A) | Requests periodic `L` messages from the modem | `messages/a.md` |
+
+The Markdown paths above are *logical fact destinations*; published files
+use the corresponding `.json` extension. The `upper_` prefix is an output
+naming convention for uppercase protocol types, **not** an OpenAMIP message
+name. Do not collapse `upper_a` and `a` during canonicalization.
+
+### Deferred message identity (P4, experimental)
+
+The `refactor/deferred-message-identity-p4` branch adds **candidate staging
+before canonical message assignment**. This is not yet the behavior of
+`master`, and it has not been accepted as a verified protocol extractor.
+
+* Extraction and coverage retain `MessageCandidate` entries with their
+  original proposed names, source-window identifiers, source segment IDs,
+  statements, and source excerpts. The proposed filename is **not** identity
+  evidence. Uncertain names are retained rather than silently converted to
+  a canonical message type.
+* The P4 projection resolves **individual facts**, not entire model-generated
+  files, from explicit source type declarations and nearby heading or contiguous
+  table-row context. Table ownership can extend beyond twelve rows, but stops
+  at blank lines, headings, and non-table prose. It groups resolved facts under case-sensitive canonical paths,
+  removes the previous P3 message projection, and runs the fact audit
+  **after** consolidation. Non-message facts are retained separately.
+* `messages/upper_a.md` and `messages/a.md` remain distinct. A candidate
+  may contain facts belonging to different source-declared message types.
+  Unresolved candidate facts remain in the checkpoint and are not published
+  as canonical message facts.
+* Extraction still invokes the older P3 path-validation logic and may print
+  `REJECT FACT` for entries that P4 nevertheless retains as candidates.
+  Those logs must not be interpreted as P4 candidate loss without inspecting
+  the candidate and consolidation counters.
+* The candidate projection is checkpointed. Its audit projection version is
+  currently **6**; a checkpoint with an older fact-audit version is
+  re-consolidated before fact review. The extraction checkpoint schema is
+  **version 16**, while the on-disk filename still ends in
+  `.v10.checkpoint.json`. Schema version, audit version, and filename
+  suffix are separate concepts.
+
+#### Algorithm review and known limitations (24 October 2026)
+
+The current implementation is intentionally conservative; **do not use its
+output for code generation without manual verification**.
+
+1. **Source provenance is now anchored to the original chunk.** New
+   candidate facts persist a verified byte offset into their original source
+   chunk, including uniquely located recovery subwindows. Resolution checks
+   the exact bytes at that position rather than interpreting a recovery-local
+   segment ID as a parent-chunk ID. Repeated, indistinguishable recovery
+   windows are explicitly unresolved. Legacy checkpoint candidates without
+   an offset use conservative fallback matching; the new offset cannot be
+   reconstructed reliably for all previously collected facts. Offsets are
+   chunk-relative, not yet absolute positions in the full document.
+2. **Table ownership is improved but remains local.** The legacy
+   `section_type_for_line` looks back at most 12 lines; P4 now also scans
+   uninterrupted table-like rows backwards to the nearest explicit `Type:`
+   declaration, with regression tests for long tables, blank lines, headings,
+   prose boundaries, and case distinctions. This is not a document-wide
+   ownership index: HTML normalization, continuation tables, and declarations
+   split across source windows remain risks. The new table resolver must also
+   be checked for incorrect positive ownership, not just improved counts.
+3. **Source quotation is not semantic verification.** A source excerpt can
+   exist verbatim while the extracted statement misstates a value, direction,
+   parameter, or message owner. `supported` records quote support only;
+   semantic correctness, topic ownership, and completeness remain separate
+   validation requirements.
+4. **Deduplication now retains alternative provenance.** Canonical facts
+   still deduplicate by statement within a destination, but each distinct
+   source occurrence is retained in `evidence_occurrences` in the checkpoint.
+   This is a provenance improvement, **not** semantic equivalence detection:
+   distinct paraphrases of the same fact are not consolidated, and the
+   primary audit still operates on one selected evidence quote.
+5. **Legacy and staged extraction coexist.** The P3 parser still performs
+   early identity rejection while P4 stages candidates separately. This
+   increases complexity and makes `REJECT FACT` counts misleading unless
+   compared with staged, resolved, and unresolved fact counts.
+6. **Checkpoint and resume require regression coverage.** The audit
+   projection is rebuilt on version changes, but interrupted extraction,
+   coverage, recovery, and repeated resumes should be tested for stable
+   candidate IDs, counts, and canonical output.
+
+The next implementation step is to construct deterministic **document-wide
+ownership** for headings and table rows using verified chunk-relative locators
+and each chunk's document position. Before extending the resolver, audit
+newly assigned facts for false-positive ownership. The legacy P3 extraction
+path also needs isolation. Semantic validation remains separate from verbatim
+quote checking. Re-running only the audit projection on an old checkpoint
+does **not** populate byte offsets absent from that checkpoint; fresh
+extraction is needed to measure the effect of new provenance data. Never
+infer identity from a matching suggested name alone.
+
+**Do not chase nonexistent messages.** A letter mentioned in a document is
+not sufficient evidence that a usable message is defined. In OpenAMIP,
+message-type declaration tables (sections 2.3 and 2.4) must be distinguished
+from reserved entries, antenna status codes (2.5), general protocol semantics
+(2.7), and example traffic (2.8). A reserved type or a type seen only in an
+example must not become a canonical message definition. Facts about shared
+protocol behavior may belong under general protocol facts, not any message.
+Future diagnostics should distinguish `defined_message`, `reserved_type`,
+`general_protocol_fact`, and `unknown_identity`; **these four categories
+are a proposed improvement, not currently implemented counters**. Do not
+interpret every unresolved fact as a missing message definition.
+
+A previous experimental definition inventory contained OpenAMIP-specific
+section numbers and has been removed. No document-specific catalog is used
+to authorize P4 identities. A format-independent definition catalog and a
+separate projection version are still outstanding. The P4 projection version
+was advanced to 6 so existing version-5 checkpoints rebuild their message
+projection from preserved candidates before review.
+
+P4 now also emits `P4 UNRESOLVED DIAGNOSTICS` counters for invalid windows,
+ambiguous locators, missing evidence, offset/quote mismatches, missing source
+types, and conflicting explicit type labels. The diagnostic counters and the
+canonical resolver now share one decision function, including the legacy
+segment-ID fallback. These counters do **not** prove that the proposed
+message exists. The changes after the last local build remain unverified.
+
+#### OpenAMIP validation status (24 October 2026)
+
+The earlier P3 run reported **548 facts: 506 supported, 42 unresolved**.
+These are historical results, not validation of P4.
+
+A subsequent P4 OpenAMIP run reported **161 staged candidates**, **791
+candidate facts**, and **695 distinct statement/quote pairs**. The v2
+consolidation accepted **296 candidate fact occurrences**, produced **260
+distinct typed message facts**, and left **495 candidate facts unresolved**.
+These are diagnostic counts from that run, not a completeness score or a
+claim of semantic correctness. The run still produced an **unverified draft**.
+
+A later P4 OpenAMIP run retained **200 candidates**, **902 candidate fact
+occurrences**, and **766 distinct statement/evidence pairs**. Before the
+long-table resolver, **198** occurrences were assigned to a source-declared
+type, producing **157** distinct message facts; **704** occurrences remained
+unresolved. With the contiguous-table resolver, the reported figures became
+**359** assigned occurrences, **285** distinct message facts, and **543**
+unresolved occurrences. These are *identity-resolution counts*, not evidence
+of semantic correctness or complete message coverage. The **161 additional
+assignments require source-level review**, including whether the type is
+actually defined rather than reserved or merely mentioned. The extraction
+still produces an **unverified draft** and retains its checkpoint.
+
+A local `just gbuild` run at commit `1dad5d8` passed compilation,
+**82 library tests**, Clippy, formatting, release build, and release Clippy.
+This confirms that earlier table-resolver changes compiled; it does not
+validate the subsequent unresolved-diagnostics changes, which require
+another local run.
+
+**Before merging P3/P4:** run `just gbuild` successfully, test precise
+source ownership and case-sensitive table examples, resume a checkpoint
+without duplicating candidates, rerun OpenAMIP, inspect generated message
+files and `facts.json`, and verify unresolved counts and semantic fact
+ownership against the source. Keep unverified drafts distinct from verified
+specifications. Do not merge solely on the strength of compilation or
+unit-test success.
 
 Release documentation is also implemented as a multi-step workflow. It derives
 context from Git history, by default since the latest tag, analyzes the changes,
