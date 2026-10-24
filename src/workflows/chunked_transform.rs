@@ -85,6 +85,9 @@ struct SourceFact {
     end_line: usize,
     #[serde(default)]
     evidence_quote: Option<String>,
+    /// Exact byte offset within source_chunk, if available from P4 staging.
+    #[serde(default)]
+    source_byte_offset: Option<usize>,
     /// All distinct source occurrences retained when identical statements merge.
     #[serde(default)]
     evidence_occurrences: Vec<FactEvidenceOccurrence>,
@@ -98,6 +101,8 @@ struct FactEvidenceOccurrence {
     start_line: usize,
     end_line: usize,
     evidence_quote: Option<String>,
+    #[serde(default)]
+    source_byte_offset: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -698,6 +703,7 @@ fn record_segmented_facts(
                 start_line,
                 end_line,
                 evidence_quote: quote.clone(),
+                source_byte_offset: None,
             };
             if !existing.evidence_occurrences.contains(&occurrence) {
                 existing.evidence_occurrences.push(occurrence);
@@ -711,6 +717,7 @@ fn record_segmented_facts(
                 existing.source_chunk = chunk;
                 existing.start_line = start_line;
                 existing.end_line = end_line;
+                existing.source_byte_offset = None;
                 existing.review = FactReview::Pending;
             }
             continue;
@@ -720,11 +727,13 @@ fn record_segmented_facts(
             source_chunk: chunk,
             start_line,
             end_line,
+            source_byte_offset: None,
             evidence_occurrences: vec![FactEvidenceOccurrence {
                 source_chunk: chunk,
                 start_line,
                 end_line,
                 evidence_quote: quote.clone(),
+                source_byte_offset: None,
             }],
             evidence_quote: quote,
             review: FactReview::Pending,
@@ -757,6 +766,7 @@ fn record_verified_facts(
                 existing.source_chunk = chunk;
                 existing.start_line = start_line;
                 existing.end_line = end_line;
+                existing.source_byte_offset = None;
             }
             continue;
         }
@@ -771,6 +781,7 @@ fn record_verified_facts(
             start_line,
             end_line,
             evidence_quote: quote,
+            source_byte_offset: None,
             evidence_occurrences: Vec::new(),
             review,
         });
@@ -795,10 +806,49 @@ fn record_source_facts(
                 start_line,
                 end_line,
                 evidence_quote: None,
-                evidence_occurrences: Vec::new(),
+                source_byte_offset: None,
+            evidence_occurrences: Vec::new(),
                 review: FactReview::Pending,
             });
         }
+    }
+}
+
+/// Record a P4 occurrence with its precise source position, not the full
+/// overlapping window line range. Keep older checkpoint fields compatible.
+fn record_positioned_candidate_fact(
+    facts: &mut BTreeMap<String, Vec<SourceFact>>,
+    path: &str,
+    statement: String,
+    quote: String,
+    source_chunk: usize,
+    part: &Chunk,
+    offset: Option<usize>,
+) {
+    let (start_line, end_line) = if let Some(offset) = offset {
+        let prefix = &part.text[..offset];
+        let start_line = part.start_line + prefix.bytes().filter(|b| *b == b'\n').count();
+        let end_line = start_line + quote.bytes().filter(|b| *b == b'\n').count()
+            - usize::from(quote.ends_with('\n'));
+        (start_line, end_line.max(start_line))
+    } else {
+        (part.start_line, part.end_line)
+    };
+    record_segmented_facts(
+        facts, path, vec![(statement.clone(), Some(quote.clone()))],
+        source_chunk, start_line, end_line,
+    );
+    let Some(fact) = facts.get_mut(path).and_then(|entries| entries.iter_mut().find(|f| f.statement == statement)) else {
+        return;
+    };
+    if fact.source_chunk == source_chunk && fact.start_line == start_line && fact.end_line == end_line {
+        fact.source_byte_offset = offset;
+    }
+    if let Some(occurrence) = fact.evidence_occurrences.iter_mut().find(|o| {
+        o.source_chunk == source_chunk && o.start_line == start_line &&
+        o.end_line == end_line && o.evidence_quote.as_deref() == Some(quote.as_str())
+    }) {
+        occurrence.source_byte_offset = offset;
     }
 }
 
@@ -2149,13 +2199,14 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                             continue;
                         }
                     }
-                    record_segmented_facts(
+                    record_positioned_candidate_fact(
                         &mut checkpoint.facts,
                         &path,
-                        vec![(candidate_fact.statement, Some(quote))],
+                        candidate_fact.statement,
+                        quote,
                         source_chunk,
-                        part.start_line,
-                        part.end_line,
+                        part,
+                        candidate_fact.source_byte_offset,
                     );
                     accepted += 1;
                 }
@@ -2214,7 +2265,9 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 .iter()
                 .filter_map(|(previous_path, previous_index)| {
                     let previous = &checkpoint.facts[previous_path][*previous_index];
-                    (previous.source_chunk == fact.source_chunk
+                    (fact.source_byte_offset.is_some()
+                        && previous.source_byte_offset == fact.source_byte_offset
+                        && previous.source_chunk == fact.source_chunk
                         && previous.statement == fact.statement
                         && previous.review != FactReview::Pending)
                         .then_some((previous.review, previous.evidence_quote.clone()))
@@ -2451,6 +2504,30 @@ mod internal_tests;
 #[cfg(test)]
 mod segmented_evidence_tests {
     use super::*;
+
+    #[test]
+    fn positioned_candidate_facts_keep_distinct_source_lines() {
+        let source = "Type: A | command\n| first | value |\n| second | value |\n";
+        let part = Chunk {
+            start_byte: 0, start_line: 1, end_line: 3, text: source.into(),
+        };
+        let mut facts = BTreeMap::new();
+        let q1 = "| first | value |";
+        let q2 = "| second | value |";
+        record_positioned_candidate_fact(
+            &mut facts, "messages/upper_a.md", "first".into(), q1.into(),
+            0, &part, Some(source.find(q1).unwrap()),
+        );
+        record_positioned_candidate_fact(
+            &mut facts, "messages/upper_a.md", "second".into(), q2.into(),
+            0, &part, Some(source.find(q2).unwrap()),
+        );
+        let found = &facts["messages/upper_a.md"];
+        assert_eq!((found[0].start_line, found[0].end_line), (2, 2));
+        assert_eq!((found[1].start_line, found[1].end_line), (3, 3));
+        assert_ne!(found[0].source_byte_offset, found[1].source_byte_offset);
+        assert_eq!(found[0].evidence_occurrences[0].source_byte_offset, found[0].source_byte_offset);
+    }
 
     #[test]
     fn ids_are_stable_and_preserve_unicode_source() {
