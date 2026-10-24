@@ -2161,8 +2161,13 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             "## [CHUNKED] IDENTITY CLASSIFICATION: {resolved} explicitly typed candidates, {unresolved} unresolved candidates ({unresolved_facts} facts); no automatic alias merging"
         );
         let source_windows: Vec<&str> = parts.iter().map(|part| part.text.as_str()).collect();
-        let diagnostics =
-            message_identity::resolution_diagnostics(&checkpoint.candidates, &source_windows);
+        let source_starts: Vec<usize> = parts.iter().map(|part| part.start_byte).collect();
+        let diagnostics = message_identity::resolution_diagnostics_in_document(
+            &checkpoint.candidates,
+            &source_windows,
+            &source_starts,
+            &masked_source,
+        );
         println!(
             "## [CHUNKED] P4 UNRESOLVED DIAGNOSTICS: invalid_window={}, ambiguous_locator={}, missing_evidence={}, invalid_offset_or_quote={}, no_source_type={}, conflicting_type={}",
             diagnostics.invalid_window,
@@ -2177,7 +2182,12 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         // mutates the checkpoint or an existing output directory.
         if std::env::var_os("AIFIX_IDENTITY_REPLAY").is_some() {
             let (groups, unresolved) =
-                message_identity::resolved_source_facts(&checkpoint.candidates, &source_windows);
+                message_identity::resolved_source_facts_in_document(
+                    &checkpoint.candidates,
+                    &source_windows,
+                    &source_starts,
+                    &masked_source,
+                );
             let mut seen = std::collections::BTreeSet::new();
             let mut duplicates = 0_usize;
             let mut positioned = 0_usize;
@@ -2233,7 +2243,12 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         if checkpoint.identity_projection_version != 2 {
             let source_windows: Vec<&str> = parts.iter().map(|part| part.text.as_str()).collect();
             let (groups, mut unresolved) =
-                message_identity::resolved_source_facts(&checkpoint.candidates, &source_windows);
+                message_identity::resolved_source_facts_in_document(
+                    &checkpoint.candidates,
+                    &source_windows,
+                    &source_starts,
+                    &masked_source,
+                );
             checkpoint
                 .facts
                 .retain(|path, _| !path.starts_with("messages/"));
