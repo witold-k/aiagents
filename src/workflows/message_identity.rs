@@ -405,12 +405,10 @@ fn resolve_fact_type_in_document(
     let local = resolve_fact_type(window, fact);
     if matches!(
         local,
-        Err(
-            ResolutionFailure::AmbiguousLocator
-                | ResolutionFailure::MissingEvidence
-                | ResolutionFailure::InvalidLocator
-                | ResolutionFailure::ConflictingType
-        )
+        Err(ResolutionFailure::AmbiguousLocator
+            | ResolutionFailure::MissingEvidence
+            | ResolutionFailure::InvalidLocator
+            | ResolutionFailure::ConflictingType)
     ) {
         return local;
     }
@@ -456,7 +454,9 @@ fn resolve_fact_type_in_document(
     {
         return Err(ResolutionFailure::ConflictingType);
     }
-    let letter = declared.or_else(|| local.ok()).ok_or(ResolutionFailure::NoSourceType)?;
+    let letter = declared
+        .or_else(|| local.ok())
+        .ok_or(ResolutionFailure::NoSourceType)?;
     if super::explicit_type_label(&fact.statement).is_some_and(|stated| stated != letter) {
         return Err(ResolutionFailure::ConflictingType);
     }
