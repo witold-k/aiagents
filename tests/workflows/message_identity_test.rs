@@ -80,6 +80,28 @@ fn unresolved_history_reports_previous_declaration_without_promoting_fact() {
     assert!(samples[0].contains("last_heading=[line 3: # Other section]"));
 }
 
+#[test]
+fn flattened_message_table_history_tracks_rows_but_stops_at_next_type() {
+    let document = "## 2.3 Message Types, Sender (M)\nType: N | Not Track-test mode\nNOTE: The N command is redundant.\n\nOptional antenna number\nType: W | Where interval\nGPS Time (time)\n";
+    let first = document.find("Optional antenna number").unwrap();
+    let second = document.find("GPS Time (time)").unwrap();
+    assert_eq!(
+        flattened_message_table_type(document, document[..first].bytes().filter(|b| *b == b'\n').count()),
+        Some(b'N')
+    );
+    assert_eq!(
+        flattened_message_table_type(document, document[..second].bytes().filter(|b| *b == b'\n').count()),
+        Some(b'W')
+    );
+}
+
+#[test]
+fn flattened_history_never_claims_semantics_or_appendix() {
+    let document = "## 2.3 Message Types, Sender (M)\nType: N | Description\n## 2.7 Semantics\nThe N command is discussed.\n# Appendix A Extended Antenna Status\n| parameter | description |\n";
+    assert_eq!(flattened_message_table_type(document, 3), None);
+    assert_eq!(flattened_message_table_type(document, 5), None);
+}
+
 fn fact(statement: &str) -> CandidateFact {
     CandidateFact {
         statement: statement.into(),
