@@ -1,5 +1,15 @@
 # Chunked Transform — source-grounded message extraction
 
+> **Documentation status (24 October 2026):** This page includes historical v1/v6
+> descriptions retained for design context. The active P4 experiment stages
+> `MessageCandidate` facts, uses a versioned identity projection and supports
+> read-only `AIFIX_IDENTITY_REPLAY=1` from a completed checkpoint. The old
+> checkpoint and Markdown-output sections below are **not** an authoritative
+> description of the current on-disk schema or publication contract. Refer to
+> the current [README](../README.md) for P4 status and
+> [topic diagrams](architecture_diagrams.md) for the current conceptual split.
+> The replay does not call an LLM, audit facts, or publish output.
+
 ## Purpose and design rationale
 
 `extract_message_tables` transforms a large UTF-8 Markdown or text protocol
