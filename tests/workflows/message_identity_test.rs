@@ -108,6 +108,36 @@ fn flattened_history_never_claims_semantics_or_appendix() {
     assert_eq!(flattened_message_table_type(document, 5), None);
 }
 
+#[test]
+fn flattened_table_detection_is_independent_of_section_number() {
+    let document = "# Protocol\n## 7.8 Message Types, Sender (Device)\nType: Q | Query\nA continuation line\n";
+    assert_eq!(flattened_message_table_type(document, 3), Some(b'Q'));
+}
+
+#[test]
+fn flattened_table_stops_at_any_new_heading() {
+    let document = "## 7.8 Message Types\nType: Q | Query\n### Examples\nA continuation line\n";
+    assert_eq!(flattened_message_table_type(document, 3), None);
+}
+
+#[test]
+fn document_identity_conflict_overrides_local_success() {
+    let document = "## 7.8 Message Types\nType: A | Query\nType: B | Other\n";
+    let start = document.find("Type: B").unwrap();
+    let window = &document[start..];
+    let candidate = CandidateFact {
+        statement: "Type: B | Other".into(),
+        segment_id: "S1".into(),
+        evidence_quote: Some("Type: B | Other".into()),
+        source_byte_offset: Some(0),
+        source_locator_ambiguous: false,
+    };
+    assert_eq!(
+        resolve_fact_type_in_document(window, start, document, &candidate),
+        Ok(b'B')
+    );
+}
+
 fn fact(statement: &str) -> CandidateFact {
     CandidateFact {
         statement: statement.into(),
