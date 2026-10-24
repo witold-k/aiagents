@@ -262,6 +262,22 @@ fn table_block_type_for_line(source: &str, line_index: usize) -> Option<u8> {
     None
 }
 
+// A table caption ends a flattened table irrespective of the document's
+// numbering scheme (e.g. "Table A-2.", "Table 17.", "Table 2-2.").
+fn is_table_caption(line: &str) -> bool {
+    let Some(rest) = line.strip_prefix("Table ") else {
+        return false;
+    };
+    let identifier = rest.split_whitespace().next().unwrap_or("");
+    identifier
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_alphanumeric())
+        && identifier
+            .chars()
+            .any(|ch| ch.is_ascii_digit() || ch == '-')
+}
+
 /// PDF-to-Markdown conversion sometimes flattens a message table into
 /// consecutive prose lines. Within the message-type table only, a row's
 /// explicit `Type: X |` cell owns following continuation lines until the next
@@ -290,7 +306,7 @@ fn flattened_message_table_type(source: &str, line_index: usize) -> Option<u8> {
         let line = lines.get(index)?.trim();
         if line.starts_with('#')
             || line.starts_with("```")
-            || line.starts_with("Table 2-")
+            || is_table_caption(line)
             || line.starts_with("| Type")
             || line.starts_with("| ---")
         {
@@ -300,8 +316,8 @@ fn flattened_message_table_type(source: &str, line_index: usize) -> Option<u8> {
             // A row declaration is not an open-ended standalone heading.
             return line.contains('|').then_some(letter);
         }
-        // An unrecognized/OCR-damaged declaration still ends the previous
-        // row's ownership. Never carry N across a source row "Type: 0".
+        // An unrecognized or damaged declaration still ends the previous
+        // row's ownership; never guess a replacement for its type.
         if line.starts_with("Type:") || line.starts_with("| Type:") {
             break;
         }
