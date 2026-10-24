@@ -145,8 +145,7 @@ fn table_caption_boundary_accepts_arbitrary_numbering() {
     assert!(is_table_caption("Table 17. Status fields"));
     assert!(is_table_caption("Table 2-2. Status fields"));
     assert!(!is_table_caption("Table of Contents"));
-    let document =
-        "## 7.8 Message Types\nType: Q | Query\nTable A-2. Status fields\nContinuation";
+    let document = "## 7.8 Message Types\nType: Q | Query\nTable A-2. Status fields\nContinuation";
     assert_eq!(flattened_message_table_type(document, 3), None);
 }
 
