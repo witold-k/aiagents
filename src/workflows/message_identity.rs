@@ -359,8 +359,13 @@ fn resolve_fact_type_in_document(
     if !matches!(local, Err(ResolutionFailure::NoSourceType)) {
         return local;
     }
-    let offset = fact.source_byte_offset.ok_or(ResolutionFailure::InvalidLocator)?;
-    let quote = fact.evidence_quote.as_deref().ok_or(ResolutionFailure::MissingEvidence)?;
+    let offset = fact
+        .source_byte_offset
+        .ok_or(ResolutionFailure::InvalidLocator)?;
+    let quote = fact
+        .evidence_quote
+        .as_deref()
+        .ok_or(ResolutionFailure::MissingEvidence)?;
     let absolute = window_start
         .checked_add(offset)
         .ok_or(ResolutionFailure::InvalidLocator)?;
@@ -372,7 +377,10 @@ fn resolve_fact_type_in_document(
     }
     let line = crate::utils::stringutils::line_index_at_byte_offset(document, absolute)
         .ok_or(ResolutionFailure::InvalidLocator)?;
-    let source_line = document.lines().nth(line).ok_or(ResolutionFailure::InvalidLocator)?;
+    let source_line = document
+        .lines()
+        .nth(line)
+        .ok_or(ResolutionFailure::InvalidLocator)?;
     let mut declared = None;
     for signal in [
         super::explicit_type_label(source_line),
@@ -404,8 +412,7 @@ pub(super) fn resolution_diagnostics_in_document(
     for candidate in candidates {
         let window = source_window_index(&candidate.id);
         for fact in &candidate.facts {
-            let Some((source, start)) = window
-                .and_then(|i| sources.get(i).zip(starts.get(i)))
+            let Some((source, start)) = window.and_then(|i| sources.get(i).zip(starts.get(i)))
             else {
                 result.invalid_window += 1;
                 continue;
@@ -428,7 +435,10 @@ pub(super) fn resolved_source_facts_in_document(
     sources: &[&str],
     starts: &[usize],
     document: &str,
-) -> (std::collections::BTreeMap<String, Vec<(usize, CandidateFact)>>, usize) {
+) -> (
+    std::collections::BTreeMap<String, Vec<(usize, CandidateFact)>>,
+    usize,
+) {
     let mut groups = std::collections::BTreeMap::new();
     let mut unresolved = 0;
     for candidate in candidates {
