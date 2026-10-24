@@ -1515,6 +1515,16 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             },
             Err(err) => return WorkflowResult::Error(err),
         };
+        if std::env::var_os("AIFIX_IDENTITY_REPLAY").is_some()
+            && (checkpoint.next_chunk != parts.len()
+                || checkpoint.coverage_next_chunk != parts.len()
+                || checkpoint.recovery_chunk.is_some()
+                || !checkpoint.recovery_pending.is_empty())
+        {
+            return WorkflowResult::Error(
+                "Identity replay requires a completed extraction and coverage checkpoint; no LLM calls were made".into(),
+            );
+        }
         if output.exists() {
             return WorkflowResult::Error(format!(
                 "Output directory already exists: {}",
