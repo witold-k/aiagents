@@ -2177,6 +2177,19 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             diagnostics.no_source_type,
             diagnostics.conflicting_type,
         );
+        let triage = message_identity::unresolved_triage_in_document(
+            &checkpoint.candidates,
+            &source_windows,
+            &source_starts,
+            &masked_source,
+        );
+        println!(
+            "## [CHUNKED] P4 UNRESOLVED TRIAGE (STRUCTURAL HINTS): example_line={}, parameter_table_row={}, other={}, total_no_source_type={}; not semantic classifications",
+            triage.example_line,
+            triage.parameter_table_row,
+            triage.other,
+            diagnostics.no_source_type,
+        );
         // Explicit, read-only deterministic replay. This deliberately stops
         // before fact auditing and publication; neither invokes the model nor
         // mutates the checkpoint or an existing output directory.
