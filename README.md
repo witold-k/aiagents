@@ -14,6 +14,7 @@ A local-first agent runtime for AI-assisted software engineering. Rust orchestra
 - [Chunked extraction](docs/chunked_transform.md) — protocol facts, provenance and limitations
 - [Runtime tests](runtests/README.md) — fixtures and local results
 - [TODO](TODO.md) — pending work
+- [Detailed status and historical results](docs/project_status_history.md) — experimental metrics and design history
 
 ## Example
 
