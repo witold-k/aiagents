@@ -51,8 +51,7 @@ fn embedded_image_is_masked_before_normalization() {
 
 #[test]
 fn segment_ids_reference_normalized_table_row() {
-    let source =
-        normalize_html_tables("<table><tr><td>s</td><td>Status message</td></tr></table>");
+    let source = normalize_html_tables("<table><tr><td>s</td><td>Status message</td></tr></table>");
     let segments = evidence_segments(&source);
     assert_eq!(segments[0].id, "S1");
     assert!(declared_message_identity(
