@@ -140,6 +140,14 @@ fn document_identity_agrees_with_local_explicit_declaration() {
 }
 
 #[test]
+fn unresolved_shape_triage_does_not_claim_message_ownership() {
+    let source = "## Examples\n```txt\nA 10 # alive\n```\n\n| Parameter | Description |\n| --- | --- |\n| lat | Latitude |\n\nOrdinary prose";
+    assert_eq!(unresolved_source_shape(source, 2), "example");
+    assert_eq!(unresolved_source_shape(source, 7), "parameter");
+    assert_eq!(unresolved_source_shape(source, 9), "other");
+}
+
+#[test]
 fn table_caption_boundary_accepts_arbitrary_numbering() {
     assert!(is_table_caption("Table A-2. Status fields"));
     assert!(is_table_caption("Table 17. Status fields"));
