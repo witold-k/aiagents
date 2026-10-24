@@ -421,3 +421,19 @@ Future underlying component:
 ## License
 
 Apache-2.0 © 2026 Witold Kaminski. See [LICENSE](LICENSE).
+
+### Follow-up: source provenance and identity ownership (experimental)
+
+P4 projection version 7 stores the absolute starting byte of each normalized
+source chunk, rejects conflicting independently detected ownership signals,
+and suppresses duplicate positioned fact occurrences from overlapping chunks.
+Legacy candidates without exact byte offsets are not deduplicated by guessed
+locations. Rebuilding a version-6 checkpoint uses its preserved candidates and
+resets message-fact reviews.
+
+These safeguards do **not** make the resolver format-independent: explicit
+`Type:` labels, single-character identities and message path conventions are
+still heuristic assumptions. A generic, document-derived definition model,
+separate projection/audit versioning and semantic fact verification remain
+follow-up work. OpenAMIP is a regression fixture, not a source of hard-coded
+protocol rules.
