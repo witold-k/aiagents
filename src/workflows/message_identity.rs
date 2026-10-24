@@ -262,6 +262,46 @@ fn table_block_type_for_line(source: &str, line_index: usize) -> Option<u8> {
     None
 }
 
+/// PDF-to-Markdown conversion sometimes flattens a message table into
+/// consecutive prose lines. Within the message-type table only, a row's
+/// explicit `Type: X |` cell owns following continuation lines until the next
+/// declaration, heading, table boundary or a bounded distance. Blank lines
+/// alone are not sufficient boundaries in these converted tables.
+fn flattened_message_table_type(source: &str, line_index: usize) -> Option<u8> {
+    let lines: Vec<&str> = source.lines().collect();
+    let mut in_message_table = false;
+    for line in lines.iter().take(line_index + 1) {
+        let trimmed = line.trim();
+        if trimmed.starts_with("## 2.3 Message Types")
+            || trimmed.starts_with("## 2.4 Message Types")
+        {
+            in_message_table = true;
+        } else if trimmed.starts_with("## ") || trimmed.starts_with("# Appendix") {
+            in_message_table = false;
+        }
+    }
+    if !in_message_table {
+        return None;
+    }
+    for distance in 0..=12 {
+        let index = line_index.checked_sub(distance)?;
+        let line = lines.get(index)?.trim();
+        if line.starts_with('#')
+            || line.starts_with("```")
+            || line.starts_with("Table 2-")
+            || line.starts_with("| Type")
+            || line.starts_with("| ---")
+        {
+            break;
+        }
+        if let Some(letter) = super::explicit_type_label(line) {
+            // A row declaration is not an open-ended standalone heading.
+            return line.contains('|').then_some(letter);
+        }
+    }
+    None
+}
+
 /// Resolve an individual fact against its own original source window.
 /// An explicit type in the statement or source line wins only if consistent.
 /// A preceding standalone Type heading may own contiguous following lines.
@@ -386,6 +426,7 @@ fn resolve_fact_type_in_document(
         super::explicit_type_label(source_line),
         super::section_type_for_line(document, line),
         table_block_type_for_line(document, line),
+        flattened_message_table_type(document, line),
     ]
     .into_iter()
     .flatten()
