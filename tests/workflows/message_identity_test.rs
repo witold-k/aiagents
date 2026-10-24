@@ -86,11 +86,17 @@ fn flattened_message_table_history_tracks_rows_but_stops_at_next_type() {
     let first = document.find("Optional antenna number").unwrap();
     let second = document.find("GPS Time (time)").unwrap();
     assert_eq!(
-        flattened_message_table_type(document, document[..first].bytes().filter(|b| *b == b'\n').count()),
+        flattened_message_table_type(
+            document,
+            document[..first].bytes().filter(|b| *b == b'\n').count()
+        ),
         Some(b'N')
     );
     assert_eq!(
-        flattened_message_table_type(document, document[..second].bytes().filter(|b| *b == b'\n').count()),
+        flattened_message_table_type(
+            document,
+            document[..second].bytes().filter(|b| *b == b'\n').count()
+        ),
         Some(b'W')
     );
 }
