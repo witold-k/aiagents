@@ -52,6 +52,9 @@ struct ExtractionCheckpoint {
     fact_audit_cursor: usize,
     #[serde(default)]
     fact_audit_version: u32,
+    /// Version of the deterministic candidate-to-message projection, separate from review.
+    #[serde(default)]
+    identity_projection_version: u32,
     #[serde(default)]
     recovery_chunk: Option<usize>,
     #[serde(default)]
@@ -64,6 +67,14 @@ struct ExtractionCheckpoint {
     recovery_candidates: Vec<message_identity::MessageCandidate>,
 }
 
+// v7 stored the projection generation in the fact-review version field.
+// Recognize that already-completed projection without replaying LLM work.
+fn migrate_identity_projection_version(checkpoint: &mut ExtractionCheckpoint) {
+    if checkpoint.identity_projection_version == 0 && checkpoint.fact_audit_version == 7 {
+        checkpoint.identity_projection_version = 1;
+    }
+}
+
 /// One source-attributed, independently deduplicated specification assertion.
 /// A source window is evidence location, not a claim of verbatim verification.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -74,6 +85,9 @@ struct SourceFact {
     end_line: usize,
     #[serde(default)]
     evidence_quote: Option<String>,
+    /// Exact byte offset within source_chunk, if available from P4 staging.
+    #[serde(default)]
+    source_byte_offset: Option<usize>,
     /// All distinct source occurrences retained when identical statements merge.
     #[serde(default)]
     evidence_occurrences: Vec<FactEvidenceOccurrence>,
@@ -87,6 +101,8 @@ struct FactEvidenceOccurrence {
     start_line: usize,
     end_line: usize,
     evidence_quote: Option<String>,
+    #[serde(default)]
+    source_byte_offset: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -187,6 +203,23 @@ fn evidence_segments(source: &str) -> Vec<EvidenceSegment> {
         line_start += line.len();
     }
     segments
+}
+
+// Context is read from the source before the current window, never from a
+// previous model response. This makes resume and recovery splits deterministic.
+// It is a hint to the model, not evidence for a fact or a message identity.
+fn preceding_extraction_context(source: &str, part: &Chunk, window: &str) -> String {
+    let local_offset = part.text.find(window).unwrap_or(0);
+    let before = &source[..(part.start_byte + local_offset).min(source.len())];
+    let tail_start = before
+        .char_indices()
+        .rev()
+        .nth(1_199)
+        .map_or(0, |(offset, _)| offset);
+    let tail = &before[tail_start..];
+    format!(
+        "=== PRECEDING SOURCE CONTEXT (read-only; not evidence) ===\n{tail}\n=== END PRECEDING CONTEXT ===\n         Use this context only to understand the current section or message type.          A type remains applicable only while the source structure supports it.          A new heading, message declaration, table boundary or unrelated section may end it.          Preserve uppercase/lowercase exactly (Type: G differs from Type: g).          Every emitted fact must cite an S-number from CURRENT SOURCE below;          never cite the preceding context as evidence.\n\n"
+    )
 }
 
 fn segmented_source(source: &str) -> String {
@@ -412,9 +445,37 @@ fn parse_segmented_window_with_identity(
     source: &str,
     identity_source: &str,
 ) -> Result<ExtractedRecords, String> {
-    let parsed: SegmentedWindow =
+    // Models occasionally emit both the legacy source_anchor and segment_id
+    // for the same fact. Serde treats these aliases as a duplicate field.
+    // Accept only an identical pair; conflicting locators remain invalid.
+    let mut value: serde_json::Value =
         serde_json::from_str(strip_code_fences(response.trim()).trim())
             .map_err(|err| format!("Invalid segmented extraction JSON: {err}"))?;
+    if let Some(files) = value
+        .get_mut("files")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for file in files {
+            if let Some(facts) = file
+                .get_mut("facts")
+                .and_then(serde_json::Value::as_array_mut)
+            {
+                for fact in facts {
+                    if let Some(fields) = fact.as_object_mut()
+                        && let (Some(anchor), Some(segment)) =
+                            (fields.get("source_anchor"), fields.get("segment_id"))
+                    {
+                        if anchor != segment {
+                            return Err("Conflicting source_anchor and segment_id".into());
+                        }
+                        fields.remove("source_anchor");
+                    }
+                }
+            }
+        }
+    }
+    let parsed: SegmentedWindow = serde_json::from_value(value)
+        .map_err(|err| format!("Invalid segmented extraction JSON: {err}"))?;
     let segments = evidence_segments(source);
     let mut result: ExtractedRecords = Vec::new();
     for file in parsed.files {
@@ -687,6 +748,7 @@ fn record_segmented_facts(
                 start_line,
                 end_line,
                 evidence_quote: quote.clone(),
+                source_byte_offset: None,
             };
             if !existing.evidence_occurrences.contains(&occurrence) {
                 existing.evidence_occurrences.push(occurrence);
@@ -700,6 +762,7 @@ fn record_segmented_facts(
                 existing.source_chunk = chunk;
                 existing.start_line = start_line;
                 existing.end_line = end_line;
+                existing.source_byte_offset = None;
                 existing.review = FactReview::Pending;
             }
             continue;
@@ -709,11 +772,13 @@ fn record_segmented_facts(
             source_chunk: chunk,
             start_line,
             end_line,
+            source_byte_offset: None,
             evidence_occurrences: vec![FactEvidenceOccurrence {
                 source_chunk: chunk,
                 start_line,
                 end_line,
                 evidence_quote: quote.clone(),
+                source_byte_offset: None,
             }],
             evidence_quote: quote,
             review: FactReview::Pending,
@@ -746,6 +811,7 @@ fn record_verified_facts(
                 existing.source_chunk = chunk;
                 existing.start_line = start_line;
                 existing.end_line = end_line;
+                existing.source_byte_offset = None;
             }
             continue;
         }
@@ -760,6 +826,7 @@ fn record_verified_facts(
             start_line,
             end_line,
             evidence_quote: quote,
+            source_byte_offset: None,
             evidence_occurrences: Vec::new(),
             review,
         });
@@ -784,11 +851,81 @@ fn record_source_facts(
                 start_line,
                 end_line,
                 evidence_quote: None,
+                source_byte_offset: None,
                 evidence_occurrences: Vec::new(),
                 review: FactReview::Pending,
             });
         }
     }
+}
+
+/// Record a P4 occurrence with its precise source position, not the full
+/// overlapping window line range. Keep older checkpoint fields compatible.
+fn record_positioned_candidate_fact(
+    facts: &mut BTreeMap<String, Vec<SourceFact>>,
+    path: &str,
+    statement: String,
+    quote: String,
+    source_chunk: usize,
+    part: &Chunk,
+    offset: Option<usize>,
+) {
+    let (start_line, end_line) = if let Some(offset) = offset {
+        let prefix = &part.text[..offset];
+        let start_line = part.start_line + prefix.bytes().filter(|b| *b == b'\n').count();
+        let end_line = start_line + quote.bytes().filter(|b| *b == b'\n').count()
+            - usize::from(quote.ends_with('\n'));
+        (start_line, end_line.max(start_line))
+    } else {
+        (part.start_line, part.end_line)
+    };
+    let occurrence = FactEvidenceOccurrence {
+        source_chunk,
+        start_line,
+        end_line,
+        evidence_quote: Some(quote.clone()),
+        source_byte_offset: offset,
+    };
+    let destination = facts.entry(path.to_owned()).or_default();
+    if let Some(existing) = destination
+        .iter_mut()
+        .find(|fact| fact.statement == statement)
+    {
+        // Exact position is part of occurrence identity: two quotes on the
+        // same line must not overwrite each other's source byte offsets.
+        if !existing.evidence_occurrences.contains(&occurrence) {
+            existing.evidence_occurrences.push(occurrence);
+        }
+        if existing.evidence_quote.is_none() {
+            existing.evidence_quote = Some(quote);
+            existing.source_chunk = source_chunk;
+            existing.start_line = start_line;
+            existing.end_line = end_line;
+            existing.source_byte_offset = offset;
+            existing.review = FactReview::Pending;
+        }
+        return;
+    }
+    destination.push(SourceFact {
+        statement,
+        source_chunk,
+        start_line,
+        end_line,
+        evidence_quote: Some(quote),
+        source_byte_offset: offset,
+        evidence_occurrences: vec![occurrence],
+        review: FactReview::Pending,
+    });
+}
+
+/// A reviewed assertion may only be reused for the exact same positioned
+/// occurrence. Legacy window-only locations deliberately cannot share reviews.
+fn same_source_occurrence_for_audit(previous: &SourceFact, current: &SourceFact) -> bool {
+    current.source_byte_offset.is_some()
+        && previous.source_byte_offset == current.source_byte_offset
+        && previous.source_chunk == current.source_chunk
+        && previous.statement == current.statement
+        && previous.review != FactReview::Pending
 }
 
 fn render_source_facts(facts: &[SourceFact]) -> String {
@@ -958,6 +1095,8 @@ pub fn parse_audit_decision(response: &str) -> Result<bool, String> {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Chunk {
+    /// Absolute byte position in the normalized document.
+    pub start_byte: usize,
     pub start_line: usize,
     pub end_line: usize,
     pub text: String,
@@ -994,6 +1133,7 @@ pub fn chunks(source: &str, limit: usize) -> Vec<Chunk> {
         let newlines = text.bytes().filter(|byte| *byte == b'\n').count();
         let end_line = start_line + newlines - usize::from(text.ends_with('\n'));
         result.push(Chunk {
+            start_byte,
             start_line,
             end_line,
             text: text.to_owned(),
@@ -1492,6 +1632,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 audit: None,
                 fact_audit_cursor: 0,
                 fact_audit_version: 0,
+                identity_projection_version: 0,
                 recovery_chunk: None,
                 recovery_pending: Vec::new(),
                 recovery_records: Vec::new(),
@@ -1500,6 +1641,16 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             },
             Err(err) => return WorkflowResult::Error(err),
         };
+        if std::env::var_os("AIFIX_IDENTITY_REPLAY").is_some()
+            && (checkpoint.next_chunk != parts.len()
+                || checkpoint.coverage_next_chunk != parts.len()
+                || checkpoint.recovery_chunk.is_some()
+                || !checkpoint.recovery_pending.is_empty())
+        {
+            return WorkflowResult::Error(
+                "Identity replay requires a completed extraction and coverage checkpoint; no LLM calls were made".into(),
+            );
+        }
         if output.exists() {
             return WorkflowResult::Error(format!(
                 "Output directory already exists: {}",
@@ -1561,11 +1712,15 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                         index + 1
                     ));
                 }
+                let preceding = preceding_extraction_context(&masked_source, part, &window);
                 let window_context = if window == part.text {
-                    context.replace(&part.text, &segmented_source(&window))
+                    format!(
+                        "{preceding}{}",
+                        context.replace(&part.text, &segmented_source(&window))
+                    )
                 } else {
                     format!(
-                        "SOURCE: {}\nCHUNK: {}/{} (recovery window)\nLINES: {}-{}\n\n=== SOURCE ===\n{}",
+                        "{preceding}SOURCE: {}\nCHUNK: {}/{} (recovery window)\nLINES: {}-{}\n\n=== SOURCE ===\n{}",
                         input.display(),
                         index + 1,
                         parts.len(),
@@ -1791,8 +1946,9 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                         checkpoint.unresolved_findings = true;
                         break;
                     }
+                    let preceding = preceding_extraction_context(&masked_source, part, &window);
                     let context = format!(
-                        "SOURCE CHUNK {}/{} LINES {}-{}\n\n=== KNOWN MESSAGES ===\n{inventory}\n\n=== SOURCE ===\n{}",
+                        "{preceding}SOURCE CHUNK {}/{} LINES {}-{}\n\n=== KNOWN MESSAGES ===\n{inventory}\n\n=== SOURCE ===\n{}",
                         index + 1,
                         parts.len(),
                         part.start_line,
@@ -2005,8 +2161,13 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             "## [CHUNKED] IDENTITY CLASSIFICATION: {resolved} explicitly typed candidates, {unresolved} unresolved candidates ({unresolved_facts} facts); no automatic alias merging"
         );
         let source_windows: Vec<&str> = parts.iter().map(|part| part.text.as_str()).collect();
-        let diagnostics =
-            message_identity::resolution_diagnostics(&checkpoint.candidates, &source_windows);
+        let source_starts: Vec<usize> = parts.iter().map(|part| part.start_byte).collect();
+        let diagnostics = message_identity::resolution_diagnostics_in_document(
+            &checkpoint.candidates,
+            &source_windows,
+            &source_starts,
+            &masked_source,
+        );
         println!(
             "## [CHUNKED] P4 UNRESOLVED DIAGNOSTICS: invalid_window={}, ambiguous_locator={}, missing_evidence={}, invalid_offset_or_quote={}, no_source_type={}, conflicting_type={}",
             diagnostics.invalid_window,
@@ -2016,6 +2177,86 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             diagnostics.no_source_type,
             diagnostics.conflicting_type,
         );
+        let triage = message_identity::unresolved_triage_in_document(
+            &checkpoint.candidates,
+            &source_windows,
+            &source_starts,
+            &masked_source,
+        );
+        println!(
+            "## [CHUNKED] P4 UNRESOLVED TRIAGE (STRUCTURAL HINTS): example_line={}, parameter_table_row={}, other={}, total_no_source_type={}; not semantic classifications",
+            triage.example_line,
+            triage.parameter_table_row,
+            triage.other,
+            diagnostics.no_source_type,
+        );
+        let parameter_inventory = message_identity::parameter_facts_in_document(
+            &checkpoint.candidates,
+            &source_windows,
+            &source_starts,
+            &masked_source,
+        );
+        println!(
+            "## [CHUNKED] P4 PARAMETER INVENTORY: {} distinct source-backed parameter assertions; separate from message identity, not published",
+            parameter_inventory.len()
+        );
+        // Explicit, read-only deterministic replay. This deliberately stops
+        // before fact auditing and publication; neither invokes the model nor
+        // mutates the checkpoint or an existing output directory.
+        if std::env::var_os("AIFIX_IDENTITY_REPLAY").is_some() {
+            for sample in message_identity::unresolved_history_samples(
+                &checkpoint.candidates,
+                &source_windows,
+                &source_starts,
+                &masked_source,
+                30,
+            ) {
+                println!("## [CHUNKED] IDENTITY HISTORY UNRESOLVED: {sample}");
+            }
+            let (groups, unresolved) = message_identity::resolved_source_facts_in_document(
+                &checkpoint.candidates,
+                &source_windows,
+                &source_starts,
+                &masked_source,
+            );
+            let mut seen = std::collections::BTreeSet::new();
+            let mut duplicates = 0_usize;
+            let mut positioned = 0_usize;
+            let mut projected = 0_usize;
+            let mut by_message = BTreeMap::new();
+            for (path, occurrences) in groups {
+                for (window, fact) in occurrences {
+                    let Some(part) = parts.get(window) else {
+                        continue;
+                    };
+                    if let Some(offset) = fact.source_byte_offset {
+                        let Some(absolute) = part.start_byte.checked_add(offset) else {
+                            continue;
+                        };
+                        positioned += 1;
+                        if !seen.insert((
+                            path.clone(),
+                            fact.statement.clone(),
+                            absolute,
+                            fact.evidence_quote.clone(),
+                        )) {
+                            duplicates += 1;
+                            continue;
+                        }
+                    }
+                    projected += 1;
+                    *by_message.entry(path.clone()).or_insert(0_usize) += 1;
+                }
+            }
+            println!(
+                "## [CHUNKED] IDENTITY REPLAY (READ ONLY): projected={projected} duplicate_occurrences={duplicates} positioned={positioned} unresolved={unresolved} messages={}",
+                by_message.len()
+            );
+            for (path, count) in by_message {
+                println!("## [CHUNKED] IDENTITY REPLAY MESSAGE: {path} facts={count}");
+            }
+            return WorkflowResult::Ok;
+        }
         if files.is_empty() {
             return WorkflowResult::Error("No protocol specifications were extracted".into());
         }
@@ -2027,15 +2268,24 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         // BEFORE reviewing facts. The model's proposed filenames are never
         // used as canonical identities. Existing non-message facts survive.
         // The version gate makes checkpoint resume idempotent.
-        if checkpoint.fact_audit_version != 6 {
+        // Migrate already projected v7 checkpoints without replaying the
+        // extraction or invalidating their completed fact review.
+        migrate_identity_projection_version(&mut checkpoint);
+        if checkpoint.identity_projection_version != 2 {
             let source_windows: Vec<&str> = parts.iter().map(|part| part.text.as_str()).collect();
-            let (groups, mut unresolved) =
-                message_identity::resolved_source_facts(&checkpoint.candidates, &source_windows);
+            let (groups, mut unresolved) = message_identity::resolved_source_facts_in_document(
+                &checkpoint.candidates,
+                &source_windows,
+                &source_starts,
+                &masked_source,
+            );
             checkpoint
                 .facts
                 .retain(|path, _| !path.starts_with("messages/"));
             files.retain(|path, _| !path.starts_with("messages/"));
             let mut accepted = 0_usize;
+            let mut overlapping_duplicates = 0_usize;
+            let mut seen_locations = std::collections::BTreeSet::new();
             for (path, occurrences) in groups {
                 for (source_chunk, candidate_fact) in occurrences {
                     let Some(part) = parts.get(source_chunk) else {
@@ -2057,16 +2307,40 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                         unresolved += 1;
                         continue;
                     }
-                    record_segmented_facts(
+                    // Overlapping chunks may report the same physical source
+                    // location. Deduplicate only exact positioned occurrences;
+                    // legacy facts without offsets remain separate.
+                    if let Some(offset) = candidate_fact.source_byte_offset {
+                        let Some(absolute) = part.start_byte.checked_add(offset) else {
+                            unresolved += 1;
+                            continue;
+                        };
+                        if !seen_locations.insert((
+                            path.clone(),
+                            candidate_fact.statement.clone(),
+                            absolute,
+                            quote.clone(),
+                        )) {
+                            overlapping_duplicates += 1;
+                            continue;
+                        }
+                    }
+                    record_positioned_candidate_fact(
                         &mut checkpoint.facts,
                         &path,
-                        vec![(candidate_fact.statement, Some(quote))],
+                        candidate_fact.statement,
+                        quote,
                         source_chunk,
-                        part.start_line,
-                        part.end_line,
+                        part,
+                        candidate_fact.source_byte_offset,
                     );
                     accepted += 1;
                 }
+            }
+            if overlapping_duplicates > 0 {
+                println!(
+                    "## [CHUNKED] P4 OVERLAP DEDUP: {overlapping_duplicates} duplicate source occurrences"
+                );
             }
             if unresolved > 0 {
                 checkpoint.unresolved_findings = true;
@@ -2080,7 +2354,8 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             println!(
                 "## [CHUNKED] IDENTITY CONSOLIDATION: {accepted} source-backed candidate occurrences -> {consolidated} distinct typed message facts; {unresolved} unresolved candidate facts kept in checkpoint, not published"
             );
-            checkpoint.fact_audit_version = 6;
+            checkpoint.identity_projection_version = 2;
+            checkpoint.fact_audit_version = 8;
             checkpoint.fact_audit_cursor = 0;
             if checkpoint.audit.is_some() {
                 checkpoint.unresolved_findings = true;
@@ -2116,9 +2391,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 .iter()
                 .filter_map(|(previous_path, previous_index)| {
                     let previous = &checkpoint.facts[previous_path][*previous_index];
-                    (previous.source_chunk == fact.source_chunk
-                        && previous.statement == fact.statement
-                        && previous.review != FactReview::Pending)
+                    same_source_occurrence_for_audit(previous, &fact)
                         .then_some((previous.review, previous.evidence_quote.clone()))
                 })
                 .find(|(review, quote)| {
@@ -2351,392 +2624,9 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
 mod internal_tests;
 
 #[cfg(test)]
-mod segmented_evidence_tests {
-    use super::*;
-
-    #[test]
-    fn ids_are_stable_and_preserve_unicode_source() {
-        let source = "Command Q: query status\nÜnicode and evidence\n";
-        let segments = evidence_segments(source);
-        assert_eq!(segments[0].id, "S1");
-        assert_eq!(
-            segments.iter().map(|s| s.text.as_str()).collect::<String>(),
-            source
-        );
-        assert!(segmented_source(source).contains("[S2]"));
-    }
-
-    #[test]
-    fn known_segment_is_accepted_without_model_copied_quote() {
-        let source = "Command Q: query status\nA status query returns data.\n";
-        let response = r#"{"files":[{"path":"messages/q.md","identity_segment_id":"S1","facts":[{"statement":"Q queries status","segment_id":"S2"}]}]}"#;
-        let parsed = parse_segmented_window(response, source).unwrap();
-        assert_eq!(
-            parsed[0].1[0].1.as_deref(),
-            Some("A status query returns data.\n")
-        );
-    }
-
-    #[test]
-    fn fabricated_ids_and_ambiguous_identity_remain_unresolved() {
-        let source = "Q is mentioned as an example.\n";
-        let response = r#"{"files":[{"path":"messages/q.md","identity_segment_id":"S1","facts":[{"statement":"invented","segment_id":"S999"}]}]}"#;
-        assert!(parse_segmented_window(response, source).is_err());
-    }
-
-    #[test]
-    fn misplaced_fact_identity_is_validated_and_promoted() {
-        let source = "Type: G | Status request\nThe G message requests status.\n";
-        let response = r#"{"files":[{"path":"messages/type_g.md","facts":[{"statement":"G requests status","segment_id":"S2","identity_segment_id":"S1"}]}]}"#;
-        let parsed = parse_segmented_window(response, source).unwrap();
-        assert_eq!(parsed[0].0, "messages/g.md");
-        assert_eq!(
-            parsed[0].1[0].1.as_deref(),
-            Some("The G message requests status.\n")
-        );
-    }
-
-    #[test]
-    fn invalid_file_does_not_discard_valid_sibling() {
-        let source = "Type: G | Status request\n";
-        let response = r#"{"files":[{"path":"messages/g.md","identity_segment_id":"S1","facts":[{"statement":"G status","segment_id":"S1"}]},{"path":"messages/invented.md","identity_segment_id":"S1","facts":[{"statement":"invented","segment_id":"S1"}]}]}"#;
-        let (records, rejected) =
-            parse_segmented_window_recoverable(response, source, source).unwrap();
-        assert_eq!(records.len(), 1);
-        assert_eq!(records[0].0, "messages/g.md");
-        assert_eq!(rejected, 1);
-    }
-
-    #[test]
-    fn invalid_fact_does_not_discard_valid_siblings() {
-        let source = "Type: A | Alive interval\nType: B | Beam selection\n";
-        let response = r#"{"files":[{"path":"messages/a.md","facts":[{"statement":"Alive interval","segment_id":"S1"},{"statement":"Wrong beam","segment_id":"S2"},{"statement":"Keepalive interval","segment_id":"S1"}]}]}"#;
-        let (records, rejected) =
-            parse_segmented_window_recoverable(response, source, source).unwrap();
-        assert_eq!(rejected, 1);
-        let kept: Vec<&str> = records
-            .iter()
-            .flat_map(|(_, entries)| entries.iter().map(|(statement, _)| statement.as_str()))
-            .collect();
-        assert_eq!(kept, vec!["Alive interval", "Keepalive interval"]);
-        assert!(records.iter().all(|(path, _)| path == "messages/a.md"));
-    }
-
-    #[test]
-    fn conflicting_fact_identities_are_not_salvaged_individually() {
-        let source = "Type: A | Alive interval\n";
-        let response = r#"{"files":[{"path":"messages/a.md","facts":[{"statement":"First","segment_id":"S1","identity_segment_id":"S1"},{"statement":"Second","segment_id":"S1","identity_segment_id":"S2"}]}]}"#;
-        let (records, rejected) =
-            parse_segmented_window_recoverable(response, source, source).unwrap();
-        assert!(records.is_empty());
-        assert_eq!(rejected, 1);
-    }
-
-    #[test]
-    fn all_invalid_files_do_not_trigger_json_recovery() {
-        let source = "Type: G | Status request\n";
-        let response = r#"{"files":[{"path":"messages/invented.md","identity_segment_id":"S1","facts":[{"statement":"invented","segment_id":"S1"}]}]}"#;
-        let (records, rejected) =
-            parse_segmented_window_recoverable(response, source, source).unwrap();
-        assert!(records.is_empty());
-        assert_eq!(rejected, 1);
-    }
-
-    #[test]
-    fn incomplete_json_cannot_be_salvaged() {
-        let source = "Type: G | Status request\n";
-        let response = r#"{"files":[{"path":"messages/g.md","facts":[{"statement":"G""#;
-        assert!(parse_segmented_window_recoverable(response, source, source).is_err());
-    }
-
-    #[test]
-    fn legacy_source_anchor_is_not_trusted_as_a_quote() {
-        let source = "Type: G | Status request\n";
-        let response = r#"{"files":[{"path":"messages/g.md","identity_segment_id":"S1","facts":[{"statement":"G status","source_anchor":"fabricated"}]}]}"#;
-        let parsed = parse_segmented_window(response, source).unwrap();
-        assert_eq!(parsed[0].1[0].1, None);
-    }
-
-    #[test]
-    fn globally_declared_identity_accepts_facts_from_later_window() {
-        let full_source =
-            "Type: G | Status request\nOther prose.\nThe G message requests status.\n";
-        let window = "The G message requests status.\n";
-        let response = r#"{"files":[{"path":"messages/g.md","facts":[{"statement":"G requests status","segment_id":"S1"}]}]}"#;
-        let parsed = parse_segmented_window_with_identity(response, window, full_source).unwrap();
-        assert_eq!(parsed[0].0, "messages/g.md");
-        assert_eq!(
-            parsed[0].1[0].1.as_deref(),
-            Some("The G message requests status.\n")
-        );
-    }
-
-    #[test]
-    fn canonical_paths_preserve_uppercase_and_lowercase() {
-        assert_eq!(
-            canonical_message_path("messages/upper_a.md", "").unwrap(),
-            "messages/upper_a.md"
-        );
-        assert_eq!(
-            canonical_message_path("messages/a.md", "").unwrap(),
-            "messages/a.md"
-        );
-        assert!(canonical_message_path("messages/upper_a.md", "# Message a").is_err());
-        assert!(canonical_message_path("messages/a.md", "# Message A").is_err());
-    }
-
-    #[test]
-    fn mixed_case_facts_route_to_distinct_files() {
-        let source = "Type: A | Modem alive\nType: a | Antenna alive\n";
-        let response = r#"{"files":[{"path":"messages/a.md","facts":[{"statement":"Type: A | Modem alive","segment_id":"S1"},{"statement":"Type: a | Antenna alive","segment_id":"S2"}]}]}"#;
-        let (records, rejected) =
-            parse_segmented_window_recoverable(response, source, source).unwrap();
-        assert_eq!(rejected, 0);
-        assert_eq!(records.len(), 2);
-        assert_eq!(records[0].0, "messages/upper_a.md");
-        assert_eq!(records[1].0, "messages/a.md");
-    }
-
-    #[test]
-    fn mixed_case_untyped_fact_is_not_guessed() {
-        let source = "Type: A | Modem alive\nType: a | Antenna alive\nOther detail\n";
-        let response = r#"{"files":[{"path":"messages/a.md","facts":[{"statement":"Unattributed detail","segment_id":"S3"},{"statement":"Type: A | Modem alive","segment_id":"S1"}]}]}"#;
-        let (records, rejected) =
-            parse_segmented_window_recoverable(response, source, source).unwrap();
-        assert_eq!(rejected, 1);
-        assert_eq!(records.len(), 1);
-        assert_eq!(records[0].0, "messages/upper_a.md");
-    }
-
-    #[test]
-    fn unrelated_lowercase_table_cell_does_not_override_uppercase_identity() {
-        let source = "Type: A | Modem alive interval\n| a | unrelated parameter |\n";
-        assert_eq!(message_path_type("messages/a.md", source), Some(b'A'));
-        let response = r#"{"files":[{"path":"messages/a.md","facts":[{"statement":"Type: A | Modem alive interval","segment_id":"S1"}]}]}"#;
-        assert!(parse_segmented_window(response, source).is_ok());
-    }
-
-    #[test]
-    fn standalone_type_heading_owns_contiguous_evidence_lines() {
-        let source = "Type: A\nAlive interval parameter\nModem keepalive timeout\n";
-        let wrong = r#"{"files":[{"path":"messages/b.md","facts":[{"statement":"Keepalive timeout","segment_id":"S3"}]}]}"#;
-        let identity_source = format!("{source}Type: B\n");
-        let err =
-            parse_segmented_window_with_identity(wrong, source, &identity_source).unwrap_err();
-        assert!(err.contains("Evidence declares Type: A"), "{err}");
-        let right = r#"{"files":[{"path":"messages/a.md","facts":[{"statement":"Keepalive timeout","segment_id":"S3"}]}]}"#;
-        assert!(parse_segmented_window(right, source).is_ok());
-    }
-
-    #[test]
-    fn blank_line_ends_standalone_type_ownership() {
-        let source = "Type: A\nAlive interval\n\nUnrelated appendix parameter\nType: B\n";
-        assert_eq!(section_type_for_line(source, 1), Some(b'A'));
-        assert_eq!(section_type_for_line(source, 3), None);
-    }
-
-    #[test]
-    fn evidence_type_must_match_message_even_without_statement_type() {
-        let source = "Type: A | Modem alive interval\nType: B | Beam selection\n";
-        let wrong = r#"{"files":[{"path":"messages/a.md","facts":[{"statement":"Beam selection","segment_id":"S2"}]}]}"#;
-        let err = parse_segmented_window(wrong, source).unwrap_err();
-        assert!(err.contains("Evidence declares Type: B"), "{err}");
-        let right = r#"{"files":[{"path":"messages/b.md","facts":[{"statement":"Beam selection","segment_id":"S2"}]}]}"#;
-        assert!(parse_segmented_window(right, source).is_ok());
-    }
-
-    #[test]
-    fn generic_evidence_does_not_invent_message_ownership() {
-        let source = "Type: A | Modem alive interval\nGeneric description without type\n";
-        let response = r#"{"files":[{"path":"messages/a.md","facts":[{"statement":"Generic description","segment_id":"S2"}]}]}"#;
-        assert!(parse_segmented_window(response, source).is_ok());
-    }
-
-    #[test]
-    fn explicitly_typed_facts_are_routed_without_losing_case() {
-        let source = "Type: A | Modem alive interval\nType: a | Antenna alive interval\n";
-        assert_eq!(source.lines().count(), 2);
-        assert!(declared_message_identity("messages/upper_a.md", source));
-        assert!(declared_message_identity("messages/a.md", source));
-        let response = r#"{"files":[{"path":"messages/a.md","facts":[{"statement":"Type: A | Modem alive interval","segment_id":"S1"}]}]}"#;
-        let routed = parse_segmented_window(response, source).unwrap();
-        assert_eq!(routed.len(), 1);
-        assert_eq!(routed[0].0, "messages/upper_a.md");
-
-        let correct = r#"{"files":[{"path":"messages/upper_a.md","facts":[{"statement":"Type: A | Modem alive interval","segment_id":"S1"}]}]}"#;
-        assert_eq!(parse_segmented_window(correct, source).unwrap(), routed);
-
-        let contradiction = r#"{"files":[{"path":"messages/a.md","facts":[{"statement":"Type: a | Antenna alive interval","segment_id":"S1"}]}]}"#;
-        let err = parse_segmented_window(contradiction, source).unwrap_err();
-        assert!(err.contains("contradicts evidence"), "{err}");
-    }
-
-    #[test]
-    fn uppercase_and_lowercase_messages_do_not_share_identity() {
-        let source = "Type: X | Modem command\nType: x | Antenna response\n";
-        assert!(declared_message_identity("messages/upper_x.md", source));
-        assert!(declared_message_identity("messages/x.md", source));
-        assert!(!declared_message_identity("messages/upper_y.md", source));
-        let only_upper = "Type: O | Modem command\n";
-        assert!(declared_message_identity("messages/o.md", only_upper));
-        assert!(declared_message_identity("messages/upper_o.md", only_upper));
-    }
-
-    #[test]
-    fn markdown_type_rows_declare_message_identity() {
-        let source =
-            "| Type | Description |\n| --- | --- |\n| O | Modem command |\n| o | Antenna reply |\n";
-        assert!(declared_message_identity("messages/upper_o.md", source));
-        assert!(declared_message_identity("messages/o.md", source));
-    }
-
-    #[test]
-    fn global_example_traffic_does_not_declare_identity() {
-        let full_source = "Example: G 10\nThe G message requests status.\n";
-        let window = "The G message requests status.\n";
-        let response = r#"{"files":[{"path":"messages/g.md","facts":[{"statement":"G requests status","segment_id":"S1"}]}]}"#;
-        assert!(parse_segmented_window_with_identity(response, window, full_source).is_err());
-    }
-
-    #[test]
-    fn repeated_locator_does_not_promote_unreviewed_fact() {
-        let mut facts = BTreeMap::new();
-        record_segmented_facts(
-            &mut facts,
-            "messages/g.md",
-            vec![("G is a status request".into(), None)],
-            0,
-            1,
-            1,
-        );
-        record_segmented_facts(
-            &mut facts,
-            "messages/g.md",
-            vec![(
-                "G is a status request".into(),
-                Some("Type: G | Status request".into()),
-            )],
-            1,
-            2,
-            2,
-        );
-        let fact = &facts["messages/g.md"][0];
-        assert_eq!(fact.review, FactReview::Pending);
-        assert_eq!(fact.source_chunk, 1);
-        assert_eq!(
-            fact.evidence_quote.as_deref(),
-            Some("Type: G | Status request")
-        );
-    }
-
-    #[test]
-    fn unknown_fact_fields_are_still_rejected() {
-        let source = "Type: G | Status request\n";
-        let response = r#"{"files":[{"path":"messages/g.md","identity_segment_id":"S1","facts":[{"statement":"G status","segment_id":"S1","invented_field":"unsafe"}]}]}"#;
-        assert!(parse_segmented_window(response, source).is_err());
-    }
-
-    #[test]
-    fn conflicting_fact_and_file_identity_is_rejected() {
-        let source = "Type: G | Status request\nType: H | Other request\n";
-        let response = r#"{"files":[{"path":"messages/g.md","identity_segment_id":"S1","facts":[{"statement":"G requests status","segment_id":"S1","identity_segment_id":"S2"}]}]}"#;
-        assert!(parse_segmented_window(response, source).is_err());
-    }
-
-    #[test]
-    fn invented_message_identity_is_rejected() {
-        let source = "Type: G | Status request\n";
-        let response = r#"{"files":[{"path":"messages/type_h.md","identity_segment_id":"S1","facts":[{"statement":"H is a message","segment_id":"S1"}]}]}"#;
-        assert!(parse_segmented_window(response, source).is_err());
-    }
-
-    #[test]
-    fn source_locator_is_not_a_semantic_fact_verification() {
-        let mut facts = BTreeMap::new();
-        record_segmented_facts(
-            &mut facts,
-            "messages/g.md",
-            vec![(
-                "G disables all safety checks".into(),
-                Some("Type: G | Status request\n".into()),
-            )],
-            0,
-            1,
-            1,
-        );
-        assert_eq!(facts["messages/g.md"][0].review, FactReview::Pending);
-    }
-
-    #[test]
-    fn invalid_paths_are_rejected() {
-        let response =
-            r#"{"files":[{"path":"../escape.md","facts":[{"statement":"x","segment_id":"S1"}]}]}"#;
-        assert!(parse_segmented_window(response, "source").is_err());
-    }
-}
+#[path = "../../tests/workflows/chunked_transform_segmented_evidence_test.rs"]
+mod segmented_evidence_tests;
 
 #[cfg(test)]
-mod openamip_structure_tests {
-    use super::*;
-
-    #[test]
-    fn unicode_html_rows_keep_utf8_boundaries() {
-        let source = "<table><tr><td>A</td><td>“Alive” – status</td></tr><tr><td>B</td><td>“Beam” – mode</td></tr></table>";
-        let normalized = normalize_html_tables(source);
-        assert!(normalized.contains("Type: A | “Alive” – status"));
-        assert!(normalized.contains("Type: B | “Beam” – mode"));
-        assert_eq!(normalized.matches("Type: ").count(), 2);
-    }
-    #[test]
-    fn table_23_type_cells_establish_message_identity() {
-        let source = "2.3 Message Types, Sender (M)\n<table><tr><td>Type</td><td>Description</td><td>No. of Parameter(s)</td><td>Name of the Parameters</td></tr><tr><td>A</td><td>Alive intervalAntenna should send a status message at least this often. 0 means never repeat.</td><td>1</td><td>int interval, seconds</td></tr></table>";
-        let normalized = normalize_html_tables(source);
-        assert!(normalized.contains("Type: A | Alive interval"));
-        assert!(declared_message_identity("messages/a.md", &normalized));
-        assert!(!declared_message_identity("messages/b.md", &normalized));
-        assert!(!normalized.contains("<table"));
-    }
-
-    #[test]
-    fn table_24_type_cells_and_rowspan_continuations() {
-        let source = "2.4 Message Types, Receiver (A)\n<table><tr><td rowspan=\"3\">B</td><td>Beat frequency oscillator</td><td>2(minimum)</td></tr><tr><td colspan=\"2\">Additional LO frequencies</td></tr></table>";
-        let normalized = normalize_html_tables(source);
-        assert!(normalized.contains("Type: B | Beat frequency oscillator"));
-        assert!(normalized.contains("Additional LO frequencies"));
-        assert_eq!(normalized.matches("Type: B").count(), 1);
-    }
-
-    #[test]
-    fn examples_28_are_not_identity_declarations() {
-        let source =
-            "2.8 Examples\n```txt\nA 10 # Alive\nB 18000.500 28000.500 rx2=18200\nL 1 1\n```\n";
-        assert!(!declared_message_identity("messages/a.md", source));
-        assert!(!declared_message_identity("messages/b.md", source));
-        assert!(!declared_message_identity("messages/l.md", source));
-    }
-
-    #[test]
-    fn embedded_image_is_masked_before_normalization() {
-        let original = format!(
-            "![](data:image/jpeg;base64,{})\n<table><tr><td>q</td><td>Query</td></tr></table>",
-            "A".repeat(200)
-        );
-        let masked = mask_embedded_data_uris(&original);
-        let normalized = normalize_html_tables(&mask_opaque_lines(&masked));
-        assert!(!normalized.contains(&"A".repeat(200)));
-        assert!(normalized.contains("Type: q | Query"));
-        assert!(original.contains(&"A".repeat(200)));
-    }
-
-    #[test]
-    fn segment_ids_reference_normalized_table_row() {
-        let source =
-            normalize_html_tables("<table><tr><td>s</td><td>Status message</td></tr></table>");
-        let segments = evidence_segments(&source);
-        assert_eq!(segments[0].id, "S1");
-        assert!(declared_message_identity(
-            "messages/s.md",
-            &segments[0].text
-        ));
-    }
-}
+#[path = "../../tests/workflows/chunked_transform_openamip_structure_test.rs"]
+mod openamip_structure_tests;

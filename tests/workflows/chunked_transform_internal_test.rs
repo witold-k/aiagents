@@ -1,5 +1,34 @@
 use super::*;
 
+#[test]
+fn extraction_context_preserves_previous_type_and_excludes_current_evidence() {
+    let source = "## Type: G\nG description\ncontinued G parameters\n";
+    let part = Chunk {
+        start_byte: "## Type: G\nG description\n".len(),
+        start_line: 3,
+        end_line: 3,
+        text: "continued G parameters\n".to_owned(),
+    };
+    let context = preceding_extraction_context(source, &part, &part.text);
+    assert!(context.contains("Type: G"));
+    assert!(!context.contains("continued G parameters"));
+    assert!(context.contains("not evidence"));
+}
+
+#[test]
+fn recovery_context_stops_at_subwindow_boundary() {
+    let source = "Type: G\nfirst fact\nType: g\nsecond fact\n";
+    let part = Chunk {
+        start_byte: 0,
+        start_line: 1,
+        end_line: 4,
+        text: source.to_owned(),
+    };
+    let context = preceding_extraction_context(source, &part, "second fact\n");
+    assert!(context.contains("Type: g"));
+    assert!(!context.contains("second fact"));
+}
+
 mod checkpoint_review_tests {
     use super::*;
 
@@ -38,6 +67,31 @@ mod checkpoint_review_tests {
         assert_eq!(resumed.recovery_chunk, Some(23));
         assert_eq!(resumed.recovery_pending, vec!["next window"]);
         assert_eq!(resumed.recovery_records, checkpoint.recovery_records);
+    }
+
+    #[test]
+    fn v7_checkpoint_migrates_projection_without_resetting_audit() {
+        let mut checkpoint: ExtractionCheckpoint = serde_json::from_str(
+            r#"{"version":16,"source_fingerprint":"test","next_chunk":53,"files":{},"unresolved_findings":false,"fact_audit_version":7,"fact_audit_cursor":404}"#,
+        )
+        .unwrap();
+        assert_eq!(checkpoint.identity_projection_version, 0);
+        migrate_identity_projection_version(&mut checkpoint);
+        assert_eq!(checkpoint.identity_projection_version, 1);
+        assert_eq!(checkpoint.fact_audit_version, 7);
+        assert_eq!(checkpoint.fact_audit_cursor, 404);
+        migrate_identity_projection_version(&mut checkpoint);
+        assert_eq!(checkpoint.identity_projection_version, 1);
+    }
+
+    #[test]
+    fn unprojected_checkpoint_is_not_falsely_migrated() {
+        let mut checkpoint: ExtractionCheckpoint = serde_json::from_str(
+            r#"{"version":16,"source_fingerprint":"test","next_chunk":0,"files":{},"unresolved_findings":false,"fact_audit_version":0}"#,
+        )
+        .unwrap();
+        migrate_identity_projection_version(&mut checkpoint);
+        assert_eq!(checkpoint.identity_projection_version, 0);
     }
 
     #[test]
@@ -444,6 +498,30 @@ mod recovery_window_tests {
             let end = end.chars().rev().collect::<String>();
             let beginning = pair[1].chars().take(overlap).collect::<String>();
             assert_eq!(end, beginning);
+        }
+    }
+}
+
+mod absolute_chunk_provenance_tests {
+    use super::*;
+
+    #[test]
+    fn overlapping_unicode_windows_retain_exact_absolute_offsets() {
+        let source = "é漢🦀".repeat(900);
+        let windows = chunks(&source, 700);
+        assert!(windows.len() > 1);
+        for window in &windows {
+            let end = window.start_byte + window.text.len();
+            assert_eq!(
+                source.get(window.start_byte..end),
+                Some(window.text.as_str())
+            );
+            assert!(source.is_char_boundary(window.start_byte));
+            assert!(source.is_char_boundary(end));
+        }
+        for pair in windows.windows(2) {
+            assert!(pair[0].start_byte < pair[1].start_byte);
+            assert!(pair[0].start_byte + pair[0].text.len() > pair[1].start_byte);
         }
     }
 }
