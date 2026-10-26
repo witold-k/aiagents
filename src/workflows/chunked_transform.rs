@@ -2545,6 +2545,32 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             ) {
                 println!("## [CHUNKED] IDENTITY HISTORY UNRESOLVED: {sample}");
             }
+            let blocked = message_identity::html_boundary_blocked_assignments(
+                &checkpoint.candidates,
+                &source_windows,
+                &source_starts,
+                &identity_context,
+            );
+            println!(
+                "## [CHUNKED] HTML BOUNDARY DIFF: blocked_unique_assignments={}",
+                blocked.len()
+            );
+            for entry in blocked {
+                println!("## [CHUNKED] HTML BOUNDARY BLOCKED: {entry}");
+            }
+            let table_gains = message_identity::generic_table_identity_gains(
+                &checkpoint.candidates,
+                &source_windows,
+                &source_starts,
+                &identity_context,
+            );
+            println!(
+                "## [CHUNKED] GENERIC TABLE DIFF: unique_changed_assignments={}",
+                table_gains.len()
+            );
+            for gain in table_gains {
+                println!("## [CHUNKED] GENERIC TABLE GAIN: {gain}");
+            }
             let (groups, unresolved) = message_identity::resolved_source_facts_in_document(
                 &checkpoint.candidates,
                 &source_windows,

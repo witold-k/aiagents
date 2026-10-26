@@ -16,6 +16,7 @@ build:
 	cargo fmt && git diff --stat
 
 gbuild: pull build install
+	git diff --stat
 
 build-jvm:
     RUSTFLAGS="-C panic=unwind" cargo jvm build --bin aifix --no-default-features
