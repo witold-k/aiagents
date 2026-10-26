@@ -630,6 +630,9 @@ struct SourceStructure {
     tree: SourceTree,
     table_owners: Vec<Option<u8>>,
     example_owners: Vec<Option<u8>>,
+    explicit_table_owners: Vec<Option<u8>>,
+    explicit_table_lines: Vec<bool>,
+    potential_table_lines: Vec<bool>,
 }
 
 impl SourceStructure {
@@ -645,8 +648,45 @@ impl SourceStructure {
         let mut previous_command: Option<u8> = None;
 
         let lines: Vec<&str> = document.lines().collect();
+        // Prefilter explicit tables once with simplelexer. Keep pipe-bearing
+        // lines as candidates because PDF conversion may have lost separators.
+        let analysis = simplelexer::tablelexer::DocumentAnalysis::parse(document);
+        let mut potential_table_lines = vec![false; lines.len()];
+        let mut explicit_table_owners = vec![None; lines.len()];
+        let mut explicit_table_lines = vec![false; lines.len()];
+        for block in &analysis.blocks {
+            let simplelexer::tablelexer::DocumentChunk::Table(table) = block else {
+                continue;
+            };
+            let start = document[..table.span.start]
+                .bytes()
+                .filter(|&byte| byte == b'\n')
+                .count();
+            let end = document[..table.span.end]
+                .bytes()
+                .filter(|&byte| byte == b'\n')
+                .count()
+                + usize::from(
+                    table.span.end > 0 && document.as_bytes()[table.span.end - 1] != b'\n',
+                );
+            // A lexer-recognized table has an explicit boundary. Resolve
+            // declarations only within that table, never across adjacent ones.
+            let mut owner = None;
+            for line in start..end.min(lines.len()) {
+                let raw = lines[line].trim();
+                if let Some(letter) = super::explicit_type_label(raw) {
+                    owner = Some(letter);
+                }
+                potential_table_lines[line] = true;
+                explicit_table_lines[line] = true;
+                explicit_table_owners[line] = owner;
+            }
+        }
         for (index, raw) in lines.iter().enumerate() {
             let line = raw.trim();
+            if line.contains('|') {
+                potential_table_lines[index] = true;
+            }
             if line.starts_with('#') && !in_fence {
                 in_message_table = line
                     .trim_start_matches('#')
@@ -741,7 +781,31 @@ impl SourceStructure {
             tree: SourceTree::from_document(document),
             table_owners,
             example_owners: owners,
+            potential_table_lines,
+            explicit_table_owners,
+            explicit_table_lines,
         }
+    }
+
+    fn is_explicit_table_line(&self, line_index: usize) -> bool {
+        self.explicit_table_lines
+            .get(line_index)
+            .copied()
+            .unwrap_or(false)
+    }
+
+    fn explicit_table_type(&self, line_index: usize) -> Option<u8> {
+        self.explicit_table_owners
+            .get(line_index)
+            .copied()
+            .flatten()
+    }
+
+    fn is_potential_table_line(&self, line_index: usize) -> bool {
+        self.potential_table_lines
+            .get(line_index)
+            .copied()
+            .unwrap_or(false)
     }
 
     fn table_type(&self, line_index: usize) -> Option<u8> {
@@ -843,13 +907,15 @@ fn resolve_fact_type(source: &str, fact: &CandidateFact) -> Result<u8, Resolutio
 // Resolve against the complete normalized document, using the verified
 // chunk-relative byte offset. This preserves ownership across chunk boundaries
 // without trusting the model's proposed filename or its remembered context.
+#[cfg(test)]
 fn resolve_fact_type_in_document(
     window: &str,
     window_start: usize,
     document: &str,
     fact: &CandidateFact,
 ) -> Result<u8, ResolutionFailure> {
-    resolve_fact_type_with_flattened_tables(window, window_start, document, fact, true)
+    let structure = SourceStructure::from_document(document);
+    resolve_fact_type_with_flattened_tables(window, window_start, document, fact, true, &structure)
 }
 
 fn resolve_fact_type_with_flattened_tables(
@@ -858,6 +924,7 @@ fn resolve_fact_type_with_flattened_tables(
     document: &str,
     fact: &CandidateFact,
     include_flattened_tables: bool,
+    structure: &SourceStructure,
 ) -> Result<u8, ResolutionFailure> {
     let local = resolve_fact_type(window, fact);
     if matches!(
@@ -891,12 +958,15 @@ fn resolve_fact_type_with_flattened_tables(
         .lines()
         .nth(line)
         .ok_or(ResolutionFailure::InvalidLocator)?;
-    let structure = SourceStructure::from_document(document);
     let mut declared = None;
     for signal in [
         super::explicit_type_label(source_line),
         super::section_type_for_line(document, line),
-        table_block_type_for_line(document, line),
+        structure.explicit_table_type(line).or_else(|| {
+            (structure.is_potential_table_line(line) && !structure.is_explicit_table_line(line))
+                .then(|| table_block_type_for_line(document, line))
+                .flatten()
+        }),
         structure.table_type(line),
         include_flattened_tables
             .then(|| structure.tree.flattened_table_owner(document, line))
@@ -1006,6 +1076,7 @@ pub(super) fn unresolved_history_samples(
     document: &str,
     limit: usize,
 ) -> Vec<String> {
+    let structure = SourceStructure::from_document(document);
     let mut facts = Vec::new();
     for candidate in candidates {
         let Some(index) = source_window_index(&candidate.id) else {
@@ -1016,7 +1087,9 @@ pub(super) fn unresolved_history_samples(
         };
         for fact in &candidate.facts {
             if !matches!(
-                resolve_fact_type_in_document(window, *start, document, fact),
+                resolve_fact_type_with_flattened_tables(
+                    window, *start, document, fact, true, &structure
+                ),
                 Err(ResolutionFailure::NoSourceType)
             ) {
                 continue;
@@ -1143,6 +1216,7 @@ pub(super) fn unresolved_triage_in_document(
     starts: &[usize],
     document: &str,
 ) -> UnresolvedTriage {
+    let structure = SourceStructure::from_document(document);
     let mut result = UnresolvedTriage::default();
     for candidate in candidates {
         let Some((window, start)) = source_window_index(&candidate.id)
@@ -1152,7 +1226,9 @@ pub(super) fn unresolved_triage_in_document(
         };
         for fact in &candidate.facts {
             if !matches!(
-                resolve_fact_type_in_document(window, *start, document, fact),
+                resolve_fact_type_with_flattened_tables(
+                    window, *start, document, fact, true, &structure
+                ),
                 Err(ResolutionFailure::NoSourceType)
             ) {
                 continue;
@@ -1199,6 +1275,7 @@ pub(super) fn parameter_facts_in_document(
     starts: &[usize],
     document: &str,
 ) -> Vec<ParameterFact> {
+    let structure = SourceStructure::from_document(document);
     let lines: Vec<&str> = document.lines().collect();
     let mut inventory = Vec::new();
     let mut seen = std::collections::BTreeSet::new();
@@ -1210,7 +1287,9 @@ pub(super) fn parameter_facts_in_document(
         };
         for fact in &candidate.facts {
             if !matches!(
-                resolve_fact_type_in_document(window, *start, document, fact),
+                resolve_fact_type_with_flattened_tables(
+                    window, *start, document, fact, true, &structure
+                ),
                 Err(ResolutionFailure::NoSourceType)
             ) {
                 continue;
@@ -1276,6 +1355,7 @@ pub(super) fn resolution_diagnostics_in_document(
     starts: &[usize],
     document: &str,
 ) -> ResolutionDiagnostics {
+    let structure = SourceStructure::from_document(document);
     let mut result = ResolutionDiagnostics::default();
     for candidate in candidates {
         let window = source_window_index(&candidate.id);
@@ -1285,7 +1365,9 @@ pub(super) fn resolution_diagnostics_in_document(
                 result.invalid_window += 1;
                 continue;
             };
-            match resolve_fact_type_in_document(source, *start, document, fact) {
+            match resolve_fact_type_with_flattened_tables(
+                source, *start, document, fact, true, &structure,
+            ) {
                 Ok(_) => {}
                 Err(ResolutionFailure::AmbiguousLocator) => result.ambiguous_locator += 1,
                 Err(ResolutionFailure::MissingEvidence) => result.missing_evidence += 1,
@@ -1307,6 +1389,7 @@ pub(super) fn flattened_table_identity_gains(
     starts: &[usize],
     document: &str,
 ) -> Vec<String> {
+    let structure = SourceStructure::from_document(document);
     let mut gains = std::collections::BTreeMap::new();
     let lines: Vec<&str> = document.lines().collect();
     let tree = SourceTree::from_document(document);
@@ -1318,13 +1401,15 @@ pub(super) fn flattened_table_identity_gains(
             continue;
         };
         for fact in &candidate.facts {
-            let Ok(letter) =
-                resolve_fact_type_with_flattened_tables(window, *start, document, fact, true)
-            else {
+            let Ok(letter) = resolve_fact_type_with_flattened_tables(
+                window, *start, document, fact, true, &structure,
+            ) else {
                 continue;
             };
             if !matches!(
-                resolve_fact_type_with_flattened_tables(window, *start, document, fact, false,),
+                resolve_fact_type_with_flattened_tables(
+                    window, *start, document, fact, false, &structure
+                ),
                 Err(ResolutionFailure::NoSourceType)
             ) {
                 continue;
@@ -1386,6 +1471,7 @@ pub(super) fn resolved_source_facts_in_document(
     std::collections::BTreeMap<String, Vec<(usize, CandidateFact)>>,
     usize,
 ) {
+    let structure = SourceStructure::from_document(document);
     let mut groups = std::collections::BTreeMap::new();
     let mut unresolved = 0;
     for candidate in candidates {
@@ -1398,7 +1484,9 @@ pub(super) fn resolved_source_facts_in_document(
             continue;
         };
         for fact in &candidate.facts {
-            match resolve_fact_type_in_document(source, *start, document, fact) {
+            match resolve_fact_type_with_flattened_tables(
+                source, *start, document, fact, true, &structure,
+            ) {
                 Ok(letter) => groups
                     .entry(canonical_type_path(letter))
                     .or_insert_with(Vec::new)
