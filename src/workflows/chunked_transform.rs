@@ -27,11 +27,7 @@ use std::{
 
 use crate::generated_tasks::Tasks;
 use crate::runtimetools::llmcall::LlmCall;
-#[cfg(test)]
-use crate::utils::stringutils::normalize_html_tables;
-use crate::utils::stringutils::{
-    normalize_html_tables_with_spans, resolve_source_quote, strip_code_fences,
-};
+use crate::utils::stringutils::{resolve_source_quote, strip_code_fences};
 // Preserve the existing workflow API while the string processing lives in stringutils.
 pub use crate::utils::stringutils::{mask_embedded_data_uris, mask_opaque_lines};
 use crate::workflows::workflow::{Workflow, WorkflowResult};
@@ -1610,19 +1606,15 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         // table rows and their byte spans. Normalized offsets are a separate
         // coordinate space and must not be confused with these source spans.
         let source_analysis = simplelexer::tablelexer::DocumentAnalysis::parse(&source);
-        let source_html_tables = source_analysis
+        let source_table_count = source_analysis
             .blocks
             .iter()
-            .filter(|block| {
-                matches!(
-                    block,
-                    simplelexer::tablelexer::DocumentChunk::Table(table)
-                        if table.table_type == simplelexer::tablelexer::TableType::Html
-                )
-            })
+            .filter(|block| matches!(block, simplelexer::tablelexer::DocumentChunk::Table(_)))
             .count();
         let pre_normalized = mask_opaque_lines(&mask_embedded_data_uris(&source));
-        let (masked_source, html_row_spans) = normalize_html_tables_with_spans(&pre_normalized);
+        let normalized_tables = simplelexer::tablelexer::normalize_table_text(&pre_normalized);
+        let masked_source = normalized_tables.text;
+        let row_mappings = normalized_tables.rows;
         // The normalized view is retained for legacy evidence and checkpoints.
         // Its byte spans are NOT interchangeable with source_analysis spans.
         let table_analysis = simplelexer::tablelexer::DocumentAnalysis::parse(&masked_source);
@@ -1632,10 +1624,10 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             original: &source,
             pre_normalized: &pre_normalized,
             original_analysis: &source_analysis,
-            row_spans: &html_row_spans,
+            row_spans: &row_mappings,
         };
         println!(
-            "## [CHUNKED] SOURCE SIMPLELEXER: original_html_tables={source_html_tables} (parsed before normalization; source byte spans)"
+            "## [CHUNKED] SOURCE SIMPLELEXER: source_tables={source_table_count} (parsed before normalization; source byte spans)"
         );
         let parts = chunks(&masked_source, CHUNK_CHARS);
         if parts.is_empty() {
@@ -2545,18 +2537,18 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             ) {
                 println!("## [CHUNKED] IDENTITY HISTORY UNRESOLVED: {sample}");
             }
-            let blocked = message_identity::html_boundary_blocked_assignments(
+            let blocked = message_identity::table_boundary_blocked_assignments(
                 &checkpoint.candidates,
                 &source_windows,
                 &source_starts,
                 &identity_context,
             );
             println!(
-                "## [CHUNKED] HTML BOUNDARY DIFF: blocked_unique_assignments={}",
+                "## [CHUNKED] TABLE OWNERSHIP BOUNDARY DIFF: blocked_unique_assignments={}",
                 blocked.len()
             );
             for entry in blocked {
-                println!("## [CHUNKED] HTML BOUNDARY BLOCKED: {entry}");
+                println!("## [CHUNKED] TABLE OWNERSHIP BOUNDARY BLOCKED: {entry}");
             }
             let table_gains = message_identity::generic_table_identity_gains(
                 &checkpoint.candidates,

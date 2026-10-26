@@ -839,10 +839,12 @@ impl SourceStructure {
         original: &str,
         pre_normalized: &str,
         original_analysis: &simplelexer::tablelexer::DocumentAnalysis,
-        row_spans: &[(std::ops::Range<usize>, std::ops::Range<usize>)],
+        row_spans: &[simplelexer::tablelexer::RowTextMapping],
     ) -> Self {
         let original_structure = Self::from_analysis(original, original_analysis);
-        for (source_span, normalized_span) in row_spans {
+        for mapping in row_spans {
+            let source_span = &mapping.source;
+            let normalized_span = &mapping.rendered;
             // Masking can change offsets. Never apply an unverified mapping.
             if original.get(source_span.clone()) != pre_normalized.get(source_span.clone()) {
                 continue;
@@ -1146,8 +1148,9 @@ mod html_row_identity_tests {
             "<tr><td>b</td><td>lower evidence</td></tr></table>\n",
             "## Other\nplain paragraph"
         );
-        let (normalized, spans) =
-            crate::utils::stringutils::normalize_html_tables_with_spans(original);
+        let normalized_tables = simplelexer::tablelexer::normalize_table_text(original);
+        let normalized = normalized_tables.text;
+        let spans = normalized_tables.rows;
         let original_analysis = simplelexer::tablelexer::DocumentAnalysis::parse(original);
         let normalized_analysis = simplelexer::tablelexer::DocumentAnalysis::parse(&normalized);
         let structure = SourceStructure::from_analysis(&normalized, &normalized_analysis)
@@ -1219,8 +1222,9 @@ mod html_row_identity_tests {
             "<tr><td>B</td><td>typed evidence</td></tr>",
             "<tr><td></td><td>untyped evidence</td></tr></table>"
         );
-        let (normalized, spans) =
-            crate::utils::stringutils::normalize_html_tables_with_spans(original);
+        let normalized_tables = simplelexer::tablelexer::normalize_table_text(original);
+        let normalized = normalized_tables.text;
+        let spans = normalized_tables.rows;
         let original_analysis = simplelexer::tablelexer::DocumentAnalysis::parse(original);
         let normalized_analysis = simplelexer::tablelexer::DocumentAnalysis::parse(&normalized);
         let structure = SourceStructure::from_analysis(&normalized, &normalized_analysis)
@@ -1681,7 +1685,7 @@ pub(super) struct DocumentIdentityContext<'a> {
     pub original: &'a str,
     pub pre_normalized: &'a str,
     pub original_analysis: &'a simplelexer::tablelexer::DocumentAnalysis<'a>,
-    pub row_spans: &'a crate::utils::stringutils::HtmlRowSpans,
+    pub row_spans: &'a [simplelexer::tablelexer::RowTextMapping],
 }
 
 pub(super) fn resolution_diagnostics_in_document(
@@ -1724,7 +1728,7 @@ pub(super) fn resolution_diagnostics_in_document(
 
 /// Replay-only audit of assignments removed by the untyped HTML-row boundary.
 /// Compares the same resolver with and without that boundary; no projection changes.
-pub(super) fn html_boundary_blocked_assignments(
+pub(super) fn table_boundary_blocked_assignments(
     candidates: &[MessageCandidate],
     sources: &[&str],
     starts: &[usize],
@@ -1833,7 +1837,7 @@ pub(super) fn generic_table_identity_gains(
     let translated: std::collections::HashSet<(usize, usize)> = context
         .row_spans
         .iter()
-        .map(|(_, normalized)| (normalized.start, normalized.end))
+        .map(|mapping| (mapping.rendered.start, mapping.rendered.end))
         .collect();
     let markdown_rows: std::collections::HashSet<(usize, usize)> = context
         .analysis
