@@ -14,6 +14,8 @@ mod source_tree;
 #[path = "structure_inference.rs"]
 #[allow(dead_code)]
 mod structure_inference;
+#[path = "table_context.rs"]
+mod table_context;
 
 use serde::{Deserialize, Serialize};
 
@@ -1601,6 +1603,8 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         };
         let masked_source =
             normalize_html_tables(&mask_opaque_lines(&mask_embedded_data_uris(&source)));
+        // Parse the complete normalized source once; spans remain absolute.
+        let table_analysis = simplelexer::tablelexer::DocumentAnalysis::parse(&masked_source);
         let parts = chunks(&masked_source, CHUNK_CHARS);
         if parts.is_empty() {
             return WorkflowResult::Error("Input document is empty".into());
@@ -1625,6 +1629,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 JSON_EXTRACT_PROMPT,
                 JSON_COVERAGE_PROMPT,
                 "segmented-evidence-v12-deferred-candidates",
+                "simplelexer-explicit-table-context-v1",
             ],
         );
         let mut checkpoint = match load_checkpoint(&checkpoint_file, &fingerprint, parts.len()) {
@@ -1744,6 +1749,24 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                         part.end_line,
                         segmented_source(&window)
                     )
+                };
+                // Recovery windows can repeat text. Only attach absolute table
+                // metadata when the window has an unambiguous source position.
+                let window_offset = if window == part.text {
+                    Some(part.start_byte)
+                } else {
+                    let mut matches = part.text.match_indices(&window);
+                    match (matches.next(), matches.next()) {
+                        (Some((offset, _)), None) => Some(part.start_byte + offset),
+                        _ => None,
+                    }
+                };
+                let window_context = if let Some(start) = window_offset {
+                    let tables =
+                        table_context::table_context(&table_analysis, start, start + window.len());
+                    format!("{tables}{window_context}")
+                } else {
+                    window_context
                 };
                 let response = match self.llm_call.run_text_step_limited_with_temperature(
                     &json_prompt,
@@ -2222,6 +2245,39 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         if std::env::var_os("AIFIX_IDENTITY_REPLAY").is_some() {
             // Shadow-only structural replay. All positions are in the original
             // masked source; this never changes candidates or identity decisions.
+            let explicit_tables: Vec<_> = table_analysis
+                .blocks
+                .iter()
+                .filter_map(|block| match block {
+                    simplelexer::tablelexer::DocumentChunk::Table(table) => Some(table),
+                    _ => None,
+                })
+                .collect();
+            println!(
+                "## [CHUNKED] SIMPLELEXER TABLES: explicit={} rows={} cells={} (source syntax; no inferred ownership)",
+                explicit_tables.len(),
+                explicit_tables
+                    .iter()
+                    .map(|table| table.rows.len())
+                    .sum::<usize>(),
+                explicit_tables
+                    .iter()
+                    .flat_map(|table| table.rows.iter())
+                    .map(|row| row.cells.len())
+                    .sum::<usize>()
+            );
+            for table in &explicit_tables {
+                let grid = table.audit_grid();
+                println!(
+                    "## [CHUNKED] SIMPLELEXER TABLE: bytes={}..{} type={:?} rows={} columns={} grid_issues={} (observed only)",
+                    table.span.start,
+                    table.span.end,
+                    table.table_type,
+                    table.rows.len(),
+                    grid.width,
+                    grid.issues.len()
+                );
+            }
             let structure = source_tree::SourceTree::parse(&masked_source);
             let transitions = structure.transitions();
             println!(
@@ -2281,7 +2337,8 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             // decisions, checkpoint, or output files. Keep the model budget
             // bounded and show competing interpretations rather than a winner.
             if std::env::var_os("AIFIX_STRUCTURE_LLM_REPLAY").is_some() {
-                let html_tables = structure_inference::html_table_spans(&masked_source, &structure);
+                let html_tables =
+                    structure_inference::html_table_spans(&masked_source, &table_analysis);
                 println!(
                     "## [CHUNKED] STRUCTURE HTML TABLES: observed_spans={:?} (syntax only)",
                     html_tables

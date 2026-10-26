@@ -26,6 +26,9 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 phf =  { version = "0.14", features = ["macros"] }
 
+# -- Lossless Markdown/HTML table structure (pinned to verified upstream commit)
+simplelexer = { git = "https://github.com/witold-k/simplelexer", rev = "802b7cc256383a32198686eaede6bb1e61650d2b" }
+
 # -- LLM HTTP requests
 llmhttpclient = { git = "https://github.com/witold-k/llmhttpclient", rev = "4498270d558c039bbac3df7d08a04f7c8b28b3c1" }
 

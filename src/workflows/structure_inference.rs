@@ -138,29 +138,36 @@ pub(super) fn analysis_windows(tree: &SourceTree, start: usize, end: usize) -> V
     result
 }
 
-/// Explicit HTML tables are observed source syntax, not LLM hypotheses.
-/// Return physical line spans, including multi-line HTML rows/cells.
-pub(super) fn html_table_spans(source: &str, tree: &SourceTree) -> Vec<(usize, usize)> {
-    let mut result = Vec::new();
-    let mut active = None;
-    for (line, text) in source.lines().enumerate() {
-        if matches!(
-            tree.block_at_line(line).map(|b| b.kind),
-            Some(BlockKind::FencedCode)
-        ) {
-            continue;
-        }
-        let lower = text.to_ascii_lowercase();
-        if active.is_none() && lower.contains("<table") {
-            active = Some(line);
-        }
-        if lower.contains("</table>")
-            && let Some(start) = active.take()
-        {
-            result.push((start, line + 1));
-        }
-    }
-    result
+/// Use the lexer as the single authority for explicit HTML table boundaries.
+/// Convert byte spans to physical, zero-based line ranges for layout replay.
+pub(super) fn html_table_spans(
+    source: &str,
+    analysis: &simplelexer::tablelexer::DocumentAnalysis<'_>,
+) -> Vec<(usize, usize)> {
+    use simplelexer::tablelexer::{DocumentChunk, TableType};
+
+    analysis
+        .blocks
+        .iter()
+        .filter_map(|block| {
+            let DocumentChunk::Table(table) = block else {
+                return None;
+            };
+            if table.table_type != TableType::Html {
+                return None;
+            }
+            let start = source[..table.span.start]
+                .bytes()
+                .filter(|&b| b == b'\n')
+                .count();
+            let end = source[..table.span.end]
+                .bytes()
+                .filter(|&b| b == b'\n')
+                .count()
+                + usize::from(table.span.end > 0 && source.as_bytes()[table.span.end - 1] != b'\n');
+            Some((start, end))
+        })
+        .collect()
 }
 
 /// Evidence-weighted heuristic, not a probability or semantic correctness score.
@@ -456,8 +463,8 @@ mod tests {
     #[test]
     fn html_table_spans_are_observed_outside_code() {
         let source = "# A\n<table>\n<tr><td>x</td></tr>\n</table>\n";
-        let tree = SourceTree::parse(source);
-        assert_eq!(html_table_spans(source, &tree), vec![(1, 4)]);
+        let analysis = simplelexer::tablelexer::DocumentAnalysis::parse(source);
+        assert_eq!(html_table_spans(source, &analysis), vec![(1, 4)]);
     }
 
     #[test]
