@@ -1,0 +1,170 @@
+{
+  "schema_version": 1,
+  "source": "OpenAMIP Standard v1.17 Revision F (converted Markdown), §2.3/§2.4",
+  "scope": "Small human-reviewed reference for quality benchmarking; not a full protocol specification.",
+  "messages": [
+    {
+      "id": "A",
+      "direction": "modem_to_antenna",
+      "source_section": "2.3",
+      "source_excerpt": "Alive intervalAntenna should send a status message at least this often. 0 means never repeat.",
+      "parameters": [
+        {
+          "position": 1,
+          "name": "interval",
+          "type": "int",
+          "unit": "seconds",
+          "required": true
+        }
+      ],
+      "constraints": [
+        {
+          "kind": "zero_semantics",
+          "parameter": "interval",
+          "value": 0,
+          "meaning": "never repeat"
+        }
+      ]
+    },
+    {
+      "id": "B",
+      "direction": "modem_to_antenna",
+      "source_section": "2.3",
+      "source_excerpt": "Beat frequency oscillator (local oscillator) frequencies; effective amount of down-conversion (Rx) or up-conversion (Tx).",
+      "parameters": [
+        {
+          "position": 1,
+          "name": "Rx LO frequency",
+          "type": "float",
+          "unit": "MHz",
+          "required": true
+        },
+        {
+          "position": 2,
+          "name": "Tx LO frequency",
+          "type": "float",
+          "unit": "MHz",
+          "required": true
+        }
+      ],
+      "key_value_patterns": [
+        {
+          "pattern": "rx(N)",
+          "min_index": 2,
+          "type": "float",
+          "unit": "MHz",
+          "required": false
+        },
+        {
+          "pattern": "tx(N)",
+          "min_index": 2,
+          "type": "float",
+          "unit": "MHz",
+          "required": false
+        }
+      ],
+      "constraints": [
+        {
+          "kind": "minimum_positional_parameters",
+          "count": 2
+        },
+        {
+          "kind": "indexed_optional",
+          "detail": "No maximum number of receivers/transmitters specified."
+        }
+      ],
+      "notes": [
+        "The converted source joins adjacent parameter descriptions (MHzfloat) and parts of the example; do not infer exact example whitespace from this converted text."
+      ]
+    },
+    {
+      "id": "g",
+      "direction": "antenna_to_modem",
+      "source_section": "2.4",
+      "source_excerpt": "Status of the antenna. Antenna sends this immediately in response to the G command from the modem.",
+      "parameters": [
+        {
+          "position": 1,
+          "name": "Antenna Functional",
+          "type": "binary",
+          "required": true
+        },
+        {
+          "position": 2,
+          "name": "Modem May Transmit",
+          "type": "binary",
+          "required": true
+        },
+        {
+          "position": 3,
+          "name": "Search Count",
+          "type": "int",
+          "required": true
+        },
+        {
+          "position": 4,
+          "name": "Tx Disabled",
+          "type": "binary",
+          "required": true
+        },
+        {
+          "position": 5,
+          "name": "antenna_status",
+          "type": "int",
+          "required": false
+        },
+        {
+          "position": 6,
+          "name": "RF_chains",
+          "type": "int",
+          "required": false
+        },
+        {
+          "position": 7,
+          "name": "active_RF_chain_index",
+          "type": "int",
+          "required": false
+        }
+      ],
+      "key_value_patterns": [
+        {
+          "pattern": "blockTime",
+          "type": "int",
+          "required": false
+        },
+        {
+          "pattern": "statusCode",
+          "type": "int",
+          "required": false
+        }
+      ],
+      "constraints": [
+        {
+          "kind": "fixed_value",
+          "parameter": "Search Count",
+          "value": 0
+        },
+        {
+          "kind": "conditional",
+          "parameter": "Tx Disabled",
+          "value": 0,
+          "when": "F command was sent more recently than N command"
+        },
+        {
+          "kind": "default_if_omitted",
+          "parameter": "Tx Disabled",
+          "value": 0
+        },
+        {
+          "kind": "conditional",
+          "parameter": "Tx Disabled",
+          "value": 0,
+          "when": "antenna cannot ensure a regulatory-safe transmitter test"
+        }
+      ],
+      "notes": [
+        "Conditional clauses in the flattened source need review against the original PDF before this fixture can be considered normative."
+      ]
+    }
+  ]
+}

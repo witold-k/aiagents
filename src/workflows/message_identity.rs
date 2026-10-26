@@ -281,8 +281,9 @@ fn is_table_caption(line: &str) -> bool {
 /// PDF-to-Markdown conversion sometimes flattens a message table into
 /// consecutive prose lines. Within the message-type table only, a row's
 /// explicit `Type: X |` cell owns following continuation lines until the next
-/// declaration, heading, table boundary or a bounded distance. Blank lines
-/// alone are not sufficient boundaries in these converted tables.
+/// declaration, heading or table boundary. Blank lines alone are not
+/// sufficient boundaries in these converted tables.
+#[cfg(test)]
 fn flattened_message_table_type(source: &str, line_index: usize) -> Option<u8> {
     let lines: Vec<&str> = source.lines().collect();
     let mut in_message_table = false;
@@ -301,9 +302,12 @@ fn flattened_message_table_type(source: &str, line_index: usize) -> Option<u8> {
     if !in_message_table {
         return None;
     }
-    for distance in 0..=12 {
-        let index = line_index.checked_sub(distance)?;
-        let line = lines.get(index)?.trim();
+    // Follow the table's structural boundaries, not an arbitrary number
+    // of lines. Converted table cells can span many physical lines.
+    // Stop at any new declaration (including malformed ones), heading,
+    // caption, fence or table header. Never infer identity from filenames.
+    for index in (0..=line_index).rev() {
+        let line = lines[index].trim();
         if line.starts_with('#')
             || line.starts_with("```")
             || is_table_caption(line)
@@ -313,16 +317,43 @@ fn flattened_message_table_type(source: &str, line_index: usize) -> Option<u8> {
             break;
         }
         if let Some(letter) = super::explicit_type_label(line) {
-            // A row declaration is not an open-ended standalone heading.
             return line.contains('|').then_some(letter);
         }
-        // An unrecognized or damaged declaration still ends the previous
-        // row's ownership; never guess a replacement for its type.
         if line.starts_with("Type:") || line.starts_with("| Type:") {
             break;
         }
     }
     None
+}
+
+#[cfg(test)]
+mod structural_table_ownership_tests {
+    use super::flattened_message_table_type;
+
+    #[test]
+    fn long_converted_table_row_keeps_its_explicit_identity() {
+        let mut lines = vec![
+            "## Message Types".to_owned(),
+            "Type: q | status | 3 | int value".to_owned(),
+        ];
+        lines.extend((0..25).map(|n| format!("Continuation of parameter {n}")));
+        let document = lines.join("\n");
+        assert_eq!(flattened_message_table_type(&document, 26), Some(b'q'));
+    }
+
+    #[test]
+    fn new_row_and_heading_are_hard_boundaries() {
+        let source = "## Message Types\nType: Q | description\ncontinuation\nType: q | response\ncontinuation\n## Appendix\nother prose";
+        assert_eq!(flattened_message_table_type(source, 2), Some(b'Q'));
+        assert_eq!(flattened_message_table_type(source, 4), Some(b'q'));
+        assert_eq!(flattened_message_table_type(source, 6), None);
+    }
+
+    #[test]
+    fn damaged_declaration_does_not_inherit_previous_row() {
+        let source = "## Message Types\nType: Q | description\nType: ?? | damaged\ncontinuation";
+        assert_eq!(flattened_message_table_type(source, 3), None);
+    }
 }
 
 /// A single-letter command is evidence only inside a fenced example under
@@ -368,6 +399,361 @@ fn message_example_type_for_line(document: &str, line_index: usize) -> Option<u8
         }
     }
     None
+}
+
+/// Structural nodes carry source positions, not inferred protocol identities.
+/// A table row may be perfectly located while its message owner remains unknown.
+#[derive(Debug)]
+#[allow(dead_code)] // Structural metadata is retained for later source-backed consumers.
+struct SourceSection {
+    heading_line: usize,
+    level: usize,
+    parent: Option<usize>,
+}
+
+#[derive(Debug)]
+#[allow(dead_code)] // Structural metadata is retained for later source-backed consumers.
+struct SourceTable {
+    section: Option<usize>,
+    rows: Vec<usize>,
+}
+
+#[derive(Debug)]
+#[allow(dead_code)] // Structural metadata is retained for later source-backed consumers.
+struct SourceRow {
+    table: usize,
+    line: usize,
+    cells: Vec<String>,
+}
+
+#[derive(Debug)]
+#[allow(dead_code)] // Structural metadata is retained for later source-backed consumers.
+struct SourceTree {
+    sections: Vec<SourceSection>,
+    tables: Vec<SourceTable>,
+    rows: Vec<SourceRow>,
+    /// Each source line's innermost enclosing heading.
+    section_at_line: Vec<Option<usize>>,
+    /// A physical row can be looked up without scanning other tables.
+    row_at_line: Vec<Option<usize>>,
+}
+
+impl SourceTree {
+    fn from_document(document: &str) -> Self {
+        let mut tree = Self {
+            sections: Vec::new(),
+            tables: Vec::new(),
+            rows: Vec::new(),
+            section_at_line: Vec::new(),
+            row_at_line: Vec::new(),
+        };
+        let mut heading_stack: Vec<usize> = Vec::new();
+        let mut active_table: Option<usize> = None;
+        let mut in_fence = false;
+        for (line_index, raw) in document.lines().enumerate() {
+            let line = raw.trim();
+            if line.starts_with("```") {
+                in_fence = !in_fence;
+                active_table = None;
+                tree.section_at_line.push(heading_stack.last().copied());
+                tree.row_at_line.push(None);
+                continue;
+            }
+            if !in_fence {
+                let level = line.bytes().take_while(|b| *b == b'#').count();
+                if (1..=6).contains(&level) && line.as_bytes().get(level) == Some(&b' ') {
+                    while heading_stack
+                        .last()
+                        .is_some_and(|index| tree.sections[*index].level >= level)
+                    {
+                        heading_stack.pop();
+                    }
+                    let parent = heading_stack.last().copied();
+                    let index = tree.sections.len();
+                    tree.sections.push(SourceSection {
+                        heading_line: line_index,
+                        level,
+                        parent,
+                    });
+                    heading_stack.push(index);
+                    active_table = None;
+                }
+            }
+            let section = heading_stack.last().copied();
+            tree.section_at_line.push(section);
+            let row_cells = if in_fence || line.starts_with('#') {
+                None
+            } else if line.starts_with('|') && line.ends_with('|') {
+                let cells: Vec<String> = line
+                    .trim_matches('|')
+                    .split('|')
+                    .map(|cell| cell.trim().to_owned())
+                    .collect();
+                (cells.len() >= 2).then_some(cells)
+            } else if line.starts_with("Type:") && line.contains('|') {
+                Some(line.split('|').map(|cell| cell.trim().to_owned()).collect())
+            } else {
+                None
+            };
+            if let Some(cells) = row_cells {
+                let table = *active_table.get_or_insert_with(|| {
+                    let index = tree.tables.len();
+                    tree.tables.push(SourceTable {
+                        section,
+                        rows: Vec::new(),
+                    });
+                    index
+                });
+                let index = tree.rows.len();
+                tree.rows.push(SourceRow {
+                    table,
+                    line: line_index,
+                    cells,
+                });
+                tree.tables[table].rows.push(index);
+                tree.row_at_line.push(Some(index));
+            } else {
+                // A blank line may separate Markdown table blocks. Flattened
+                // conversions require later explicit rows to start new blocks.
+                if !line.is_empty() {
+                    active_table = None;
+                }
+                tree.row_at_line.push(None);
+            }
+        }
+        tree
+    }
+
+    /// A flattened table may have lost its pipe delimiters on continuation
+    /// lines. Require a real table header and an explicit one-letter Type row;
+    /// never infer ownership from prose or from a section heading alone.
+    fn flattened_table_owner(&self, document: &str, line_index: usize) -> Option<u8> {
+        let lines: Vec<&str> = document.lines().collect();
+        let mut header_seen = false;
+        let mut owner = None;
+        let mut in_fence = false;
+        for (index, raw) in lines.iter().enumerate().take(line_index + 1) {
+            let line = raw.trim();
+            if line.starts_with("```") {
+                in_fence = !in_fence;
+                header_seen = false;
+                owner = None;
+            }
+            if in_fence {
+                continue;
+            }
+            if line.starts_with('#') || is_table_caption(line) {
+                header_seen = false;
+                owner = None;
+            } else if line.starts_with("Type | Description |")
+                || line.starts_with("| Type | Description |")
+            {
+                header_seen = true;
+                owner = None;
+            } else if header_seen && (line.starts_with("Type:") || line.starts_with("| Type:")) {
+                owner = super::explicit_type_label(line).filter(|_| line.contains('|'));
+            }
+            if index == line_index {
+                return if self.section_at_line.get(index).is_some() {
+                    owner
+                } else {
+                    None
+                };
+            }
+        }
+        None
+    }
+
+    fn row(&self, line: usize) -> Option<&SourceRow> {
+        self.row_at_line
+            .get(line)
+            .and_then(|index| index.map(|i| &self.rows[i]))
+    }
+
+    fn section(&self, line: usize) -> Option<&SourceSection> {
+        self.section_at_line
+            .get(line)
+            .and_then(|index| index.map(|i| &self.sections[i]))
+    }
+}
+
+#[cfg(test)]
+mod source_tree_tests {
+    use super::SourceTree;
+
+    #[test]
+    fn preserves_heading_hierarchy_and_independent_table_rows() {
+        let source = "# Specification\n## Commands\n| Type | Description |\n| --- | --- |\n| v | status |\n### Parameters\n| Parameter | Format |\n| speed | float |\n## Semantics\nProse";
+        let tree = SourceTree::from_document(source);
+        assert_eq!(tree.section(4).map(|s| s.heading_line), Some(1));
+        assert_eq!(tree.section(7).and_then(|s| s.parent), Some(1));
+        assert_eq!(tree.section(9).map(|s| s.heading_line), Some(8));
+        assert_eq!(tree.row(4).map(|r| r.cells[0].as_str()), Some("v"));
+        assert_eq!(tree.row(7).map(|r| r.cells[0].as_str()), Some("speed"));
+        assert_ne!(tree.row(4).map(|r| r.table), tree.row(7).map(|r| r.table));
+        assert_eq!(tree.tables.len(), 2);
+    }
+
+    #[test]
+    fn flattened_table_continuation_inherits_only_explicit_row() {
+        let source = "## Reserved\nType | Description | Parameters\nType: v | status | key\nContinuation one\nContinuation two\nType: V | request | key\nContinuation three\n## Semantics\nOrdinary prose";
+        let tree = SourceTree::from_document(source);
+        assert_eq!(tree.flattened_table_owner(source, 4), Some(b'v'));
+        assert_eq!(tree.flattened_table_owner(source, 6), Some(b'V'));
+        assert_eq!(tree.flattened_table_owner(source, 8), None);
+    }
+
+    #[test]
+    fn flattened_table_requires_header_and_valid_declaration() {
+        let source = "## Notes\nType: v | text\nProse\nType | Description | Parameters\nType: ? | malformed\nMore prose\nType: v | valid\nContinuation";
+        let tree = SourceTree::from_document(source);
+        assert_eq!(tree.flattened_table_owner(source, 2), None);
+        assert_eq!(tree.flattened_table_owner(source, 5), None);
+        assert_eq!(tree.flattened_table_owner(source, 7), Some(b'v'));
+    }
+
+    #[test]
+    fn code_fences_and_prose_never_become_table_rows() {
+        let source = "# Example\n```text\n| not | a table |\n```\nType: v | status\nprose\nType: V | request";
+        let tree = SourceTree::from_document(source);
+        assert!(tree.row(2).is_none());
+        assert!(tree.row(5).is_none());
+        assert_eq!(tree.row(4).map(|r| r.cells[0].as_str()), Some("Type: v"));
+        assert_ne!(tree.row(4).map(|r| r.table), tree.row(6).map(|r| r.table));
+    }
+}
+
+/// Source tree projected onto physical lines. Headings delimit sections;
+/// explicit table rows and fenced examples establish ownership within them.
+/// No ownership is inferred from candidate filenames or semantic keywords.
+struct SourceStructure {
+    tree: SourceTree,
+    table_owners: Vec<Option<u8>>,
+    example_owners: Vec<Option<u8>>,
+}
+
+impl SourceStructure {
+    fn from_document(document: &str) -> Self {
+        let mut owners = Vec::new();
+        let mut table_owners = Vec::new();
+        let mut in_message_table = false;
+        let mut table_owner = None;
+        let mut in_pipe_table = false;
+        let mut in_examples_section = false;
+        let mut in_fence = false;
+        let mut example_fence = false;
+        let mut previous_command: Option<u8> = None;
+
+        let lines: Vec<&str> = document.lines().collect();
+        for (index, raw) in lines.iter().enumerate() {
+            let line = raw.trim();
+            if line.starts_with('#') && !in_fence {
+                in_message_table = line
+                    .trim_start_matches('#')
+                    .trim()
+                    .to_ascii_lowercase()
+                    .contains("message types");
+                table_owner = None;
+                in_pipe_table = false;
+                in_examples_section = line
+                    .trim_start_matches('#')
+                    .trim()
+                    .to_ascii_lowercase()
+                    .contains("messages from");
+            }
+            if line.starts_with("```") {
+                table_owner = None;
+                in_pipe_table = false;
+                table_owners.push(None);
+                if in_fence {
+                    in_fence = false;
+                    example_fence = false;
+                } else {
+                    in_fence = true;
+                    example_fence = in_examples_section
+                        && matches!(line.strip_prefix("```").unwrap_or(""), "txt" | "text" | "");
+                }
+                previous_command = None;
+                owners.push(None);
+                continue;
+            }
+            // A row is owned only inside a declared message-type table.
+            // In converted/flattened tables blank lines can occur inside cells;
+            // Markdown pipe tables instead end at their first non-row.
+            if !in_fence && in_message_table {
+                if is_table_caption(line) || line.starts_with("| Type") || line.starts_with("| ---")
+                {
+                    table_owner = None;
+                    in_pipe_table = line.starts_with('|');
+                } else if line.starts_with("Type:") || line.starts_with("| Type:") {
+                    table_owner = super::explicit_type_label(line).filter(|_| line.contains('|'));
+                    in_pipe_table = line.starts_with('|');
+                } else if in_pipe_table && !line.starts_with('|') && !line.is_empty() {
+                    table_owner = None;
+                    in_pipe_table = false;
+                }
+                table_owners.push(table_owner);
+            } else {
+                table_owners.push(None);
+            }
+            if !in_fence || !example_fence {
+                owners.push(None);
+                continue;
+            }
+
+            let bytes = line.as_bytes();
+            let command = if bytes.len() >= 3
+                && bytes[0].is_ascii_alphabetic()
+                && bytes[1].is_ascii_whitespace()
+                && (bytes[2..].contains(&b'#')
+                    || lines.get(index + 1).is_some_and(|next| {
+                        let next = next.trim();
+                        next.contains('#')
+                            && next.as_bytes().first().is_some_and(u8::is_ascii_alphabetic)
+                            && !next.as_bytes().get(1).is_some_and(u8::is_ascii_whitespace)
+                    })) {
+                Some(bytes[0])
+            } else {
+                None
+            };
+
+            // Only a syntactic key=value parameter can continue a command.
+            // A comment or ordinary prose is not evidence of ownership.
+            let first_token = line.split_whitespace().next().unwrap_or("");
+            let parameter = first_token.split_once('=').is_some_and(|(key, value)| {
+                !key.is_empty()
+                    && !value.is_empty()
+                    && key.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+            });
+            let continuation = if command.is_none()
+                && previous_command.is_some()
+                && parameter
+                && line.contains('#')
+            {
+                previous_command
+            } else {
+                None
+            };
+            owners.push(command.or(continuation));
+            previous_command = command;
+        }
+        Self {
+            tree: SourceTree::from_document(document),
+            table_owners,
+            example_owners: owners,
+        }
+    }
+
+    fn table_type(&self, line_index: usize) -> Option<u8> {
+        // The tree records row/section boundaries independently of ownership.
+        let _structural_row = self.tree.row(line_index);
+        let _structural_section = self.tree.section(line_index);
+        self.table_owners.get(line_index).copied().flatten()
+    }
+
+    fn example_type(&self, line_index: usize) -> Option<u8> {
+        self.example_owners.get(line_index).copied().flatten()
+    }
 }
 
 /// Resolve an individual fact against its own original source window.
@@ -463,6 +849,16 @@ fn resolve_fact_type_in_document(
     document: &str,
     fact: &CandidateFact,
 ) -> Result<u8, ResolutionFailure> {
+    resolve_fact_type_with_flattened_tables(window, window_start, document, fact, true)
+}
+
+fn resolve_fact_type_with_flattened_tables(
+    window: &str,
+    window_start: usize,
+    document: &str,
+    fact: &CandidateFact,
+    include_flattened_tables: bool,
+) -> Result<u8, ResolutionFailure> {
     let local = resolve_fact_type(window, fact);
     if matches!(
         local,
@@ -495,13 +891,18 @@ fn resolve_fact_type_in_document(
         .lines()
         .nth(line)
         .ok_or(ResolutionFailure::InvalidLocator)?;
+    let structure = SourceStructure::from_document(document);
     let mut declared = None;
     for signal in [
         super::explicit_type_label(source_line),
         super::section_type_for_line(document, line),
         table_block_type_for_line(document, line),
-        flattened_message_table_type(document, line),
+        structure.table_type(line),
+        include_flattened_tables
+            .then(|| structure.tree.flattened_table_owner(document, line))
+            .flatten(),
         message_example_type_for_line(document, line),
+        structure.example_type(line),
     ]
     .into_iter()
     .flatten()
@@ -523,6 +924,54 @@ fn resolve_fact_type_in_document(
         return Err(ResolutionFailure::ConflictingType);
     }
     Ok(letter)
+}
+
+#[cfg(test)]
+mod source_structure_tests {
+    use super::SourceStructure;
+
+    #[test]
+    fn table_tree_owns_flattened_rows_and_respects_next_declaration() {
+        let source = "## Message Types\nType: v | status | value\ncontinuation\nmore details\nType: V | request | key\nmore details\n## Semantics\nnot a row";
+        let tree = SourceStructure::from_document(source);
+        assert_eq!(tree.table_type(3), Some(b'v'));
+        assert_eq!(tree.table_type(5), Some(b'V'));
+        assert_eq!(tree.table_type(7), None);
+    }
+
+    #[test]
+    fn table_tree_does_not_inherit_malformed_declarations_or_pipe_prose() {
+        let source = "## Message Types\nType: v | status\nType: ?? | unknown\ncontinuation\n## Other\n| ordinary | prose |";
+        let tree = SourceStructure::from_document(source);
+        assert_eq!(tree.table_type(1), Some(b'v'));
+        assert_eq!(tree.table_type(3), None);
+        assert_eq!(tree.table_type(5), None);
+    }
+
+    #[test]
+    fn owns_immediate_continuation_of_fenced_command() {
+        let source = "## Messages from Modem to Antenna\n```txt\nB 100 200 rx2=300\ntx3=400 # additional frequency\n```";
+        let structure = SourceStructure::from_document(source);
+        assert_eq!(structure.example_type(2), Some(b'B'));
+        assert_eq!(structure.example_type(3), Some(b'B'));
+    }
+
+    #[test]
+    fn never_inherits_across_blank_lines_fences_or_sections() {
+        let source = "## Messages from Modem to Antenna\n```txt\nB 100 # example\n\ntx3=400 # detached\n```\n## Appendix\n```txt\nB 100 # unrelated\n```";
+        let structure = SourceStructure::from_document(source);
+        assert_eq!(structure.example_type(4), None);
+        assert_eq!(structure.example_type(8), None);
+    }
+
+    #[test]
+    fn preserves_case_and_does_not_claim_arbitrary_prose() {
+        let source = "## Messages from Modem to Antenna\n```txt\nb 100 # command\nplain prose # comment\nQ 20 # different command\n```";
+        let structure = SourceStructure::from_document(source);
+        assert_eq!(structure.example_type(2), Some(b'b'));
+        assert_eq!(structure.example_type(3), None);
+        assert_eq!(structure.example_type(4), Some(b'Q'));
+    }
 }
 
 #[cfg(test)]
@@ -847,6 +1296,85 @@ pub(super) fn resolution_diagnostics_in_document(
         }
     }
     result
+}
+
+/// Read-only diff of facts newly resolved by flattened table ownership.
+/// One line per unique source-backed fact; duplicate candidate occurrences
+/// do not inflate the reported gain.
+pub(super) fn flattened_table_identity_gains(
+    candidates: &[MessageCandidate],
+    sources: &[&str],
+    starts: &[usize],
+    document: &str,
+) -> Vec<String> {
+    let mut gains = std::collections::BTreeMap::new();
+    let lines: Vec<&str> = document.lines().collect();
+    let tree = SourceTree::from_document(document);
+    for candidate in candidates {
+        let Some(window_index) = source_window_index(&candidate.id) else {
+            continue;
+        };
+        let Some((window, start)) = sources.get(window_index).zip(starts.get(window_index)) else {
+            continue;
+        };
+        for fact in &candidate.facts {
+            let Ok(letter) =
+                resolve_fact_type_with_flattened_tables(window, *start, document, fact, true)
+            else {
+                continue;
+            };
+            if !matches!(
+                resolve_fact_type_with_flattened_tables(window, *start, document, fact, false,),
+                Err(ResolutionFailure::NoSourceType)
+            ) {
+                continue;
+            }
+            let Some(absolute) = fact
+                .source_byte_offset
+                .and_then(|offset| start.checked_add(offset))
+            else {
+                continue;
+            };
+            let Some(line_index) =
+                crate::utils::stringutils::line_index_at_byte_offset(document, absolute)
+            else {
+                continue;
+            };
+            let Some(source_line) = lines.get(line_index) else {
+                continue;
+            };
+            let Some(owner) = tree.flattened_table_owner(document, line_index) else {
+                continue;
+            };
+            if owner != letter {
+                continue;
+            }
+            let mut declaration = None;
+            for (i, raw) in lines.iter().enumerate().take(line_index + 1).rev() {
+                let line = raw.trim();
+                if line.starts_with('#') || is_table_caption(line) {
+                    break;
+                }
+                if super::explicit_type_label(line) == Some(letter) && line.contains('|') {
+                    declaration = Some(i + 1);
+                    break;
+                }
+            }
+            let evidence = fact.evidence_quote.as_deref().unwrap_or("");
+            let snippet =
+                |s: &str| -> String { s.chars().take(110).collect::<String>().replace('\n', " ") };
+            gains.entry((absolute, fact.statement.clone(), evidence.to_owned()))
+                .or_insert_with(|| format!(
+                    "line={} type={} declaration_line={} reason=flattened_table_continuation statement={:?} source={:?}",
+                    line_index + 1,
+                    letter as char,
+                    declaration.map_or("unknown".into(), |n| n.to_string()),
+                    snippet(&fact.statement),
+                    snippet(source_line)
+                ));
+        }
+    }
+    gains.into_values().collect()
 }
 
 pub(super) fn resolved_source_facts_in_document(

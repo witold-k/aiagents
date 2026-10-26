@@ -4,8 +4,16 @@
 //! Bounded, source-aware document transformation with independent review.
 
 // P4 staging preserves source-attributed candidates before identity resolution.
+#[path = "extraction_quality.rs"]
+mod extraction_quality;
 #[path = "message_identity.rs"]
 mod message_identity;
+#[path = "source_tree.rs"]
+#[allow(dead_code)] // New structural model is not yet used by identity resolution.
+mod source_tree;
+#[path = "structure_inference.rs"]
+#[allow(dead_code)]
+mod structure_inference;
 
 use serde::{Deserialize, Serialize};
 
@@ -1434,6 +1442,7 @@ struct JsonManifest<'a> {
     verification: &'static str,
     files: Vec<String>,
     facts_file: &'a str,
+    quality_file: &'a str,
 }
 
 /// Stage JSON output in a sibling directory and publish it atomically.
@@ -1500,12 +1509,19 @@ fn write_spec_directory(
             serde_json::to_vec_pretty(facts).map_err(|e| format!("Cannot serialize facts: {e}"))?;
         fs::write(stage.join("facts.json"), fact_json)
             .map_err(|e| format!("Cannot write facts.json: {e}"))?;
+        // Publish diagnostics alongside facts, without changing review statuses.
+        let findings = extraction_quality::diagnose(facts);
+        let quality_json = serde_json::to_vec_pretty(&findings)
+            .map_err(|e| format!("Cannot serialize quality diagnostics: {e}"))?;
+        fs::write(stage.join("quality.json"), quality_json)
+            .map_err(|e| format!("Cannot write quality.json: {e}"))?;
         let manifest = JsonManifest {
             schema_version: 1,
             source: source.display().to_string(),
             verification: if unverified { "unverified" } else { "reviewed" },
             files: output_paths,
             facts_file: "facts.json",
+            quality_file: "quality.json",
         };
         let manifest_json = serde_json::to_vec_pretty(&manifest)
             .map_err(|e| format!("Cannot serialize manifest: {e}"))?;
@@ -2204,6 +2220,233 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         // before fact auditing and publication; neither invokes the model nor
         // mutates the checkpoint or an existing output directory.
         if std::env::var_os("AIFIX_IDENTITY_REPLAY").is_some() {
+            // Shadow-only structural replay. All positions are in the original
+            // masked source; this never changes candidates or identity decisions.
+            let structure = source_tree::SourceTree::parse(&masked_source);
+            let transitions = structure.transitions();
+            println!(
+                "## [CHUNKED] SOURCE TREE SHADOW: sections={} tables={} blocks={} transitions={}",
+                structure.sections.len(),
+                structure.tables.len(),
+                structure.blocks.len(),
+                transitions.len(),
+            );
+            for event in &transitions {
+                println!(
+                    "## [CHUNKED] SOURCE TREE TRANSITION: line={} kind={:?}",
+                    event.line, event.kind
+                );
+            }
+            // Markdown table syntax is not assumed for PDF-flattened rows.
+            // Count pipe-containing lines outside recognized tables as a
+            // diagnostic only: neither a table nor an owner is inferred.
+            let flattened_candidates: Vec<usize> = masked_source
+                .lines()
+                .enumerate()
+                .filter(|(line, text)| {
+                    text.contains('|')
+                        && !matches!(
+                            structure.context_at_line(*line).and_then(|ctx| ctx.block),
+                            Some(source_tree::BlockKind::Table(_))
+                                | Some(source_tree::BlockKind::FencedCode)
+                        )
+                })
+                .map(|(line, _)| line)
+                .collect();
+            let hypotheses = structure.layout_hypotheses(&masked_source);
+            println!(
+                "## [CHUNKED] SOURCE TREE HYPOTHESES: proposed_regions={} proposed_continuations={} (syntax evidence only; no semantic ownership)",
+                hypotheses.len(),
+                hypotheses
+                    .iter()
+                    .map(|region| region.relations.len())
+                    .sum::<usize>()
+            );
+            for region in hypotheses.iter().take(40) {
+                println!(
+                    "## [CHUNKED] SOURCE TREE HYPOTHESIS: lines={}..{} status={:?} evidence={:?} relations={} source_lines={:?}",
+                    region.start_line,
+                    region.end_line,
+                    region.status,
+                    region.evidence,
+                    region.relations.len(),
+                    region
+                        .relations
+                        .iter()
+                        .flat_map(|relation| relation.evidence_lines.iter().copied())
+                        .collect::<std::collections::BTreeSet<_>>()
+                );
+            }
+            // Opt-in LLM experiment: still read-only, never changes identity
+            // decisions, checkpoint, or output files. Keep the model budget
+            // bounded and show competing interpretations rather than a winner.
+            if std::env::var_os("AIFIX_STRUCTURE_LLM_REPLAY").is_some() {
+                let html_tables = structure_inference::html_table_spans(&masked_source, &structure);
+                println!(
+                    "## [CHUNKED] STRUCTURE HTML TABLES: observed_spans={:?} (syntax only)",
+                    html_tables
+                );
+                let candidate_spans = hypotheses
+                    .iter()
+                    .take(12)
+                    .map(|region| (region.start_line, region.end_line))
+                    .chain(html_tables.iter().copied().take(12));
+                let mut observed_regions = Vec::new();
+                let mut all_proposals = Vec::new();
+                for (region_start, region_end) in candidate_spans {
+                    for (start, end) in
+                        structure_inference::analysis_windows(&structure, region_start, region_end)
+                    {
+                        observed_regions.push((start, end));
+                        let source_window =
+                            structure_inference::source_window(&masked_source, start, end);
+                        let response = match self.llm_call.run_text_step_limited_with_temperature(
+                            structure_inference::PROMPT,
+                            &source_window,
+                            2048,
+                            0.0,
+                        ) {
+                            Ok(response) => response,
+                            Err(err) => return WorkflowResult::LlmCallResult(err),
+                        };
+                        match structure_inference::evaluate(
+                            &response,
+                            &masked_source,
+                            &structure,
+                            start,
+                            end,
+                        ) {
+                            Ok(alternatives) => {
+                                println!(
+                                    "## [CHUNKED] STRUCTURE LLM: region={}..{} accepted_alternatives={}",
+                                    start,
+                                    end,
+                                    alternatives.len()
+                                );
+                                for (rank, candidate) in alternatives.iter().enumerate() {
+                                    println!(
+                                        "## [CHUNKED] STRUCTURE LLM ALTERNATIVE: rank={} kind={:?} lines={}..{} evidence_lines={:?} evidence_count={} structural_score={} reason={:?} (proposed only)",
+                                        rank + 1,
+                                        candidate.alternative.kind,
+                                        candidate.alternative.start_line,
+                                        candidate.alternative.end_line,
+                                        candidate.alternative.evidence_lines,
+                                        candidate.evidence_count,
+                                        candidate.structural_score,
+                                        candidate.alternative.reason
+                                    );
+                                }
+                                all_proposals.extend(alternatives);
+                            }
+                            Err(err) => println!(
+                                "## [CHUNKED] STRUCTURE LLM REJECTED: region={}..{} reason={}",
+                                start, end, err
+                            ),
+                        }
+                    }
+                }
+                let decisions = structure_inference::reconcile(
+                    &masked_source,
+                    &structure,
+                    &observed_regions,
+                    &all_proposals,
+                );
+                let explicit_rows = decisions
+                    .iter()
+                    .filter(|d| d.layout == structure_inference::LineLayout::PipeRow)
+                    .count();
+                let possible_continuations = decisions
+                    .iter()
+                    .filter(|d| d.layout == structure_inference::LineLayout::PossibleContinuation)
+                    .count();
+                println!(
+                    "## [CHUNKED] STRUCTURE RECONCILED: covered_lines={} explicit_pipe_rows={} possible_continuations={} (read only)",
+                    decisions.len(),
+                    explicit_rows,
+                    possible_continuations
+                );
+                let alignments = structure_inference::aligned_rows(
+                    &masked_source,
+                    &structure,
+                    &observed_regions,
+                    &decisions,
+                );
+                println!(
+                    "## [CHUNKED] STRUCTURE ROW ALIGNMENTS: adjacent_equal_width={} (syntax evidence only; no cell ownership)",
+                    alignments.len()
+                );
+                for edge in alignments.iter().take(40) {
+                    println!(
+                        "## [CHUNKED] STRUCTURE ROW ALIGNMENT: from={} to={} columns={} (proposed only)",
+                        edge.from_line, edge.to_line, edge.columns
+                    );
+                }
+                let fragments = structure_inference::fragment_contexts(
+                    &masked_source,
+                    &structure,
+                    &observed_regions,
+                    &decisions,
+                );
+                let row_candidates = fragments
+                    .iter()
+                    .filter(|f| f.shape == structure_inference::FragmentShape::RowCandidate)
+                    .count();
+                let cell_candidates = fragments
+                    .iter()
+                    .filter(|f| {
+                        f.shape == structure_inference::FragmentShape::CellContinuationCandidate
+                    })
+                    .count();
+                let ambiguous = fragments
+                    .iter()
+                    .filter(|f| f.shape == structure_inference::FragmentShape::Ambiguous)
+                    .count();
+                println!(
+                    "## [CHUNKED] STRUCTURE FRAGMENT CONTEXTS: total={} row_candidates={} cell_continuation_candidates={} ambiguous={} (syntax only; no ownership)",
+                    fragments.len(),
+                    row_candidates,
+                    cell_candidates,
+                    ambiguous
+                );
+                for fragment in &fragments {
+                    println!(
+                        "## [CHUNKED] STRUCTURE FRAGMENT CONTEXT: line={} previous_row={:?} next_row={:?} shape={:?} (proposed only)",
+                        fragment.line, fragment.previous_row, fragment.next_row, fragment.shape
+                    );
+                }
+                for decision in decisions.iter().filter(|d| {
+                    d.layout == structure_inference::LineLayout::PossibleContinuation
+                        || (d.model_table_votes > 0 && d.model_prose_votes > 0)
+                }) {
+                    println!(
+                        "## [CHUNKED] STRUCTURE RECONCILED LINE: line={} syntax={:?} table_votes={} prose_votes={} (no ownership)",
+                        decision.line,
+                        decision.layout,
+                        decision.model_table_votes,
+                        decision.model_prose_votes
+                    );
+                }
+            }
+            println!(
+                "## [CHUNKED] SOURCE TREE FLATTENED CANDIDATES: pipe_lines_outside_tables={} (unclassified, no ownership inferred)",
+                flattened_candidates.len()
+            );
+            for line in flattened_candidates.iter().take(40) {
+                println!("## [CHUNKED] SOURCE TREE FLATTENED CANDIDATE: line={line}");
+            }
+            let gains = message_identity::flattened_table_identity_gains(
+                &checkpoint.candidates,
+                &source_windows,
+                &source_starts,
+                &masked_source,
+            );
+            println!(
+                "## [CHUNKED] IDENTITY STRUCTURAL DIFF: unique_new_facts={}",
+                gains.len()
+            );
+            for gain in gains {
+                println!("## [CHUNKED] IDENTITY STRUCTURAL GAIN: {gain}");
+            }
             for sample in message_identity::unresolved_history_samples(
                 &checkpoint.candidates,
                 &source_windows,
@@ -2219,6 +2462,51 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 &source_starts,
                 &masked_source,
             );
+            // Compare old resolver's source-backed assignments to structural
+            // scopes. A table match is not a new identity decision.
+            let mut scope_counts: BTreeMap<&'static str, usize> = BTreeMap::new();
+            let mut scope_samples = Vec::new();
+            for (path, occurrences) in &groups {
+                for (window, fact) in occurrences {
+                    let Some(part) = parts.get(*window) else {
+                        continue;
+                    };
+                    let Some(offset) = fact.source_byte_offset else {
+                        continue;
+                    };
+                    let Some(absolute) = part.start_byte.checked_add(offset) else {
+                        continue;
+                    };
+                    if absolute >= masked_source.len() || !masked_source.is_char_boundary(absolute)
+                    {
+                        continue;
+                    }
+                    let line = masked_source.as_bytes()[..absolute]
+                        .iter()
+                        .filter(|&&byte| byte == b'\n')
+                        .count();
+                    let context = structure.context_at_line(line);
+                    let scope = match context.as_ref().and_then(|ctx| ctx.block) {
+                        Some(source_tree::BlockKind::Table(_)) => "markdown_table",
+                        Some(source_tree::BlockKind::FencedCode) => "fenced_code",
+                        Some(source_tree::BlockKind::Prose) => "prose",
+                        None => "no_block",
+                    };
+                    *scope_counts.entry(scope).or_default() += 1;
+                    if scope_samples.len() < 40 && scope != "markdown_table" {
+                        scope_samples.push(format!(
+                            "line={line} legacy={path} syntax={scope} section={:?}",
+                            context.map(|ctx| ctx.section_path).unwrap_or_default()
+                        ));
+                    }
+                }
+            }
+            println!(
+                "## [CHUNKED] SOURCE TREE LEGACY COMPARISON: positioned_by_syntax={scope_counts:?}"
+            );
+            for sample in scope_samples {
+                println!("## [CHUNKED] SOURCE TREE LEGACY SAMPLE: {sample}");
+            }
             let mut seen = std::collections::BTreeSet::new();
             let mut duplicates = 0_usize;
             let mut positioned = 0_usize;
