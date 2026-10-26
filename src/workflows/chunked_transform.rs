@@ -27,7 +27,11 @@ use std::{
 
 use crate::generated_tasks::Tasks;
 use crate::runtimetools::llmcall::LlmCall;
-use crate::utils::stringutils::{normalize_html_tables, resolve_source_quote, strip_code_fences};
+#[cfg(test)]
+use crate::utils::stringutils::normalize_html_tables;
+use crate::utils::stringutils::{
+    normalize_html_tables_with_spans, resolve_source_quote, strip_code_fences,
+};
 // Preserve the existing workflow API while the string processing lives in stringutils.
 pub use crate::utils::stringutils::{mask_embedded_data_uris, mask_opaque_lines};
 use crate::workflows::workflow::{Workflow, WorkflowResult};
@@ -1601,10 +1605,38 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 return WorkflowResult::Error(format!("Cannot read {}: {err}", input.display()));
             }
         };
-        let masked_source =
-            normalize_html_tables(&mask_opaque_lines(&mask_embedded_data_uris(&source)));
-        // Parse the complete normalized source once; spans remain absolute.
+        // Parse the complete source before any destructive normalization or
+        // chunking. This is the authoritative observation of original HTML
+        // table rows and their byte spans. Normalized offsets are a separate
+        // coordinate space and must not be confused with these source spans.
+        let source_analysis = simplelexer::tablelexer::DocumentAnalysis::parse(&source);
+        let source_html_tables = source_analysis
+            .blocks
+            .iter()
+            .filter(|block| {
+                matches!(
+                    block,
+                    simplelexer::tablelexer::DocumentChunk::Table(table)
+                        if table.table_type == simplelexer::tablelexer::TableType::Html
+                )
+            })
+            .count();
+        let pre_normalized = mask_opaque_lines(&mask_embedded_data_uris(&source));
+        let (masked_source, html_row_spans) = normalize_html_tables_with_spans(&pre_normalized);
+        // The normalized view is retained for legacy evidence and checkpoints.
+        // Its byte spans are NOT interchangeable with source_analysis spans.
         let table_analysis = simplelexer::tablelexer::DocumentAnalysis::parse(&masked_source);
+        let identity_context = message_identity::DocumentIdentityContext {
+            document: &masked_source,
+            analysis: &table_analysis,
+            original: &source,
+            pre_normalized: &pre_normalized,
+            original_analysis: &source_analysis,
+            row_spans: &html_row_spans,
+        };
+        println!(
+            "## [CHUNKED] SOURCE SIMPLELEXER: original_html_tables={source_html_tables} (parsed before normalization; source byte spans)"
+        );
         let parts = chunks(&masked_source, CHUNK_CHARS);
         if parts.is_empty() {
             return WorkflowResult::Error("Input document is empty".into());
@@ -2205,7 +2237,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             &checkpoint.candidates,
             &source_windows,
             &source_starts,
-            &masked_source,
+            &identity_context,
         );
         println!(
             "## [CHUNKED] P4 UNRESOLVED DIAGNOSTICS: invalid_window={}, ambiguous_locator={}, missing_evidence={}, invalid_offset_or_quote={}, no_source_type={}, conflicting_type={}",
@@ -2517,7 +2549,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 &checkpoint.candidates,
                 &source_windows,
                 &source_starts,
-                &masked_source,
+                &identity_context,
             );
             // Compare old resolver's source-backed assignments to structural
             // scopes. A table match is not a new identity decision.
@@ -2622,7 +2654,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 &checkpoint.candidates,
                 &source_windows,
                 &source_starts,
-                &masked_source,
+                &identity_context,
             );
             checkpoint
                 .facts

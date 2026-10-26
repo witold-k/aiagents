@@ -631,12 +631,18 @@ struct SourceStructure {
     table_owners: Vec<Option<u8>>,
     example_owners: Vec<Option<u8>>,
     explicit_table_owners: Vec<Option<u8>>,
+    html_row_owners: Vec<(std::ops::Range<usize>, u8)>,
     explicit_table_lines: Vec<bool>,
     potential_table_lines: Vec<bool>,
 }
 
 impl SourceStructure {
     fn from_document(document: &str) -> Self {
+        let analysis = simplelexer::tablelexer::DocumentAnalysis::parse(document);
+        Self::from_analysis(document, &analysis)
+    }
+
+    fn from_analysis(document: &str, analysis: &simplelexer::tablelexer::DocumentAnalysis) -> Self {
         let mut owners = Vec::new();
         let mut table_owners = Vec::new();
         let mut in_message_table = false;
@@ -650,14 +656,55 @@ impl SourceStructure {
         let lines: Vec<&str> = document.lines().collect();
         // Prefilter explicit tables once with simplelexer. Keep pipe-bearing
         // lines as candidates because PDF conversion may have lost separators.
-        let analysis = simplelexer::tablelexer::DocumentAnalysis::parse(document);
         let mut potential_table_lines = vec![false; lines.len()];
         let mut explicit_table_owners = vec![None; lines.len()];
+        let mut html_row_owners = Vec::new();
         let mut explicit_table_lines = vec![false; lines.len()];
         for block in &analysis.blocks {
             let simplelexer::tablelexer::DocumentChunk::Table(table) = block else {
                 continue;
             };
+            // HTML tables can contain many message rows on a single physical
+            // line. A line-based owner cannot distinguish them. Record the
+            // exact row byte ranges, including explicitly declared rowspans.
+            if table.table_type == simplelexer::tablelexer::TableType::Html {
+                let is_message_table = table.rows.iter().any(|row| {
+                    row.cells
+                        .first()
+                        .is_some_and(|cell| cell.text.trim() == "Type")
+                        && row
+                            .cells
+                            .iter()
+                            .any(|cell| cell.text.trim() == "Description")
+                });
+                if is_message_table {
+                    let mut spanning: Option<(u8, usize)> = None;
+                    for row in &table.rows {
+                        let first = row.cells.first();
+                        let declared = first.and_then(|cell| {
+                            (cell.column == 0)
+                                .then(|| cell.text.trim())
+                                .and_then(|text| {
+                                    (text.len() == 1 && text.as_bytes()[0].is_ascii_alphabetic())
+                                        .then(|| text.as_bytes()[0])
+                                })
+                        });
+                        let owner = if let Some(letter) = declared {
+                            let span = first.map_or(1, |cell| cell.rowspan).max(1);
+                            spanning = (span > 1).then_some((letter, span - 1));
+                            Some(letter)
+                        } else if let Some((letter, remaining)) = spanning {
+                            spanning = (remaining > 1).then_some((letter, remaining - 1));
+                            Some(letter)
+                        } else {
+                            None
+                        };
+                        if let Some(letter) = owner {
+                            html_row_owners.push((row.span.start..row.span.end, letter));
+                        }
+                    }
+                }
+            }
             let start = document[..table.span.start]
                 .bytes()
                 .filter(|&byte| byte == b'\n')
@@ -783,8 +830,42 @@ impl SourceStructure {
             example_owners: owners,
             potential_table_lines,
             explicit_table_owners,
+            html_row_owners,
             explicit_table_lines,
         }
+    }
+
+    /// Translate only explicitly observed HTML row ownership. Ordinary prose,
+    /// headings and table-free documents retain the existing resolver path.
+    fn with_original_html_rows(
+        mut self,
+        original: &str,
+        pre_normalized: &str,
+        original_analysis: &simplelexer::tablelexer::DocumentAnalysis,
+        row_spans: &[(std::ops::Range<usize>, std::ops::Range<usize>)],
+    ) -> Self {
+        let original_structure = Self::from_analysis(original, original_analysis);
+        for (source_span, normalized_span) in row_spans {
+            // Masking can change offsets. Never apply an unverified mapping.
+            if original.get(source_span.clone()) != pre_normalized.get(source_span.clone()) {
+                continue;
+            }
+            if let Some((_, owner)) = original_structure
+                .html_row_owners
+                .iter()
+                .find(|(range, _)| range.start == source_span.start && range.end == source_span.end)
+            {
+                self.html_row_owners.push((normalized_span.clone(), *owner));
+            }
+        }
+        self
+    }
+
+    fn html_row_type_at(&self, byte_offset: usize) -> Option<u8> {
+        self.html_row_owners
+            .iter()
+            .find(|(range, _)| range.contains(&byte_offset))
+            .map(|(_, letter)| *letter)
     }
 
     fn is_explicit_table_line(&self, line_index: usize) -> bool {
@@ -952,6 +1033,19 @@ fn resolve_fact_type_with_flattened_tables(
     if document.get(absolute..end) != Some(quote) {
         return Err(ResolutionFailure::InvalidLocator);
     }
+    // The HTML row is a stronger source locator than its physical line:
+    // PDF conversions frequently put an entire multi-message table on one line.
+    if let Some(letter) = structure.html_row_type_at(absolute) {
+        if super::explicit_type_label(&fact.statement).is_some_and(|stated| stated != letter) {
+            return Err(ResolutionFailure::ConflictingType);
+        }
+        if let Ok(local_letter) = local
+            && local_letter != letter
+        {
+            return Err(ResolutionFailure::ConflictingType);
+        }
+        return Ok(letter);
+    }
     let line = crate::utils::stringutils::line_index_at_byte_offset(document, absolute)
         .ok_or(ResolutionFailure::InvalidLocator)?;
     let source_line = document
@@ -994,6 +1088,98 @@ fn resolve_fact_type_with_flattened_tables(
         return Err(ResolutionFailure::ConflictingType);
     }
     Ok(letter)
+}
+
+#[cfg(test)]
+mod html_row_identity_tests {
+    use super::*;
+
+    #[test]
+    fn separate_messages_on_one_html_line_keep_case() {
+        let document = concat!(
+            "## Message Types\n",
+            "<table><tr><td>Type</td><td>Description</td></tr>",
+            "<tr><td>B</td><td>upper</td></tr>",
+            "<tr><td>b</td><td>lower</td></tr></table>"
+        );
+        let structure = SourceStructure::from_document(document);
+        for (letter, description) in [(b'B', "upper"), (b'b', "lower")] {
+            let offset = document.find(description).unwrap();
+            let fact = CandidateFact {
+                statement: description.to_owned(),
+                segment_id: String::new(),
+                evidence_quote: Some(description.to_owned()),
+                source_byte_offset: Some(offset),
+                source_locator_ambiguous: false,
+            };
+            assert_eq!(
+                resolve_fact_type_with_flattened_tables(
+                    document, 0, document, &fact, true, &structure
+                ),
+                Ok(letter)
+            );
+        }
+    }
+
+    #[test]
+    fn normalized_rows_keep_original_case_and_table_free_fallback() {
+        let original = concat!(
+            "## Message Types\n",
+            "<table><tr><td>Type</td><td>Description</td></tr>",
+            "<tr><td>B</td><td>upper evidence</td></tr>",
+            "<tr><td>b</td><td>lower evidence</td></tr></table>\n",
+            "## Other\nplain paragraph"
+        );
+        let (normalized, spans) =
+            crate::utils::stringutils::normalize_html_tables_with_spans(original);
+        let original_analysis = simplelexer::tablelexer::DocumentAnalysis::parse(original);
+        let normalized_analysis = simplelexer::tablelexer::DocumentAnalysis::parse(&normalized);
+        let structure = SourceStructure::from_analysis(&normalized, &normalized_analysis)
+            .with_original_html_rows(original, original, &original_analysis, &spans);
+        for (letter, evidence) in [(b'B', "upper evidence"), (b'b', "lower evidence")] {
+            let offset = normalized.find(evidence).unwrap();
+            assert_eq!(structure.html_row_type_at(offset), Some(letter));
+        }
+        assert_eq!(
+            structure.html_row_type_at(normalized.find("plain paragraph").unwrap()),
+            None
+        );
+        let table_free = "## Message Types\nplain paragraph";
+        let analysis = simplelexer::tablelexer::DocumentAnalysis::parse(table_free);
+        let fallback = SourceStructure::from_analysis(table_free, &analysis)
+            .with_original_html_rows(table_free, table_free, &analysis, &[]);
+        assert_eq!(
+            fallback.html_row_type_at(table_free.find("paragraph").unwrap()),
+            None
+        );
+    }
+
+    #[test]
+    fn empty_html_type_cell_does_not_panic_or_claim_identity() {
+        let document = concat!(
+            "## Message Types\n",
+            "<table><tr><td>Type</td><td>Description</td></tr>",
+            "<tr><td></td><td>untyped evidence</td></tr>",
+            "<tr><td>B</td><td>typed evidence</td></tr></table>"
+        );
+        // Parsing the original HTML exercises the empty-cell path that
+        // previously panicked; positive row ownership is covered separately.
+        let structure = SourceStructure::from_document(document);
+        assert_eq!(
+            structure.html_row_type_at(document.find("untyped evidence").unwrap()),
+            None
+        );
+    }
+
+    #[test]
+    fn unrelated_html_tables_do_not_declare_message_types() {
+        let document = "<table><tr><td>Name</td><td>Description</td></tr><tr><td>B</td><td>ordinary</td></tr></table>";
+        let structure = SourceStructure::from_document(document);
+        assert_eq!(
+            structure.html_row_type_at(document.find("ordinary").unwrap()),
+            None
+        );
+    }
 }
 
 #[cfg(test)]
@@ -1349,13 +1535,29 @@ pub(super) fn parameter_facts_in_document(
     inventory
 }
 
+pub(super) struct DocumentIdentityContext<'a> {
+    pub document: &'a str,
+    pub analysis: &'a simplelexer::tablelexer::DocumentAnalysis<'a>,
+    pub original: &'a str,
+    pub pre_normalized: &'a str,
+    pub original_analysis: &'a simplelexer::tablelexer::DocumentAnalysis<'a>,
+    pub row_spans: &'a crate::utils::stringutils::HtmlRowSpans,
+}
+
 pub(super) fn resolution_diagnostics_in_document(
     candidates: &[MessageCandidate],
     sources: &[&str],
     starts: &[usize],
-    document: &str,
+    context: &DocumentIdentityContext<'_>,
 ) -> ResolutionDiagnostics {
-    let structure = SourceStructure::from_document(document);
+    let document = context.document;
+    let structure = SourceStructure::from_analysis(document, context.analysis)
+        .with_original_html_rows(
+            context.original,
+            context.pre_normalized,
+            context.original_analysis,
+            context.row_spans,
+        );
     let mut result = ResolutionDiagnostics::default();
     for candidate in candidates {
         let window = source_window_index(&candidate.id);
@@ -1466,12 +1668,19 @@ pub(super) fn resolved_source_facts_in_document(
     candidates: &[MessageCandidate],
     sources: &[&str],
     starts: &[usize],
-    document: &str,
+    context: &DocumentIdentityContext<'_>,
 ) -> (
     std::collections::BTreeMap<String, Vec<(usize, CandidateFact)>>,
     usize,
 ) {
-    let structure = SourceStructure::from_document(document);
+    let document = context.document;
+    let structure = SourceStructure::from_analysis(document, context.analysis)
+        .with_original_html_rows(
+            context.original,
+            context.pre_normalized,
+            context.original_analysis,
+            context.row_spans,
+        );
     let mut groups = std::collections::BTreeMap::new();
     let mut unresolved = 0;
     for candidate in candidates {

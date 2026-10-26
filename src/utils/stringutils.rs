@@ -299,14 +299,24 @@ pub fn raw_fence_to_string(encoded: &str) -> String {
 /// The first cell of each OpenAMIP table row becomes an explicit Type marker;
 /// rowspan continuation rows do not invent new message identities.
 pub fn normalize_html_tables(source: &str) -> String {
+    normalize_html_tables_with_spans(source).0
+}
+
+/// Original and normalized byte ranges of individual HTML table rows.
+/// The normalizer is the only authority for this coordinate translation.
+pub type HtmlRowSpans = Vec<(std::ops::Range<usize>, std::ops::Range<usize>)>;
+
+pub fn normalize_html_tables_with_spans(source: &str) -> (String, HtmlRowSpans) {
+    let mut spans = Vec::new();
     let mut output = String::with_capacity(source.len());
     let mut remaining = source;
     while let Some(start) = remaining.find("<table") {
         output.push_str(&remaining[..start]);
+        let table_offset = source.len() - remaining.len() + start;
         let table = &remaining[start..];
         let Some(close) = table.find("</table>") else {
             output.push_str(table);
-            return output;
+            return (output, spans);
         };
         let body = &table[..close];
         let mut row_rest = body;
@@ -319,6 +329,8 @@ pub fn normalize_html_tables(source: &str) -> String {
             let Some(row_end) = row.find("</tr>") else {
                 break;
             };
+            let row_source_start = table_offset + (body.len() - row_rest.len()) + row_start;
+            let row_source_end = row_source_start + open_end + 1 + row_end + "</tr>".len();
             let row = &row[..row_end];
             let mut cells = Vec::new();
             let mut cell_rest = row;
@@ -357,6 +369,7 @@ pub fn normalize_html_tables(source: &str) -> String {
                 cell_rest = &after[value_start + value_end + closing.len()..];
             }
             if !cells.is_empty() {
+                let normalized_start = output.len();
                 if cells[0].trim().eq_ignore_ascii_case("Type") {
                     output.push_str("Type | Description | Parameters\n");
                 } else if cells[0].trim().len() <= 8
@@ -373,6 +386,10 @@ pub fn normalize_html_tables(source: &str) -> String {
                     output.push_str(&cells.join(" | "));
                     output.push('\n');
                 }
+                spans.push((
+                    row_source_start..row_source_end,
+                    normalized_start..output.len(),
+                ));
             }
             // row_end is relative to `row`, which starts after the <tr> tag.
             // Include both the row prefix and opening tag when advancing.
@@ -382,7 +399,7 @@ pub fn normalize_html_tables(source: &str) -> String {
         remaining = &table[close + "</table>".len()..];
     }
     output.push_str(remaining);
-    output
+    (output, spans)
 }
 
 /// Mask long encoded runs in Markdown data URIs, without interpreting the
