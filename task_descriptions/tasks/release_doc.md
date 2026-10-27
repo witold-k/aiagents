@@ -53,6 +53,6 @@ Rules:
 
 ## Completion
 
-Save the generated Markdown as `RELEASE_NOTES.md` using exactly one `save_file` action. After a successful save, finish with `done`.
+Return the generated release notes as Markdown text. The runtime handles the output destination: stdout by default, `-o` for `RELEASE_NOTES.md`, or `-o FILE` for a custom path. Do not call `save_file` to write release notes.
 
-If the supplied release range contains no meaningful changes, still create `RELEASE_NOTES.md` and state that no user- or developer-visible changes were identified.
+If the supplied release range contains no meaningful changes, still return a Markdown release document stating that no user- or developer-visible changes were identified.

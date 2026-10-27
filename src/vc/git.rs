@@ -146,12 +146,28 @@ impl Git {
     }
 
     pub fn files(&self, reference: &str) -> Result<Vec<PathBuf>, GitError> {
-        let output = self.run(["ls-tree", "-r", "--name-only", reference])?;
-        Ok(output
-            .lines()
-            .filter(|line| !line.is_empty())
-            .map(PathBuf::from)
-            .collect())
+        // Gitlinks (mode 160000) point to submodule commits, not file blobs.
+        // Do not attempt to read them with `git show REF:path`.
+        let output = self.run(["ls-tree", "-r", "-z", reference])?;
+        output
+            .split('\0')
+            .filter(|entry| !entry.is_empty())
+            .map(|entry| {
+                let (metadata, path) = entry.split_once('\t').ok_or_else(|| {
+                    GitError::InvalidOutput(format!("Malformed ls-tree entry: {entry:?}"))
+                })?;
+                let mut fields = metadata.split_whitespace();
+                let mode = fields.next();
+                let kind = fields.next();
+                if mode.is_none() || kind.is_none() || fields.next().is_none() {
+                    return Err(GitError::InvalidOutput(format!(
+                        "Malformed ls-tree metadata: {metadata:?}"
+                    )));
+                }
+                Ok((kind == Some("blob")).then(|| PathBuf::from(path)))
+            })
+            .collect::<Result<Vec<_>, GitError>>()
+            .map(|paths| paths.into_iter().flatten().collect())
     }
 
     pub fn file_at(&self, reference: &str, path: impl AsRef<Path>) -> Result<Vec<u8>, GitError> {

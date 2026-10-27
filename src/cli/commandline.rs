@@ -28,47 +28,125 @@ pub struct Args {
     pub help: bool,
 }
 
-pub fn help() {
-    println!(
-        r#"aifix [option]+
-    -l --lang [optional for language-dependent workflows; detected from build system if omitted]: language: one of: {}
-            or provide path to taskdesciption
-    -t --task [optional, default = fix_code, multiple possible invalid with -w switch]:
-        - first -t selects task: one of: {}
-        - following are paths to subtasks that enhance the task description
-    -m --message [optional, repeatable]: inline task instructions (quoted text),
-        appended to the task context like additional -t files
-    -a --args [optional]: all following arguments are passed to the selected task
-        task-specific arguments:
+pub fn help_text() -> String {
+    let groups: &[(&str, &[&str])] = &[
+        (
+            "Code generation and changes [NOT IMPLEMENTED]",
+            &["fix_code", "gen_code", "transpile_code", "setup_build"],
+        ),
+        (
+            "Build and verification [NOT IMPLEMENTED]",
+            &["build", "write_test_code"],
+        ),
+        (
+            "Review and analysis",
+            &[
+                "analyze",
+                "review_code",
+                "review_doc",
+                "extract_message_tables",
+            ],
+        ),
+        (
+            "Documentation",
+            &[
+                "release_doc",
+                "write_block_doc",
+                "write_item_doc",
+                "write_module_doc",
+            ],
+        ),
+    ];
+
+    let available = Tasks::to_vec_str();
+    let mut tasks = String::new();
+    let mut listed = Vec::new();
+    for (heading, names) in groups {
+        let matches: Vec<_> = names
+            .iter()
+            .copied()
+            .filter(|name| available.contains(name))
+            .collect();
+        if matches.is_empty() {
+            continue;
+        }
+        tasks.push_str(&format!("  {heading}\n"));
+        for pair in matches.chunks(2) {
+            tasks.push_str(&format!(
+                "    {:<24}{}\n",
+                pair[0],
+                pair.get(1).copied().unwrap_or("")
+            ));
+        }
+        if *heading == "Review and analysis" && matches.contains(&"extract_message_tables") {
+            tasks.push_str("    Status: table extraction is IN DEVELOPMENT / UNSTABLE\n");
+        }
+        tasks.push('\n');
+        listed.extend(matches);
+    }
+    let other: Vec<_> = available
+        .iter()
+        .copied()
+        .filter(|name| !listed.contains(name))
+        .collect();
+    if !other.is_empty() {
+        tasks.push_str("  Other\n");
+        for pair in other.chunks(2) {
+            tasks.push_str(&format!(
+                "    {:<24}{}\n",
+                pair[0],
+                pair.get(1).copied().unwrap_or("")
+            ));
+        }
+        tasks.push('\n');
+    }
+
+    format!(
+        r#"aifix {} - Local-first AI agents for software engineering
+
+USAGE
+  aifix [OPTIONS]
+  aifix -t TASK [OPTIONS] [-a TASK_ARGS...]
+
+GENERAL OPTIONS
+  -h, --help                   Show this help
+  -t, --task TASK              Select task (default: fix_code)
+                               Repeat -t FILE to add task descriptions
+  -l, --lang LANGUAGE          Language (inferred from build system if possible)
+                               Available: {}
+  -m, --message TEXT           Additional instructions (repeatable)
+  -a, --args                   Pass all remaining arguments to selected task
+  -s, --select PATH            Select file/directory (repeatable)
+  -c, --config FILE            Config file (default: ~/.config/aifix/config.json)
+  -f, --pathfilter PATH        First path: read/write; further paths: read-only
+                               Overrides configured filters; paths must exist
+  -b, --builddir DIR           Build output directory override
+                               Default: target, build, or current directory
+  -w, --workspace DIR          Use a workspace containing files and task description
+  -p, --provider NAME          Select configured LLM provider
+  -r, --run NAME               Start configured provider server
+  -d, --debug                  Enable debug output
+
+AVAILABLE TASKS
+{tasks}
+TASK-SPECIFIC OPTIONS (after -a)
 {}
-    -s --select [optional, multiple possible]: one or more files or dirs,
-    -c --config [optional]: load config from path
-        - default config will be generated in path if no config availabe
-        - default config path is ~/.config/aifix/config.json
-    -f --pathfilter [optional, repeatable]: directories aifix can scan and access
-        - first -f path: read and write access
-        - subsequent -f paths: read-only access
-        - if omitted, config.writefilter supplies the first path,
-          followed by read-only paths from config.readfilter
-        - explicit -f paths replace the configured paths
-        - paths must exist; relative paths are resolved from the current directory
-        - example: aifix -f src -f tests (src read/write, tests read-only)
-    -b --builddir [optional]: override the build output directory
-        - default: target (Cargo/Rust, Maven/Java, Just)
-        - default: build (CMake, Meson, Make)
-        - default: current directory if no build system is detected
-    -w --workspace [optional]: running in workspace (mode): path to workspace
-        - llm does not load files, all files are loaded at once from current workspace,
-        - also task descripton is here and may be named like e.g.: `task.md`
-    -d --debug [default = false]: dump debug
-    -r --run [optional providername in config] run server; if set other settings will be ignored
-    -p --provider [optional providername in config]: select provider for normal tasks
-    -h --help [default = false]: dump help
+
+EXAMPLES
+  aifix -t fix_code
+  aifix -t release_doc -a -o release-v1.md     # Write release notes to file
+
+Copyright (C) 2026 Witold Kaminski
+Licensed under the Apache License, Version 2.0 (Apache-2.0).
 "#,
+        env!("CARGO_PKG_VERSION"),
         Languages::to_vec_str().join(", "),
-        Tasks::to_vec_str().join(", "),
         TASK_ARGUMENT_HELP
-    );
+    )
+}
+
+pub fn help() {
+    print!("{}", help_text());
 }
 
 impl Args {

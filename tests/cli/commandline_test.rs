@@ -92,3 +92,52 @@ fn explicit_pathfilter_is_preserved() {
     let args = parse(&["-f", cwd.to_str().unwrap()]).unwrap();
     assert_eq!(args.pathfilter, vec![cwd]);
 }
+
+#[test]
+fn help_lists_every_task_once_and_displays_license_and_output_options() {
+    use aiagents::cli::commandline::help_text;
+    use aiagents::generated_tasks::Tasks;
+
+    let help = help_text();
+    assert!(help.starts_with(&format!(
+        "aifix {} - Local-first AI agents for software engineering",
+        env!("CARGO_PKG_VERSION")
+    )));
+    assert!(help.contains("AVAILABLE TASKS"));
+    assert!(help.contains("Code generation and changes"));
+    assert!(help.contains("Review and analysis"));
+    assert!(help.contains("Documentation"));
+    for task in Tasks::to_vec_str() {
+        let count = help
+            .split("AVAILABLE TASKS\n")
+            .nth(1)
+            .unwrap()
+            .split("TASK-SPECIFIC OPTIONS (after -a)")
+            .next()
+            .unwrap()
+            .split(|c: char| !(c.is_ascii_lowercase() || c == '_'))
+            .filter(|word| *word == task)
+            .count();
+        assert_eq!(count, 1, "task {task} appears {count} times in task list");
+    }
+    assert!(help.contains("-o --output [FILE]"));
+    assert!(help.contains("stdout"));
+    assert!(help.contains("Copyright (C) 2026 Witold Kaminski"));
+    assert!(help.contains("Apache-2.0"));
+}
+
+#[test]
+fn help_task_groups_have_real_newlines_and_setup_build_is_classified() {
+    let help = aiagents::cli::commandline::help_text();
+    let task_section = help
+        .split("AVAILABLE TASKS\n")
+        .nth(1)
+        .unwrap()
+        .split("TASK-SPECIFIC OPTIONS")
+        .next()
+        .unwrap();
+    assert!(!task_section.contains("\\n"), "literal backslash-n in help");
+    assert!(task_section.contains("Code generation and changes [NOT IMPLEMENTED]\n"));
+    assert!(task_section.contains("setup_build"));
+    assert!(!task_section.contains("  Other\n"));
+}

@@ -9,12 +9,24 @@ Generate evidence-grounded Markdown release notes from Git history and diffs.
 ## Invocation
 
 ```sh
-aifix -t release_doc [task-specific arguments]
+# Print release notes to stdout (default):
+aifix -t release_doc
+
+# Write the default filename RELEASE_NOTES.md:
+aifix -t release_doc -a -o
+
+# Write a specific filename:
+aifix -t release_doc -a -o docs/releases/v1.0.md
+
+# Select a Git range and a destination:
+aifix -t release_doc -a -f v0.1.0 -l HEAD -o notes.md
 ```
 
-The example shows task selection only. Check the task definition and [Quickstart](../../../QUICKSTART.md) for applicable arguments and configured access.
+Options specific to `release_doc` follow `-a` / `--args`. The output path is relative to the project directory unless absolute. A parent directory must already exist.
 
 ## Behavior and boundaries
+
+Without `-o`, the generated Markdown is printed to stdout; no release notes file is written by the workflow. With `-o` but without a filename the result is written to `RELEASE_NOTES.md`. Supplying a filename overrides that default.
 
 Do not infer behavior, compatibility or test success from commit messages alone.
 
