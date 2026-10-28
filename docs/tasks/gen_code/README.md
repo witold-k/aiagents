@@ -1,8 +1,12 @@
-# Code generation (`gen_code`)
+# Code generation (`gen_code`) — NOT IMPLEMENTED
 
 [Task index](../README.md) · [Project overview](../../../README.md)
 
-## Purpose
+## Status
+
+**Not implemented.** The existing task description expresses intended behavior, not a usable implemented task.
+
+## Intended purpose
 
 Generate or modify Rust source before compilation.
 
@@ -16,7 +20,7 @@ The example shows task selection only. Check the task definition and [Quickstart
 
 ## Behavior and boundaries
 
-Generated code requires independent build/test validation.
+CLI routing currently points to the generic `EndlessWorkflow`, but there is no task-specific generation workflow or coherent build/test validation process. The generic route must not be counted as an implementation.
 
 ## Source of truth
 

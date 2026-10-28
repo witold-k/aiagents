@@ -1,28 +1,15 @@
-# Analysis (`analyze`)
+# Analysis (`analyze`) — NOT IMPLEMENTED
 
 [Task index](../README.md) · [Project overview](../../../README.md)
 
-## Purpose
+## Status
 
-Analysis task definition currently empty; behavior must be confirmed in runtime.
+**Not implemented.** `task_descriptions/tasks/analyze.md` is empty. No task-specific analysis contract or coherent analysis workflow exists.
 
-## Invocation
+The CLI accepts `aifix -t analyze`, and `src/workflows/select_workflow.rs` routes it to the shared `DocWorkflow`. That workflow runs configured build/lint commands and invokes the LLM; it contains no analysis-specific orchestration. **CLI routing is not task implementation.**
 
-```sh
-aifix -t analyze [task-specific arguments]
-```
+## References
 
-The example shows task selection only. Check the task definition and [Quickstart](../../../QUICKSTART.md) for applicable arguments and configured access.
-
-## Behavior and boundaries
-
-No standalone task-specific contract is documented yet.
-
-## Source of truth
-
-- [Task description](../../../task_descriptions/tasks/analyze.md)
-- [Architecture diagrams](../../architecture_diagrams.md)
-
-## Validation
-
-Task results are not automatically proof of correctness. Validate modified source with appropriate build, lint and test commands, and verify generated documentation or extracted claims against their sources.
+- [Empty task description](../../../task_descriptions/tasks/analyze.md)
+- [Workflow selector](../../../src/workflows/select_workflow.rs)
+- [Shared documentation workflow](../../../src/workflows/doc.rs)

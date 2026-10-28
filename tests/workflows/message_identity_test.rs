@@ -11,6 +11,7 @@ fn document_context_resolves_table_type_across_chunk_boundary() {
         evidence_quote: Some("| field | two |".into()),
         source_byte_offset: Some(0),
         source_locator_ambiguous: false,
+        statement_byte_offset: None,
     };
     assert_eq!(
         resolve_fact_type_in_document(window, start, document, &fact),
@@ -33,6 +34,7 @@ fn document_context_does_not_cross_blank_table_boundary() {
         evidence_quote: Some("| field | two |".into()),
         source_byte_offset: Some(0),
         source_locator_ambiguous: false,
+        statement_byte_offset: None,
     };
     assert_eq!(
         resolve_fact_type_in_document(window, start, document, &fact),
@@ -51,6 +53,7 @@ fn document_context_rejects_mismatched_absolute_quote() {
         evidence_quote: Some("| field | two |".into()),
         source_byte_offset: Some(0),
         source_locator_ambiguous: false,
+        statement_byte_offset: None,
     };
     assert_eq!(
         resolve_fact_type_in_document(window, start + 1, document, &fact),
@@ -72,6 +75,7 @@ fn unresolved_history_reports_previous_declaration_without_promoting_fact() {
             evidence_quote: Some("Unrelated statement".into()),
             source_byte_offset: Some(0),
             source_locator_ambiguous: false,
+            statement_byte_offset: None,
         }],
     };
     let samples = unresolved_history_samples(&[candidate], &[window], &[start], document, 5);
@@ -132,6 +136,7 @@ fn document_identity_agrees_with_local_explicit_declaration() {
         evidence_quote: Some("Type: B | Other".into()),
         source_byte_offset: Some(0),
         source_locator_ambiguous: false,
+        statement_byte_offset: None,
     };
     assert_eq!(
         resolve_fact_type_in_document(window, start, document, &candidate),
@@ -164,6 +169,7 @@ fn fact(statement: &str) -> CandidateFact {
         evidence_quote: Some("source excerpt".into()),
         source_byte_offset: None,
         source_locator_ambiguous: false,
+        statement_byte_offset: None,
     }
 }
 
@@ -217,6 +223,7 @@ fn resolves_fact_from_long_table_with_exact_offset() {
             evidence_quote: Some(quote.into()),
             source_byte_offset: Some(offset),
             source_locator_ambiguous: false,
+            statement_byte_offset: None,
         }],
     };
     let (groups, unresolved) = resolved_source_facts(&[candidate], &[&source]);
@@ -236,6 +243,7 @@ fn nearest_table_declaration_overrides_distant_section_heading() {
             evidence_quote: Some("| field | value |".into()),
             source_byte_offset: Some(source.find("| field").unwrap()),
             source_locator_ambiguous: false,
+            statement_byte_offset: None,
         }],
     };
     let (groups, unresolved) = resolved_source_facts(&[candidate], &[source]);
@@ -255,6 +263,7 @@ fn diagnostics_and_projection_agree_on_ambiguous_legacy_quote() {
             evidence_quote: Some("repeat".into()),
             source_byte_offset: None,
             source_locator_ambiguous: false,
+            statement_byte_offset: None,
         }],
     };
     let (groups, unresolved) = resolved_source_facts(&[candidate.clone()], &[source]);
@@ -276,6 +285,7 @@ fn diagnoses_untyped_fact_without_promoting_it() {
             evidence_quote: Some(source.into()),
             source_byte_offset: Some(0),
             source_locator_ambiguous: false,
+            statement_byte_offset: None,
         }],
     };
     let diagnostics = resolution_diagnostics(&[candidate], &[source]);
@@ -308,6 +318,7 @@ fn consolidates_explicit_source_type_across_different_proposed_names() {
                 evidence_quote: Some("Type: A | modem status".into()),
                 source_byte_offset: None,
                 source_locator_ambiguous: false,
+                statement_byte_offset: None,
             }],
         },
         MessageCandidate {
@@ -319,6 +330,7 @@ fn consolidates_explicit_source_type_across_different_proposed_names() {
                 evidence_quote: Some("Type: A | modem status".into()),
                 source_byte_offset: None,
                 source_locator_ambiguous: false,
+                statement_byte_offset: None,
             }],
         },
     ];
@@ -349,6 +361,7 @@ fn never_merges_upper_and_lower_or_untyped_candidates() {
                 evidence_quote: Some("Type: A | command".into()),
                 source_byte_offset: None,
                 source_locator_ambiguous: false,
+                statement_byte_offset: None,
             }],
         },
         MessageCandidate {
@@ -360,6 +373,7 @@ fn never_merges_upper_and_lower_or_untyped_candidates() {
                 evidence_quote: Some("Type: a | report".into()),
                 source_byte_offset: None,
                 source_locator_ambiguous: false,
+                statement_byte_offset: None,
             }],
         },
         MessageCandidate {
@@ -391,6 +405,7 @@ fn source_section_resolves_untyped_fact_independently_of_candidate_name() {
                 evidence_quote: Some("field one is required".into()),
                 source_byte_offset: None,
                 source_locator_ambiguous: false,
+                statement_byte_offset: None,
             },
             CandidateFact {
                 statement: "second".into(),
@@ -398,6 +413,7 @@ fn source_section_resolves_untyped_fact_independently_of_candidate_name() {
                 evidence_quote: Some("field three is required".into()),
                 source_byte_offset: None,
                 source_locator_ambiguous: false,
+                statement_byte_offset: None,
             },
         ],
     }];
@@ -449,6 +465,7 @@ fn segment_locator_disambiguates_repeated_source_text() {
                 evidence_quote: Some("shared field".into()),
                 source_byte_offset: None,
                 source_locator_ambiguous: false,
+                statement_byte_offset: None,
             },
             CandidateFact {
                 statement: "lower shared field".into(),
@@ -456,6 +473,7 @@ fn segment_locator_disambiguates_repeated_source_text() {
                 evidence_quote: Some("shared field".into()),
                 source_byte_offset: None,
                 source_locator_ambiguous: false,
+                statement_byte_offset: None,
             },
         ],
     }];
@@ -477,6 +495,7 @@ fn conflicting_repeated_quote_stays_unresolved() {
             evidence_quote: Some("shared field".into()),
             source_byte_offset: None,
             source_locator_ambiguous: false,
+            statement_byte_offset: None,
         }],
     }];
     let (groups, unresolved) = resolved_source_facts(&candidates, &[source]);
@@ -562,6 +581,7 @@ fn classification_never_trusts_proposed_filename() {
             evidence_quote: Some("Type: B | Source declaration".into()),
             source_byte_offset: None,
             source_locator_ambiguous: false,
+            statement_byte_offset: None,
         }],
     };
     assert_eq!(
@@ -588,6 +608,7 @@ fn classification_keeps_unknown_and_conflicting_types_unresolved() {
         evidence_quote: Some("Type: a | two".into()),
         source_byte_offset: None,
         source_locator_ambiguous: false,
+        statement_byte_offset: None,
     });
     assert_eq!(
         classify_candidate(&candidate),

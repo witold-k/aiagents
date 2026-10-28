@@ -32,21 +32,12 @@ pub struct Args {
 pub fn help_text() -> String {
     let groups: &[(&str, &[&str])] = &[
         (
-            "Code generation and changes [NOT IMPLEMENTED]",
-            &["fix_code", "gen_code", "transpile_code", "setup_build"],
-        ),
-        (
-            "Build and verification [NOT IMPLEMENTED]",
-            &["build", "write_test_code"],
+            "Code repair and build",
+            &["fix_code", "build", "setup_build"],
         ),
         (
             "Review and analysis",
-            &[
-                "analyze",
-                "review_code",
-                "review_doc",
-                "extract_message_tables",
-            ],
+            &["review_code", "review_doc", "extract_message_tables"],
         ),
         (
             "Documentation",
@@ -56,6 +47,10 @@ pub fn help_text() -> String {
                 "write_item_doc",
                 "write_module_doc",
             ],
+        ),
+        (
+            "Not implemented (task names reserved; no usable task-specific workflow)",
+            &["analyze", "gen_code", "transpile_code", "write_test_code"],
         ),
     ];
 

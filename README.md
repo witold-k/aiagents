@@ -53,7 +53,7 @@ To inspect a **completed** extraction checkpoint without another model call, che
 AIFIX_IDENTITY_REPLAY=1 aifix -t extract_message_tables -a document.md
 ```
 
-The replay is diagnostic only. Its identity resolver still depends on local source-window signals; generic document-wide definition ownership remains work in progress. The OpenAMIP diagnostic run reported 902 candidate fact occurrences: 292 projected, 67 duplicate occurrences and 543 unresolved. These are not correctness scores.
+The replay is diagnostic only. Its identity resolver still depends on local source-window signals; generic document-wide definition ownership remains work in progress. In the latest available OpenAMIP checkpoint diagnostic (28 October 2026), **243 candidates** and **934 source-attributed fact occurrences** were retained (**809** distinct statement/evidence pairs); **187 candidates** remain unresolved. Of 934 statements, **655** have exact byte-verified source locations and **279** lack an exact location. The diagnostic comparison of statement and evidence anchors reports **260** same-row, **8** different-row, **382** same-section without a row, **1** different-section and **4** unknown cases. These are structural diagnostics, **not** correctness scores or proof of message identity. Historical figures belong in [project status history](docs/project_status_history.md).
 
 ## Design and safety
 

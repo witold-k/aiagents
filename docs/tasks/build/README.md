@@ -16,7 +16,7 @@ The example shows task selection only. Check the task definition and [Quickstart
 
 ## Behavior and boundaries
 
-Non-LLM task; build-system backend executes Cargo, CMake, Meson or other configured build.
+`BuildWorkflow::build()` executes the configured build command. If it fails, `Workflow::execute_build_llm()` invokes the LLM with the diagnostic. Therefore this task is **not strictly non-LLM on failure**; it does not run the full build/lint/test sequence.
 
 ## Source of truth
 

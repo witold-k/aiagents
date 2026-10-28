@@ -1,28 +1,17 @@
-# Test generation (`write_test_code`)
+# Test generation (`write_test_code`) — NOT IMPLEMENTED
 
 [Task index](../README.md) · [Project overview](../../../README.md)
 
-## Purpose
+## Status
 
-Generate or extend automated tests for selected source files.
+**Not implemented.** A task prompt exists, but no coherent test-generation workflow is implemented.
 
-## Invocation
+The CLI accepts `aifix -t write_test_code`, and `src/workflows/select_workflow.rs` routes it to the shared `BLTWorkflow`. That workflow runs build/lint/test and, on failure, an LLM-driven **repair** sequence. It does not proactively analyze source files to generate tests, and a successful build/test can terminate without generating any tests.
 
-```sh
-aifix -t write_test_code [task-specific arguments]
-```
+The prompt in `task_descriptions/tasks/write_test_code.md` describes intended behavior only. Generic routing is not a test-generation implementation.
 
-The example shows task selection only. Check the task definition and [Quickstart](../../../QUICKSTART.md) for applicable arguments and configured access.
+## References
 
-## Behavior and boundaries
-
-Preserve existing tests and production code; verify generated tests with the build system.
-
-## Source of truth
-
-- [Task description](../../../task_descriptions/tasks/write_test_code.md)
-- [Architecture diagrams](../../architecture_diagrams.md)
-
-## Validation
-
-Task results are not automatically proof of correctness. Validate modified source with appropriate build, lint and test commands, and verify generated documentation or extracted claims against their sources.
+- [Task prompt](../../../task_descriptions/tasks/write_test_code.md)
+- [Workflow selector](../../../src/workflows/select_workflow.rs)
+- [Build/lint/test repair workflow](../../../src/workflows/build_lint_test.rs)

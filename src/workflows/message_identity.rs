@@ -27,6 +27,10 @@ pub(super) struct CandidateFact {
     /// A recovery window matched multiple parent positions; never guess.
     #[serde(default)]
     pub source_locator_ambiguous: bool,
+    /// Unique exact statement position in the parent chunk, if available.
+    /// Diagnostic only; never substitutes for segment evidence or identity.
+    #[serde(default)]
+    pub statement_byte_offset: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -84,6 +88,68 @@ pub(super) fn parse_candidates(
     offset: usize,
 ) -> Vec<MessageCandidate> {
     parse_candidates_in_parent(response, source, source, source_window, offset)
+}
+
+/// Locate a statement exactly once in the model-visible window and convert
+/// to the parent chunk's coordinate system. Repeated or paraphrased statements
+/// have no statement-specific locator.
+fn unique_statement_in_parent(
+    source: &str,
+    statement: &str,
+    parent_start: Option<usize>,
+) -> Option<usize> {
+    if statement.is_empty() {
+        return None;
+    }
+    let parent_start = parent_start?;
+    let mut matches = source.match_indices(statement).map(|(at, _)| at);
+    let at = matches.next()?;
+    matches
+        .next()
+        .is_none()
+        .then(|| parent_start.checked_add(at))
+        .flatten()
+}
+
+#[cfg(test)]
+mod unique_statement_in_parent_tests {
+    use super::unique_statement_in_parent;
+
+    #[test]
+    fn exact_statement_has_independent_parent_offset() {
+        assert_eq!(
+            unique_statement_in_parent("alpha | beta", "beta", Some(20)),
+            Some(28)
+        );
+        assert_eq!(
+            unique_statement_in_parent("alpha | beta", "alpha", Some(20)),
+            Some(20)
+        );
+    }
+
+    #[test]
+    fn ambiguous_missing_or_unplaced_statement_is_not_located() {
+        assert_eq!(
+            unique_statement_in_parent("beta | beta", "beta", Some(20)),
+            None
+        );
+        assert_eq!(
+            unique_statement_in_parent("alpha | beta", "paraphrase", Some(20)),
+            None
+        );
+        assert_eq!(
+            unique_statement_in_parent("alpha | beta", "beta", None),
+            None
+        );
+        assert_eq!(
+            unique_statement_in_parent("alpha", "alpha", Some(usize::MAX)),
+            Some(usize::MAX)
+        );
+        assert_eq!(
+            unique_statement_in_parent("xalpha", "alpha", Some(usize::MAX)),
+            None
+        );
+    }
 }
 
 /// The model sees a possibly split recovery window, but checkpoint locators
@@ -146,6 +212,11 @@ pub(super) fn parse_candidates_in_parent(
                         evidence_quote: Some(segment.text.clone()),
                         source_byte_offset: parent_start.map(|start| start + segment.byte_offset),
                         source_locator_ambiguous: parent_start.is_none(),
+                        statement_byte_offset: unique_statement_in_parent(
+                            source,
+                            statement,
+                            parent_start,
+                        ),
                     })
                 })
                 .collect();
@@ -1129,6 +1200,7 @@ mod html_row_identity_tests {
                 evidence_quote: Some(description.to_owned()),
                 source_byte_offset: Some(offset),
                 source_locator_ambiguous: false,
+                statement_byte_offset: None,
             };
             assert_eq!(
                 resolve_fact_type_with_flattened_tables(
@@ -1206,6 +1278,7 @@ mod html_row_identity_tests {
             evidence_quote: Some("untyped evidence".to_owned()),
             source_byte_offset: Some(offset),
             source_locator_ambiguous: false,
+            statement_byte_offset: None,
         };
         assert!(structure.is_message_table_row_at(offset));
         assert_eq!(
@@ -1271,6 +1344,7 @@ mod html_row_identity_tests {
             evidence_quote: Some("typed evidence".to_owned()),
             source_byte_offset: Some(offset),
             source_locator_ambiguous: false,
+            statement_byte_offset: None,
         };
         assert_eq!(
             resolve_fact_type_with_flattened_tables(document, 0, document, &fact, true, &structure),
@@ -1305,6 +1379,7 @@ mod html_row_identity_tests {
                 evidence_quote: Some(evidence.to_owned()),
                 source_byte_offset: Some(offset),
                 source_locator_ambiguous: false,
+                statement_byte_offset: None,
             };
             assert_eq!(
                 resolve_fact_type_with_flattened_tables(
@@ -1726,6 +1801,280 @@ pub(super) fn resolution_diagnostics_in_document(
     result
 }
 
+/// Replay-only inventory: one record per unresolved fact occurrence, including
+/// its nearest source heading and structural hint. No ownership is inferred.
+pub(super) fn unresolved_fact_inventory_in_document(
+    candidates: &[MessageCandidate],
+    sources: &[&str],
+    starts: &[usize],
+    context: &DocumentIdentityContext<'_>,
+) -> Vec<String> {
+    let document = context.document;
+    let structure = SourceStructure::from_analysis(document, context.analysis)
+        .with_original_table_rows(
+            context.original,
+            context.pre_normalized,
+            context.original_analysis,
+            context.row_spans,
+        );
+    let lines: Vec<&str> = document.lines().collect();
+    let mut records = Vec::new();
+    for candidate in candidates {
+        let window_index = source_window_index(&candidate.id);
+        for fact in &candidate.facts {
+            let location = window_index.and_then(|i| sources.get(i).zip(starts.get(i)));
+            let failure = match location {
+                None => Some("invalid_window"),
+                Some((window, start)) => match resolve_fact_type_with_flattened_tables(
+                    window, *start, document, fact, true, &structure,
+                ) {
+                    Ok(_) => None,
+                    Err(ResolutionFailure::AmbiguousLocator) => Some("ambiguous_locator"),
+                    Err(ResolutionFailure::MissingEvidence) => Some("missing_evidence"),
+                    Err(ResolutionFailure::InvalidLocator) => Some("invalid_offset_or_quote"),
+                    Err(ResolutionFailure::NoSourceType) => Some("no_source_type"),
+                    Err(ResolutionFailure::ConflictingType) => Some("conflicting_type"),
+                },
+            };
+            let Some(failure) = failure else { continue };
+            let absolute = location.and_then(|(_, start)| {
+                fact.source_byte_offset
+                    .and_then(|offset| start.checked_add(offset))
+            });
+            let line_index = absolute.and_then(|byte| {
+                crate::utils::stringutils::line_index_at_byte_offset(document, byte)
+            });
+            let section = line_index
+                .and_then(|index| lines.get(..=index))
+                .and_then(|prefix| {
+                    prefix
+                        .iter()
+                        .rev()
+                        .find(|line| line.trim_start().starts_with('#'))
+                })
+                .map(|heading| heading.trim())
+                .unwrap_or("[no heading]");
+            let shape = line_index
+                .map(|index| unresolved_source_shape(document, index))
+                .unwrap_or("unknown");
+            let line = line_index.map(|index| index + 1).unwrap_or(0);
+            records.push((
+                line,
+                absolute.unwrap_or(usize::MAX),
+                format!(
+                    "line={line} byte={} cause={failure} hint={shape} section={section:?} candidate={:?} statement={:?}",
+                    absolute.map_or_else(|| "unknown".to_owned(), |byte| byte.to_string()),
+                    candidate.id,
+                    fact.statement,
+                ),
+            ));
+        }
+    }
+    records.sort_by(|a, b| (a.0, a.1, &a.2).cmp(&(b.0, b.1, &b.2)));
+    records.into_iter().map(|(_, _, record)| record).collect()
+}
+
+/// Conservative lexical mentions only. These are NOT source-proven identities:
+/// a one-letter token must be quoted and immediately followed by "message"
+/// or "command". The extractor never assigns ownership from these mentions.
+fn explicit_message_mentions(statement: &str) -> Vec<char> {
+    // Only quoted, single-letter tokens followed by "message"/"command", or
+    // connected to such a token through a comma/and/or enumeration.
+    // A mention is not an identity and does not establish fact ownership.
+    let chars: Vec<char> = statement.chars().collect();
+    let mut tokens: Vec<(char, usize, usize)> = Vec::new();
+    let mut i = 0;
+    while i + 2 < chars.len() {
+        let closing = match chars[i] {
+            '\'' => '\'',
+            '"' => '"',
+            '‘' => '’',
+            '“' => '”',
+            _ => {
+                i += 1;
+                continue;
+            }
+        };
+        if chars[i + 1].is_ascii_alphabetic() && chars[i + 2] == closing {
+            tokens.push((chars[i + 1], i, i + 3));
+            i += 3;
+        } else {
+            i += 1;
+        }
+    }
+    let mut mentions = std::collections::BTreeSet::new();
+    for (index, &(letter, _, end)) in tokens.iter().enumerate() {
+        let tail: String = chars[end..].iter().take(32).collect();
+        let tail = tail.trim_start().to_ascii_lowercase();
+        let is_message = ["message", "command"].iter().any(|word| {
+            tail.strip_prefix(word)
+                .is_some_and(|rest| !rest.chars().next().is_some_and(|c| c.is_ascii_alphabetic()))
+        });
+        if !is_message {
+            continue;
+        }
+        mentions.insert(letter);
+        // Walk backwards through a syntactically connected list of quoted
+        // tokens, never across ordinary prose or unrelated quoted fields.
+        let mut cursor = index;
+        while cursor > 0 {
+            let (_, _, previous_end) = tokens[cursor - 1];
+            let (_, current_start, _) = tokens[cursor];
+            let separator: String = chars[previous_end..current_start].iter().collect();
+            let separator = separator.trim().to_ascii_lowercase();
+            if !matches!(separator.as_str(), "," | ", or" | ", and" | "or" | "and") {
+                break;
+            }
+            mentions.insert(tokens[cursor - 1].0);
+            cursor -= 1;
+        }
+    }
+    mentions.into_iter().collect()
+}
+
+/// Protocol examples are a separate lexical category, not a message identity.
+/// Require a single-letter command at the start and an inline explanation;
+/// never interpret an arbitrary prose sentence as an example.
+fn protocol_example_prefix(statement: &str) -> Option<char> {
+    let line = statement.trim_start();
+    let mut chars = line.chars();
+    let command = chars.next()?;
+    if !command.is_ascii_alphabetic() || !chars.next()?.is_whitespace() {
+        return None;
+    }
+    if !line.contains('#') {
+        return None;
+    }
+    Some(command)
+}
+
+/// Replay-only cross-reference inventory. One row per unresolved fact
+/// occurrence; explicit mentions in statements are hints, never identity
+/// evidence. Missing locators and conflicting types are retained.
+pub(super) fn unresolved_message_reference_inventory(
+    candidates: &[MessageCandidate],
+    sources: &[&str],
+    starts: &[usize],
+    context: &DocumentIdentityContext<'_>,
+) -> Vec<String> {
+    let structure = SourceStructure::from_analysis(context.document, context.analysis)
+        .with_original_table_rows(
+            context.original,
+            context.pre_normalized,
+            context.original_analysis,
+            context.row_spans,
+        );
+    let mut records = Vec::new();
+    for candidate in candidates {
+        let location = source_window_index(&candidate.id)
+            .and_then(|index| sources.get(index).zip(starts.get(index)));
+        for fact in &candidate.facts {
+            let failure = match location {
+                None => Some("invalid_window"),
+                Some((window, start)) => match resolve_fact_type_with_flattened_tables(
+                    window,
+                    *start,
+                    context.document,
+                    fact,
+                    true,
+                    &structure,
+                ) {
+                    Ok(_) => None,
+                    Err(ResolutionFailure::AmbiguousLocator) => Some("ambiguous_locator"),
+                    Err(ResolutionFailure::MissingEvidence) => Some("missing_evidence"),
+                    Err(ResolutionFailure::InvalidLocator) => Some("invalid_offset_or_quote"),
+                    Err(ResolutionFailure::NoSourceType) => Some("no_source_type"),
+                    Err(ResolutionFailure::ConflictingType) => Some("conflicting_type"),
+                },
+            };
+            let Some(cause) = failure else { continue };
+            let mentions = explicit_message_mentions(&fact.statement);
+            let example = protocol_example_prefix(&fact.statement);
+            let byte = location.and_then(|(_, start)| {
+                fact.source_byte_offset
+                    .and_then(|offset| start.checked_add(offset))
+            });
+            let line = byte
+                .and_then(|offset| {
+                    crate::utils::stringutils::line_index_at_byte_offset(context.document, offset)
+                })
+                .map(|index| index + 1);
+            records.push((
+                byte.unwrap_or(usize::MAX),
+                format!(
+                    "line={} cause={cause} mentions={mentions:?} relation={} example_prefix={example:?} provenance=statement_only candidate={:?} statement={:?}",
+                    line.map_or_else(|| "unknown".to_owned(), |n| n.to_string()),
+                    if mentions.len() > 1 { "multiple" } else if mentions.len() == 1 { "single" } else { "none" },
+                    candidate.id,
+                    fact.statement
+                ),
+            ));
+        }
+    }
+    records.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
+    records.into_iter().map(|(_, record)| record).collect()
+}
+
+#[cfg(test)]
+mod message_reference_inventory_tests {
+    use super::explicit_message_mentions;
+
+    #[test]
+    fn recognizes_multiple_explicit_quoted_message_mentions() {
+        assert_eq!(
+            explicit_message_mentions(
+                r#"When the controller receives an "F" message, it must respond with an "s" message."#
+            ),
+            vec!['F', 's']
+        );
+    }
+
+    #[test]
+    fn does_not_infer_identity_from_incidental_letters_or_unquoted_words() {
+        assert!(
+            explicit_message_mentions(
+                r#"The F message changes state. 'X' setting, 'F' field and "s" status."#
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn recognizes_enumerated_commands_with_unicode_quotes() {
+        assert_eq!(
+            explicit_message_mentions("If the modem issues a “P”, ‘B’, or \"F\" command"),
+            vec!['B', 'F', 'P']
+        );
+    }
+
+    #[test]
+    fn does_not_include_unrelated_quoted_tokens_in_a_list() {
+        assert_eq!(
+            explicit_message_mentions("'X' setting and 'P', 'B', or 'F' command"),
+            vec!['B', 'F', 'P']
+        );
+        assert!(explicit_message_mentions("'X', 'Y' settings").is_empty());
+    }
+
+    #[test]
+    fn identifies_protocol_examples_separately() {
+        assert_eq!(
+            super::protocol_example_prefix("  W 1 # periodic report"),
+            Some('W')
+        );
+        assert_eq!(super::protocol_example_prefix("The W command # note"), None);
+        assert_eq!(super::protocol_example_prefix("W 1"), None);
+    }
+
+    #[test]
+    fn recognizes_quoted_command_without_duplicate_mentions() {
+        assert_eq!(
+            explicit_message_mentions("The 'K' command and 'K' message."),
+            vec!['K']
+        );
+    }
+}
+
 /// Replay-only audit of assignments removed by the untyped HTML-row boundary.
 /// Compares the same resolver with and without that boundary; no projection changes.
 pub(super) fn table_boundary_blocked_assignments(
@@ -2010,6 +2359,580 @@ pub(super) fn flattened_table_identity_gains(
     gains.into_values().collect()
 }
 
+/// Read-only provenance audit for the flattened-table gains. Do not confuse
+/// a valid owner inferred from source structure with a verified assertion span.
+/// Byte-level relationship of an evidence quote to its proposed source anchor.
+/// Multiple occurrences are kept visible: a common short quote is not proof.
+fn quote_anchor_audit(
+    document: &str,
+    quote: &str,
+    anchor: usize,
+) -> (&'static str, usize, Option<usize>) {
+    if quote.is_empty() || anchor > document.len() {
+        return ("missing_quote_or_anchor", 0, None);
+    }
+    let occurrences: Vec<usize> = document.match_indices(quote).map(|(at, _)| at).collect();
+    let count = occurrences.len();
+    if count == 0 {
+        return ("quote_not_found", 0, None);
+    }
+    if occurrences.contains(&anchor) {
+        return ("quote_starts_at_anchor", count, Some(anchor));
+    }
+    if occurrences
+        .iter()
+        .any(|&at| at < anchor && anchor < at + quote.len())
+    {
+        return (
+            "quote_overlaps_anchor",
+            count,
+            occurrences
+                .iter()
+                .copied()
+                .find(|&at| at < anchor && anchor < at + quote.len()),
+        );
+    }
+    let nearest = occurrences
+        .into_iter()
+        .min_by_key(|&at| at.abs_diff(anchor));
+    ("quote_disjoint_from_anchor", count, nearest)
+}
+
+#[cfg(test)]
+mod quote_anchor_audit_tests {
+    use super::quote_anchor_audit;
+
+    #[test]
+    fn distinguishes_exact_overlap_and_disjoint() {
+        let doc = "abc\nmulti\nline\nother";
+        assert_eq!(
+            quote_anchor_audit(doc, "multi\nline", 4).0,
+            "quote_starts_at_anchor"
+        );
+        assert_eq!(
+            quote_anchor_audit(doc, "multi\nline", 8).0,
+            "quote_overlaps_anchor"
+        );
+        assert_eq!(
+            quote_anchor_audit(doc, "other", 4).0,
+            "quote_disjoint_from_anchor"
+        );
+    }
+
+    #[test]
+    fn short_repeated_quotes_are_reported_as_ambiguous() {
+        assert_eq!(
+            quote_anchor_audit("x applied. y applied. ", " applied. ", 0).1,
+            2
+        );
+        assert_eq!(
+            quote_anchor_audit("abc", "", 0).0,
+            "missing_quote_or_anchor"
+        );
+    }
+}
+
+/// Independently verify the statement text, not just the evidence quote.
+/// A quote at the anchor does not establish that a different statement is there.
+fn statement_anchor_audit(
+    document: &str,
+    statement: &str,
+    anchor: usize,
+    mut belongs_to_owner: impl FnMut(usize) -> bool,
+) -> (&'static str, usize, usize) {
+    if statement.is_empty() || anchor > document.len() {
+        return ("statement_missing", 0, 0);
+    }
+    let matches: Vec<usize> = document
+        .match_indices(statement)
+        .map(|(at, _)| at)
+        .collect();
+    let total = matches.len();
+    let in_owner = matches.iter().filter(|&&at| belongs_to_owner(at)).count();
+    let status = if matches.contains(&anchor) {
+        "statement_starts_at_anchor"
+    } else if matches
+        .iter()
+        .any(|&at| at < anchor && anchor < at + statement.len())
+    {
+        "statement_overlaps_anchor"
+    } else if in_owner > 0 {
+        "statement_elsewhere_in_owner"
+    } else if total > 0 {
+        "statement_elsewhere"
+    } else {
+        "statement_not_found"
+    };
+    (status, total, in_owner)
+}
+
+#[cfg(test)]
+mod statement_anchor_audit_tests {
+    use super::statement_anchor_audit;
+
+    #[test]
+    fn shared_quote_anchor_does_not_validate_unrelated_statements() {
+        let doc = "time is zero. applied. | float latitude (degrees)";
+        let anchor = doc.find(" applied. ").unwrap();
+        assert_eq!(
+            statement_anchor_audit(doc, "float latitude (degrees)", anchor, |_| true),
+            ("statement_elsewhere_in_owner", 1, 1)
+        );
+        assert_eq!(
+            statement_anchor_audit(doc, "not present in source", anchor, |_| true),
+            ("statement_not_found", 0, 0)
+        );
+    }
+
+    #[test]
+    fn exact_statement_anchor_is_distinct_from_quote_anchor() {
+        let doc = "first statement\nsecond statement";
+        assert_eq!(
+            statement_anchor_audit(doc, "second statement", 16, |_| true).0,
+            "statement_starts_at_anchor"
+        );
+        assert_eq!(
+            statement_anchor_audit(doc, "first statement", 16, |_| false).0,
+            "statement_elsewhere"
+        );
+    }
+}
+
+/// A statement-specific locator is usable for diagnostics only when its exact
+/// text occurs once within the proposed owner region. The owner itself is
+/// still a structural hypothesis, not an identity proof.
+fn unique_statement_offset_in_owner(
+    document: &str,
+    statement: &str,
+    mut belongs_to_owner: impl FnMut(usize) -> bool,
+) -> Option<usize> {
+    if statement.is_empty() {
+        return None;
+    }
+    let mut matches = document
+        .match_indices(statement)
+        .map(|(at, _)| at)
+        .filter(|&at| belongs_to_owner(at));
+    let first = matches.next()?;
+    matches.next().is_none().then_some(first)
+}
+
+#[cfg(test)]
+mod unique_statement_offset_tests {
+    use super::unique_statement_offset_in_owner;
+
+    #[test]
+    fn unique_statement_is_located_independently_of_shared_quote() {
+        let doc = "applied. | float latitude | float longitude";
+        let at = doc.find("float longitude").unwrap();
+        assert_eq!(
+            unique_statement_offset_in_owner(doc, "float longitude", |_| true),
+            Some(at)
+        );
+    }
+
+    #[test]
+    fn repeated_statement_or_unrelated_owner_is_not_located() {
+        let doc = "latitude | latitude | longitude";
+        assert_eq!(
+            unique_statement_offset_in_owner(doc, "latitude", |_| true),
+            None
+        );
+        assert_eq!(
+            unique_statement_offset_in_owner(doc, "longitude", |_| false),
+            None
+        );
+        assert_eq!(
+            unique_statement_offset_in_owner(doc, "paraphrased longitude", |_| true),
+            None
+        );
+    }
+}
+
+/// Classify a uniquely located statement against the original extraction
+/// window. A matching statement outside the window must not silently become
+/// evidence for a fact extracted from that window.
+fn statement_window_relation(
+    statement_at: Option<usize>,
+    statement_len: usize,
+    window_start: usize,
+    window_len: usize,
+) -> &'static str {
+    let Some(at) = statement_at else {
+        return "no_unique_statement";
+    };
+    let Some(statement_end) = at.checked_add(statement_len) else {
+        return "outside_window";
+    };
+    let Some(window_end) = window_start.checked_add(window_len) else {
+        return "outside_window";
+    };
+    if at >= window_start && statement_end <= window_end {
+        "inside_window"
+    } else if at < window_end && statement_end > window_start {
+        "crosses_window_boundary"
+    } else {
+        "outside_window"
+    }
+}
+
+#[cfg(test)]
+mod statement_window_relation_tests {
+    use super::statement_window_relation;
+
+    #[test]
+    fn requires_entire_statement_inside_window() {
+        assert_eq!(
+            statement_window_relation(Some(110), 10, 100, 30),
+            "inside_window"
+        );
+        assert_eq!(
+            statement_window_relation(Some(125), 10, 100, 30),
+            "crosses_window_boundary"
+        );
+        assert_eq!(
+            statement_window_relation(Some(95), 10, 100, 30),
+            "crosses_window_boundary"
+        );
+        assert_eq!(
+            statement_window_relation(Some(80), 10, 100, 30),
+            "outside_window"
+        );
+        assert_eq!(
+            statement_window_relation(None, 10, 100, 30),
+            "no_unique_statement"
+        );
+    }
+
+    #[test]
+    fn boundary_and_overflow_are_conservative() {
+        assert_eq!(
+            statement_window_relation(Some(120), 10, 100, 30),
+            "inside_window"
+        );
+        assert_eq!(
+            statement_window_relation(Some(130), 1, 100, 30),
+            "outside_window"
+        );
+        assert_eq!(
+            statement_window_relation(Some(usize::MAX), 2, 100, 30),
+            "outside_window"
+        );
+    }
+}
+
+/// Read-only inventory of statement locators for every staged fact occurrence.
+/// No identity decision is made from these counts.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(super) struct StatementLocatorStats {
+    pub total: usize,
+    pub located: usize,
+    pub missing: usize,
+    pub exact_match: usize,
+    pub mismatch: usize,
+    pub different_segment: usize,
+    pub invalid_window: usize,
+}
+
+pub(super) fn statement_locator_stats(
+    candidates: &[MessageCandidate],
+    sources: &[&str],
+    starts: &[usize],
+    document: &str,
+) -> StatementLocatorStats {
+    let mut stats = StatementLocatorStats::default();
+    for candidate in candidates {
+        let window = source_window_index(&candidate.id)
+            .and_then(|index| sources.get(index).zip(starts.get(index)));
+        for fact in &candidate.facts {
+            stats.total += 1;
+            let Some(offset) = fact.statement_byte_offset else {
+                stats.missing += 1;
+                continue;
+            };
+            stats.located += 1;
+            let Some((source, start)) = window else {
+                stats.invalid_window += 1;
+                stats.mismatch += 1;
+                continue;
+            };
+            let valid = offset.checked_add(fact.statement.len()).is_some_and(|end| {
+                end <= source.len() && source.get(offset..end) == Some(fact.statement.as_str())
+            });
+            let absolute = start.checked_add(offset);
+            let matches_document = absolute.and_then(|at| {
+                at.checked_add(fact.statement.len())
+                    .and_then(|end| document.get(at..end))
+            }) == Some(fact.statement.as_str());
+            if valid && matches_document {
+                stats.exact_match += 1;
+            } else {
+                stats.mismatch += 1;
+            }
+            if fact
+                .source_byte_offset
+                .is_some_and(|segment| segment != offset)
+            {
+                stats.different_segment += 1;
+            }
+        }
+    }
+    stats
+}
+
+#[cfg(test)]
+mod statement_locator_stats_tests {
+    use super::*;
+
+    #[test]
+    fn counts_exact_missing_and_bad_positions_without_identity_changes() {
+        let candidate = MessageCandidate {
+            id: "window-0-candidate-0".into(),
+            proposed_name: "messages/unknown.md".into(),
+            facts: [("beta", Some(8)), ("alpha", None), ("beta", Some(2))]
+                .into_iter()
+                .map(|(statement, statement_byte_offset)| CandidateFact {
+                    statement: statement.into(),
+                    segment_id: "S1".into(),
+                    evidence_quote: Some("alpha".into()),
+                    source_byte_offset: Some(0),
+                    source_locator_ambiguous: false,
+                    statement_byte_offset,
+                })
+                .collect(),
+        };
+        let stats = statement_locator_stats(
+            &[candidate],
+            &["alpha | beta"],
+            &[10],
+            "0123456789alpha | beta",
+        );
+        assert_eq!(stats.total, 3);
+        assert_eq!(stats.located, 2);
+        assert_eq!(stats.missing, 1);
+        assert_eq!(stats.exact_match, 1);
+        assert_eq!(stats.mismatch, 1);
+        assert_eq!(stats.different_segment, 2);
+    }
+}
+
+/// Compare source structures at the evidence anchor and exact statement position.
+/// Diagnostic only: an equal section is not proof of equal message identity.
+#[derive(Debug, Default)]
+pub(super) struct StatementStructureStats {
+    pub compared: usize,
+    pub same_row: usize,
+    pub different_row: usize,
+    pub same_section_no_row: usize,
+    pub different_section_no_row: usize,
+    pub unknown: usize,
+    pub missing_anchor: usize,
+}
+
+pub(super) fn statement_structure_stats(
+    candidates: &[MessageCandidate],
+    sources: &[&str],
+    starts: &[usize],
+    document: &str,
+) -> StatementStructureStats {
+    let tree = SourceTree::from_document(document);
+    let structure = SourceStructure::from_document(document);
+    let line_starts: Vec<usize> = std::iter::once(0)
+        .chain(document.match_indices('\n').map(|(at, _)| at + 1))
+        .collect();
+    let mut stats = StatementStructureStats::default();
+    for candidate in candidates {
+        let Some((window, start)) = source_window_index(&candidate.id)
+            .and_then(|index| sources.get(index).zip(starts.get(index)))
+        else {
+            continue;
+        };
+        for fact in &candidate.facts {
+            let Some(statement_offset) = fact.statement_byte_offset else {
+                continue;
+            };
+            let Some(statement_end) = statement_offset.checked_add(fact.statement.len()) else {
+                continue;
+            };
+            if window.get(statement_offset..statement_end) != Some(fact.statement.as_str()) {
+                continue;
+            }
+            let Some(statement_at) = start.checked_add(statement_offset) else {
+                continue;
+            };
+            if document.get(statement_at..statement_at.saturating_add(fact.statement.len()))
+                != Some(fact.statement.as_str())
+            {
+                continue;
+            }
+            let Some(anchor_offset) = fact.source_byte_offset else {
+                stats.missing_anchor += 1;
+                continue;
+            };
+            let Some(anchor_at) = start.checked_add(anchor_offset) else {
+                stats.missing_anchor += 1;
+                continue;
+            };
+            if anchor_offset >= window.len() || anchor_at >= document.len() {
+                stats.missing_anchor += 1;
+                continue;
+            }
+            stats.compared += 1;
+            let statement_line = line_starts
+                .partition_point(|at| *at <= statement_at)
+                .saturating_sub(1);
+            let anchor_line = line_starts
+                .partition_point(|at| *at <= anchor_at)
+                .saturating_sub(1);
+            let statement_row = tree.row(statement_line).map(|row| (row.table, row.line));
+            let anchor_row = tree.row(anchor_line).map(|row| (row.table, row.line));
+            // Also recognize flattened/normalized message-table rows using existing structure ranges.
+            let statement_range = structure
+                .table_row_ranges
+                .iter()
+                .position(|r| r.contains(&statement_at));
+            let anchor_range = structure
+                .table_row_ranges
+                .iter()
+                .position(|r| r.contains(&anchor_at));
+            if let (Some(a), Some(b)) = (statement_range, anchor_range) {
+                if a == b {
+                    stats.same_row += 1;
+                } else {
+                    stats.different_row += 1;
+                }
+            } else if let (Some(a), Some(b)) = (statement_row, anchor_row) {
+                if a == b {
+                    stats.same_row += 1;
+                } else {
+                    stats.different_row += 1;
+                }
+            } else if statement_range.is_some()
+                || anchor_range.is_some()
+                || statement_row.is_some()
+                || anchor_row.is_some()
+            {
+                stats.unknown += 1;
+            } else {
+                let a = tree.section(statement_line).map(|s| s.heading_line);
+                let b = tree.section(anchor_line).map(|s| s.heading_line);
+                match (a, b) {
+                    (Some(a), Some(b)) if a == b => stats.same_section_no_row += 1,
+                    (Some(_), Some(_)) => stats.different_section_no_row += 1,
+                    _ => stats.unknown += 1,
+                }
+            }
+        }
+    }
+    stats
+}
+
+pub(super) fn flattened_gain_provenance_audit(
+    candidates: &[MessageCandidate],
+    sources: &[&str],
+    starts: &[usize],
+    document: &str,
+) -> Vec<String> {
+    let structure = SourceStructure::from_document(document);
+    let tree = SourceTree::from_document(document);
+    let lines: Vec<&str> = document.lines().collect();
+    let mut audit = std::collections::BTreeMap::new();
+    for candidate in candidates {
+        let Some(window_index) = source_window_index(&candidate.id) else {
+            continue;
+        };
+        let Some((window, start)) = sources.get(window_index).zip(starts.get(window_index)) else {
+            continue;
+        };
+        for fact in &candidate.facts {
+            let Ok(letter) = resolve_fact_type_with_flattened_tables(
+                window, *start, document, fact, true, &structure,
+            ) else {
+                continue;
+            };
+            if resolve_fact_type_with_flattened_tables(
+                window, *start, document, fact, false, &structure,
+            ) != Err(ResolutionFailure::NoSourceType)
+            {
+                continue;
+            }
+            let Some(absolute) = fact
+                .source_byte_offset
+                .and_then(|offset| start.checked_add(offset))
+            else {
+                continue;
+            };
+            let Some(line_index) =
+                crate::utils::stringutils::line_index_at_byte_offset(document, absolute)
+            else {
+                continue;
+            };
+            if tree.flattened_table_owner(document, line_index) != Some(letter) {
+                continue;
+            }
+            let Some(source_line) = lines.get(line_index) else {
+                continue;
+            };
+            let quote = fact.evidence_quote.as_deref().unwrap_or("");
+            let (status, occurrences, nearest) = quote_anchor_audit(document, quote, absolute);
+            let quote_region = nearest
+                .and_then(|at| crate::utils::stringutils::line_index_at_byte_offset(document, at))
+                .and_then(|index| tree.flattened_table_owner(document, index));
+            let same_owner_region = quote_region == Some(letter);
+            let distance = nearest.map(|at| at.abs_diff(absolute));
+            let (statement_status, statement_occurrences, statement_in_owner) =
+                statement_anchor_audit(document, &fact.statement, absolute, |at| {
+                    crate::utils::stringutils::line_index_at_byte_offset(document, at)
+                        .and_then(|index| tree.flattened_table_owner(document, index))
+                        == Some(letter)
+                });
+            let unique_statement_byte =
+                unique_statement_offset_in_owner(document, &fact.statement, |at| {
+                    crate::utils::stringutils::line_index_at_byte_offset(document, at)
+                        .and_then(|index| tree.flattened_table_owner(document, index))
+                        == Some(letter)
+                });
+            // Stored offsets are parent-window-relative, unlike the
+            // document-absolute diagnostic locator computed above.
+            let stored_statement_byte = fact
+                .statement_byte_offset
+                .and_then(|offset| start.checked_add(offset));
+            let stored_statement_matches = stored_statement_byte.map(|at| {
+                document.get(at..at.saturating_add(fact.statement.len()))
+                    == Some(fact.statement.as_str())
+            });
+            let stored_statement_agrees = stored_statement_byte
+                .zip(unique_statement_byte)
+                .map(|(stored, located)| stored == located);
+            let statement_window_relation = statement_window_relation(
+                unique_statement_byte,
+                fact.statement.len(),
+                *start,
+                window.len(),
+            );
+            let statement_distance_from_quote =
+                unique_statement_byte.map(|at| at.abs_diff(absolute));
+            let statement_line = unique_statement_byte
+                .and_then(|at| crate::utils::stringutils::line_index_at_byte_offset(document, at))
+                .map(|index| index + 1);
+            let snippet = |value: &str| {
+                value
+                    .chars()
+                    .take(100)
+                    .collect::<String>()
+                    .replace('\n', " ")
+            };
+            audit.entry((absolute, fact.statement.clone(), quote.to_owned()))
+                .or_insert_with(|| format!(
+                    "line={} byte={} type={} status={} occurrences={} nearest_quote_byte={nearest:?} distance={distance:?} same_owner_region={same_owner_region} statement_status={statement_status} statement_occurrences={statement_occurrences} statement_in_owner={statement_in_owner} unique_statement_byte={unique_statement_byte:?} stored_statement_byte={stored_statement_byte:?} stored_statement_matches={stored_statement_matches:?} stored_statement_agrees={stored_statement_agrees:?} statement_line={statement_line:?} statement_distance_from_quote={statement_distance_from_quote:?} statement_window_relation={statement_window_relation} window_start={start} window_len={} statement={:?} quote={:?} source_line={:?}",
+                    line_index + 1, absolute, letter as char, status, occurrences,
+                    window.len(), snippet(&fact.statement), snippet(quote), snippet(source_line)
+                ));
+        }
+    }
+    audit.into_values().collect()
+}
+
 pub(super) fn resolved_source_facts_in_document(
     candidates: &[MessageCandidate],
     sources: &[&str],
@@ -2157,6 +3080,7 @@ mod parameter_inventory_tests {
             evidence_quote: Some(quote.into()),
             source_byte_offset: Some(offset),
             source_locator_ambiguous: false,
+            statement_byte_offset: None,
         };
         let candidates = vec![
             MessageCandidate {

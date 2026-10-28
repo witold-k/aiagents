@@ -104,20 +104,27 @@ fn help_lists_every_task_once_and_displays_license_and_output_options() {
         env!("CARGO_PKG_VERSION")
     )));
     assert!(help.contains("AVAILABLE TASKS"));
-    assert!(help.contains("Code generation and changes"));
+    assert!(help.contains("Code repair and build"));
+    assert!(
+        help.contains("Not implemented (task names reserved; no usable task-specific workflow)")
+    );
     assert!(help.contains("Review and analysis"));
     assert!(help.contains("Documentation"));
+    let task_section = help
+        .split("AVAILABLE TASKS\n")
+        .nth(1)
+        .unwrap()
+        .split("TASK-SPECIFIC OPTIONS (after -a)")
+        .next()
+        .unwrap();
+    // Only count task-name rows (four-space indentation), not headings or status prose.
+    let listed_tasks: Vec<&str> = task_section
+        .lines()
+        .filter(|line| line.starts_with("    ") && !line.trim_start().starts_with("Status:"))
+        .flat_map(|line| line.split_whitespace())
+        .collect();
     for task in Tasks::to_vec_str() {
-        let count = help
-            .split("AVAILABLE TASKS\n")
-            .nth(1)
-            .unwrap()
-            .split("TASK-SPECIFIC OPTIONS (after -a)")
-            .next()
-            .unwrap()
-            .split(|c: char| !(c.is_ascii_lowercase() || c == '_'))
-            .filter(|word| *word == task)
-            .count();
+        let count = listed_tasks.iter().filter(|name| **name == task).count();
         assert_eq!(count, 1, "task {task} appears {count} times in task list");
     }
     assert!(help.contains("-o --output [FILE]"));
@@ -137,7 +144,20 @@ fn help_task_groups_have_real_newlines_and_setup_build_is_classified() {
         .next()
         .unwrap();
     assert!(!task_section.contains("\\n"), "literal backslash-n in help");
-    assert!(task_section.contains("Code generation and changes [NOT IMPLEMENTED]\n"));
+    assert!(task_section.contains("Code repair and build\n"));
+    let not_implemented = task_section
+        .split("Not implemented (task names reserved; no usable task-specific workflow)\n")
+        .nth(1)
+        .expect("missing not-implemented task group")
+        .split("\n\n")
+        .next()
+        .unwrap();
+    for task in ["analyze", "gen_code", "transpile_code", "write_test_code"] {
+        assert!(
+            not_implemented.split_whitespace().any(|name| name == task),
+            "{task} missing from not-implemented group"
+        );
+    }
     assert!(task_section.contains("setup_build"));
     assert!(!task_section.contains("  Other\n"));
 }

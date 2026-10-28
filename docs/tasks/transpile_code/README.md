@@ -1,8 +1,12 @@
-# Project translation (`transpile_code`)
+# Project translation (`transpile_code`) — NOT IMPLEMENTED
 
 [Task index](../README.md) · [Project overview](../../../README.md)
 
-## Purpose
+## Status
+
+**Not implemented.** The task description is a proposed contract, not an implemented translation process.
+
+## Intended purpose
 
 Translate a source project to a designated target language and output directory.
 
@@ -16,7 +20,7 @@ The example shows task selection only. Check the task definition and [Quickstart
 
 ## Behavior and boundaries
 
-Task description exists; runtime workflow is not yet implemented.
+CLI routing currently points to the generic `EndlessWorkflow` in `src/workflows/select_workflow.rs`, but there is no usable task-specific translation workflow, staged translation process or completeness validation. The task is **not implemented**; generic routing is not implementation.
 
 ## Source of truth
 

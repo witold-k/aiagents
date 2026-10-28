@@ -2225,6 +2225,38 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         );
         let source_windows: Vec<&str> = parts.iter().map(|part| part.text.as_str()).collect();
         let source_starts: Vec<usize> = parts.iter().map(|part| part.start_byte).collect();
+        let locator_stats = message_identity::statement_locator_stats(
+            &checkpoint.candidates,
+            &source_windows,
+            &source_starts,
+            &masked_source,
+        );
+        println!(
+            "## [CHUNKED] STATEMENT LOCATORS: total={} located={} missing={} exact_match={} mismatch={} different_segment={} invalid_window={} (diagnostic only)",
+            locator_stats.total,
+            locator_stats.located,
+            locator_stats.missing,
+            locator_stats.exact_match,
+            locator_stats.mismatch,
+            locator_stats.different_segment,
+            locator_stats.invalid_window,
+        );
+        let structure_stats = message_identity::statement_structure_stats(
+            &checkpoint.candidates,
+            &source_windows,
+            &source_starts,
+            &masked_source,
+        );
+        println!(
+            "## [CHUNKED] STATEMENT STRUCTURE: compared={} same_row={} different_row={} same_section_no_row={} different_section_no_row={} unknown={} missing_anchor={} (diagnostic only)",
+            structure_stats.compared,
+            structure_stats.same_row,
+            structure_stats.different_row,
+            structure_stats.same_section_no_row,
+            structure_stats.different_section_no_row,
+            structure_stats.unknown,
+            structure_stats.missing_anchor,
+        );
         let diagnostics = message_identity::resolution_diagnostics_in_document(
             &checkpoint.candidates,
             &source_windows,
@@ -2527,6 +2559,77 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             );
             for gain in gains {
                 println!("## [CHUNKED] IDENTITY STRUCTURAL GAIN: {gain}");
+            }
+            let provenance = message_identity::flattened_gain_provenance_audit(
+                &checkpoint.candidates,
+                &source_windows,
+                &source_starts,
+                &masked_source,
+            );
+            let mut statuses: BTreeMap<String, usize> = BTreeMap::new();
+            for record in &provenance {
+                if let Some(status) = record
+                    .split(" status=")
+                    .nth(1)
+                    .and_then(|part| part.split_whitespace().next())
+                {
+                    *statuses.entry(status.to_owned()).or_default() += 1;
+                }
+            }
+            println!(
+                "## [CHUNKED] IDENTITY STRUCTURAL PROVENANCE: audited={} statuses={statuses:?} (diagnostic only)",
+                provenance.len()
+            );
+            for record in provenance {
+                println!("## [CHUNKED] IDENTITY STRUCTURAL PROVENANCE FACT: {record}");
+            }
+            let inventory = message_identity::unresolved_fact_inventory_in_document(
+                &checkpoint.candidates,
+                &source_windows,
+                &source_starts,
+                &identity_context,
+            );
+            println!(
+                "## [CHUNKED] UNRESOLVED FACT INVENTORY: occurrences={} (all failures, read-only; duplicates retained)",
+                inventory.len()
+            );
+            let mut section_counts: BTreeMap<String, usize> = BTreeMap::new();
+            for record in &inventory {
+                if let Some(section) = record
+                    .split(" section=")
+                    .nth(1)
+                    .and_then(|rest| rest.split(" candidate=").next())
+                {
+                    *section_counts.entry(section.to_owned()).or_default() += 1;
+                }
+            }
+            for (section, count) in section_counts {
+                println!("## [CHUNKED] UNRESOLVED SECTION: count={count} section={section}");
+            }
+            for record in inventory {
+                println!("## [CHUNKED] UNRESOLVED FACT: {record}");
+            }
+            let references = message_identity::unresolved_message_reference_inventory(
+                &checkpoint.candidates,
+                &source_windows,
+                &source_starts,
+                &identity_context,
+            );
+            let multiple = references
+                .iter()
+                .filter(|record| record.contains("relation=multiple"))
+                .count();
+            let single = references
+                .iter()
+                .filter(|record| record.contains("relation=single"))
+                .count();
+            println!(
+                "## [CHUNKED] UNRESOLVED MESSAGE REFERENCES: total={} multiple={multiple} single={single} none={} (statement-only hints; no ownership inferred)",
+                references.len(),
+                references.len() - multiple - single,
+            );
+            for reference in references {
+                println!("## [CHUNKED] UNRESOLVED MESSAGE REFERENCE: {reference}");
             }
             for sample in message_identity::unresolved_history_samples(
                 &checkpoint.candidates,

@@ -16,6 +16,9 @@ The example shows task selection only. Check the task definition and [Quickstart
 
 ## Behavior and boundaries
 
+This task uses the shared `DocWorkflow`, not a dedicated document-review workflow. Its prompt requests review output; the runtime does not independently enforce a complete review.
+
+
 Writes companion `<filename>.review.md` files; original documents remain unchanged.
 
 ## Source of truth

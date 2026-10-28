@@ -1,6 +1,10 @@
 # Review: P4 identity, checkpoint resume, and audit
 
-Reviewed against branch `refactor/generic-source-provenance` on 2026-10-24. This is a static review; no local Rust tests were executed.
+**Historical review (2026-10-24)** against branch `refactor/generic-source-provenance`.
+Findings below are a snapshot of that revision, **not a verified open-issue list**
+for `analysis/openamip-unresolved-facts`. Several areas have changed since;
+recheck each finding against current source and tests before acting on it.
+No local Rust tests were executed for the original review.
 
 ## P1 — Evidence review can be reused for different source occurrences
 
