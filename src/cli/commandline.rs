@@ -24,6 +24,7 @@ pub struct Args {
     pub workspace: Option<PathBuf>,
     pub start_service: Option<String>,
     pub provider: Option<String>,
+    pub tokens: u32,
     pub debug: bool,
     pub help: bool,
 }
@@ -124,6 +125,7 @@ GENERAL OPTIONS
                                Default: target, build, or current directory
   -w, --workspace DIR          Use a workspace containing files and task description
   -p, --provider NAME          Select configured LLM provider
+  -k, --tokens COUNT           Maximum LLM output tokens (default: 30000)
   -r, --run NAME               Start configured provider server
   -d, --debug                  Enable debug output
 
@@ -175,6 +177,7 @@ pub fn parse_args_from(arguments: impl IntoIterator<Item = String>) -> Result<Ar
     let mut workspace: Option<PathBuf> = None;
     let mut start_service: Option<String> = None;
     let mut provider: Option<String> = None;
+    let mut tokens: u32 = 30_000;
     let mut debug = false;
     let mut help = false;
 
@@ -246,6 +249,15 @@ pub fn parse_args_from(arguments: impl IntoIterator<Item = String>) -> Result<Ar
             "-p" | "--provider" => {
                 provider = Some(args.next().ok_or("Missing value for --provider")?);
             }
+            "-k" | "--tokens" => {
+                let value = args.next().ok_or("Missing value for --tokens")?;
+                tokens = value
+                    .parse::<u32>()
+                    .map_err(|_| "Invalid --tokens: expected a positive integer")?;
+                if tokens == 0 {
+                    return Err("Invalid --tokens: value must be greater than zero".into());
+                }
+            }
             "-r" | "--run" => {
                 let value = args.next().ok_or("Missing value for --run")?;
                 start_service = Some(value);
@@ -279,6 +291,7 @@ pub fn parse_args_from(arguments: impl IntoIterator<Item = String>) -> Result<Ar
             workspace,
             start_service,
             provider,
+            tokens,
             debug,
             help,
         });
@@ -314,6 +327,7 @@ pub fn parse_args_from(arguments: impl IntoIterator<Item = String>) -> Result<Ar
         workspace,
         start_service,
         provider,
+        tokens,
         debug,
         help,
     })

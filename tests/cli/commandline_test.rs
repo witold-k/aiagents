@@ -141,3 +141,31 @@ fn help_task_groups_have_real_newlines_and_setup_build_is_classified() {
     assert!(task_section.contains("setup_build"));
     assert!(!task_section.contains("  Other\n"));
 }
+
+#[test]
+fn tokens_default_to_30000_and_accept_both_switches() {
+    assert_eq!(parse(&[]).unwrap().tokens, 30_000);
+    assert_eq!(parse(&["-k", "1024"]).unwrap().tokens, 1024);
+    assert_eq!(parse(&["--tokens", "65536"]).unwrap().tokens, 65536);
+    assert_eq!(parse(&["--tokens", "42", "--help"]).unwrap().tokens, 42);
+}
+
+#[test]
+fn tokens_reject_missing_invalid_or_zero_values() {
+    for args in [
+        vec!["-k"],
+        vec!["--tokens", "0"],
+        vec!["--tokens", "-1"],
+        vec!["--tokens", "abc"],
+        vec!["--tokens", "4294967296"],
+    ] {
+        assert!(parse(&args).is_err(), "{args:?}");
+    }
+}
+
+#[test]
+fn help_describes_token_limit() {
+    let help = aiagents::cli::commandline::help_text();
+    assert!(help.contains("-k, --tokens COUNT"));
+    assert!(help.contains("30000"));
+}

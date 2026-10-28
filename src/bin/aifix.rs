@@ -244,6 +244,7 @@ pub fn main() {
         &filter,
         &args.select,
         args.debug,
+        args.tokens,
     );
 
     let src_path2 = src_path.clone();

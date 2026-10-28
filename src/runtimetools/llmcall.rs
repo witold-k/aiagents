@@ -41,6 +41,7 @@ pub struct LlmCall<'a> {
     transient_source_files: RefCell<Vec<PathBuf>>,
     completed_edits: RefCell<Vec<String>>,
     dump: bool,
+    max_tokens: u32,
 }
 
 pub enum LlmCallResult {
@@ -92,6 +93,7 @@ impl<'a> LlmCall<'a> {
         filter: &'a Pathfilter,
         selected: &'a [PathBuf],
         dump: bool,
+        max_tokens: u32,
     ) -> Self {
         let data = AIMessageListData {
             messages: Vec::new(),
@@ -136,6 +138,7 @@ impl<'a> LlmCall<'a> {
             transient_source_files: RefCell::new(Vec::new()),
             completed_edits: RefCell::new(Vec::new()),
             dump,
+            max_tokens,
         }
     }
 
@@ -483,7 +486,7 @@ impl<'a> LlmCall<'a> {
     }
 
     pub fn run_text_step(&self, prompt: &str, context: &str) -> Result<String, LlmCallResult> {
-        self.run_text_step_limited(prompt, context, 30000)
+        self.run_text_step_limited(prompt, context, self.max_tokens)
     }
 
     pub fn run_context_step_limited(
@@ -642,7 +645,7 @@ impl<'a> LlmCall<'a> {
             endpoint,
             &self.provider.api_key,
             self.provider.insecure,
-            30000,
+            self.max_tokens,
             0.6,
         );
 
@@ -681,7 +684,7 @@ impl<'a> LlmCall<'a> {
             endpoint,
             &self.provider.api_key,
             self.provider.insecure,
-            30000,
+            self.max_tokens,
             0.2,
         );
 
@@ -744,7 +747,7 @@ impl<'a> LlmCall<'a> {
             endpoint,
             &self.provider.api_key,
             self.provider.insecure,
-            30000,
+            self.max_tokens,
             0.6,
         );
 

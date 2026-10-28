@@ -79,3 +79,13 @@ Small end-to-end examples can be found in `runtests`, for example:
 cd runtests/cargo/aitestloop_simple
 just fix
 ```
+
+## LLM output token limit
+
+Use `-k COUNT` or `--tokens COUNT` to set the maximum number of output tokens requested from the model. The default is `30000` and the value must be a positive integer.
+
+```sh
+aifix -t analyze -k 8192
+```
+
+This option controls the LLM response token limit, **not** the input context window or the model server's context-size setting. Place global options before `-a/--args`, because `-a` passes all remaining arguments to the selected task.

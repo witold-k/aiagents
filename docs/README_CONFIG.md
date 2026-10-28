@@ -74,3 +74,7 @@ Placeholder expansion is textual: it does not create directories, and the result
 The loader checks for duplicate provider names, missing provider references, nonfinite task temperatures, invalid queue limits, and an unknown selected provider. After loading, it expands filesystem filter placeholders.
 
 When the application adds configuration fields, existing JSON files may require updating. Consult `Config::default()` in [`src/config.rs`](../src/config.rs) for authoritative current defaults.
+
+## LLM output token limit (CLI)
+
+The global `aifix -k COUNT` / `--tokens COUNT` switch sets the maximum output tokens requested for LLM calls that use the default limit. The default is `30000`; zero, negative, non-numeric and out-of-range values are rejected. Explicitly limited workflow steps retain their own token limits. This setting does not change the model's input context window or local server configuration. Supply the switch before `-a/--args`.
