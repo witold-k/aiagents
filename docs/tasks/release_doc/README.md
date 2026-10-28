@@ -4,7 +4,7 @@
 
 ## Purpose
 
-Generate evidence-grounded Markdown release notes from Git history and diffs.
+Generate evidence-grounded Markdown release notes from Git history and per-file net diffs.
 
 ## Invocation
 
@@ -28,7 +28,7 @@ Options specific to `release_doc` follow `-a` / `--args`. The output path is rel
 
 Without `-o`, the generated Markdown is printed to stdout; no release notes file is written by the workflow. With `-o` but without a filename the result is written to `RELEASE_NOTES.md`. Supplying a filename overrides that default.
 
-Do not infer behavior, compatibility or test success from commit messages alone.
+The workflow reads only paths changed between the selected Git revisions (added, deleted and modified paths). Renames are represented as a deletion and an addition. It does not read all repository files. Each changed file's net diff is analyzed sequentially; large diffs are split at line boundaries. File analyses are consolidated in batches, then used to write the final release notes. For a repository without tags, the first release is compared against Git's empty tree.\n\nDo not infer behavior, compatibility or test success from commit messages alone.
 
 ## Source of truth
 

@@ -94,6 +94,45 @@ pub fn write_release_notes<W: Write>(
     }
 }
 
+/// Split at line boundaries; a single exceptionally long line remains intact.
+pub fn split_diff(diff: &str, max_chars: usize) -> Vec<String> {
+    assert!(max_chars > 0);
+    if diff.is_empty() {
+        return vec![String::new()];
+    }
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+    for line in diff.split_inclusive('\n') {
+        if !current.is_empty() && current.len() + line.len() > max_chars {
+            chunks.push(std::mem::take(&mut current));
+        }
+        current.push_str(line);
+    }
+    if !current.is_empty() {
+        chunks.push(current);
+    }
+    chunks
+}
+
+fn reduce_summaries(
+    llm: &LlmCall<'_>,
+    mut summaries: Vec<String>,
+) -> Result<String, crate::runtimetools::llmcall::LlmCallResult> {
+    if summaries.is_empty() {
+        return Ok("No changed files.".into());
+    }
+    // Bounded fan-in ensures that even a large release is processed incrementally.
+    while summaries.len() > 1 {
+        let mut next = Vec::new();
+        for batch in summaries.chunks(4) {
+            let prompt = "Consolidate these release change analyses. Preserve verified facts,                 file references, uncertainty and breaking changes; combine related items                 and remove duplicates. Return a concise factual analysis, not release notes.";
+            next.push(llm.run_text_step(prompt, &batch.join("\n\n--- ANALYSIS ---\n\n"))?);
+        }
+        summaries = next;
+    }
+    Ok(summaries.pop().unwrap())
+}
+
 pub struct ReleaseDocWorkflow<'a> {
     llm_call: LlmCall<'a>,
     projdir: &'a Path,
@@ -148,19 +187,52 @@ impl<'a> Workflow for ReleaseDocWorkflow<'a> {
             }
         };
 
-        let analysis = match self.llm_call.run_text_step(
-            WorkflowSteps::ReleaseDocAnalyze.get_prompt(),
-            &context.to_llm_summary_context(),
-        ) {
-            Ok(analysis) => analysis,
+        // Analyze the net diff of each changed file in sequence. Do not pass
+        // the entire repository or a combined release diff to the model.
+        let mut file_summaries = Vec::new();
+        for change in &context.changes {
+            let chunks = split_diff(&change.diff, 16_000);
+            let mut chunk_summaries = Vec::new();
+            for (index, chunk) in chunks.iter().enumerate() {
+                let input = format!(
+                    "FILE: {}\nPART: {}/{}\nNET DIFF:\n{}",
+                    change.path.display(),
+                    index + 1,
+                    chunks.len(),
+                    chunk,
+                );
+                let prompt = format!(
+                    "{}\nAnalyze only this file diff. Report concise, evidence-grounded changes,                      including uncertainty. Do not write release notes yet.",
+                    WorkflowSteps::ReleaseDocAnalyze.get_prompt(),
+                );
+                let summary = match self.llm_call.run_text_step(&prompt, &input) {
+                    Ok(summary) => summary,
+                    Err(result) => return WorkflowResult::LlmCallResult(result),
+                };
+                chunk_summaries.push(summary);
+            }
+            let summary = match reduce_summaries(&self.llm_call, chunk_summaries) {
+                Ok(summary) => summary,
+                Err(result) => return WorkflowResult::LlmCallResult(result),
+            };
+            file_summaries.push(format!("FILE: {}\n{}", change.path.display(), summary,));
+        }
+
+        // Merge related changes across files before writing the final document.
+        let combined = match reduce_summaries(&self.llm_call, file_summaries) {
+            Ok(summary) => summary,
             Err(result) => return WorkflowResult::LlmCallResult(result),
         };
-
+        let input = format!(
+            "{}\n=== VERIFIED FILE ANALYSES ===\n{}",
+            context.release_metadata(),
+            combined,
+        );
         let release_notes = match self
             .llm_call
-            .run_text_step(WorkflowSteps::ReleaseDocWrite.get_prompt(), &analysis)
+            .run_text_step(WorkflowSteps::ReleaseDocWrite.get_prompt(), &input)
         {
-            Ok(release_notes) => release_notes,
+            Ok(notes) => notes,
             Err(result) => return WorkflowResult::LlmCallResult(result),
         };
 

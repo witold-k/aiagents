@@ -1,72 +1,44 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Witold Kaminski
 
+use crate::git_fixture::TestRepository;
 use aiagents::runtimetools::releasedoc::ReleaseDocContext;
 
-use crate::git_fixture::TestRepository;
-
 #[test]
-fn collects_release_context_between_refs() {
+fn collects_only_changed_files_between_refs() {
     let repository = TestRepository::new();
-    let git = repository.git();
-    let context = ReleaseDocContext::between(&git, "HEAD~1", "HEAD").unwrap();
-
-    assert_eq!(context.from.as_deref(), Some("HEAD~1"));
-    assert_eq!(context.to, "HEAD");
+    let context = ReleaseDocContext::between(&repository.git(), "HEAD~1", "HEAD").unwrap();
     assert_eq!(context.commits.len(), 1);
-    assert!(context.diff.as_ref().is_some_and(|diff| !diff.is_empty()));
+    assert!(!context.changes.is_empty());
+    assert!(context.changes.iter().all(|change| !change.diff.is_empty()));
     assert!(
         context
-            .files
+            .changes
             .iter()
-            .any(|file| file.path == std::path::Path::new("Cargo.toml"))
+            .all(|change| { change.diff.contains("diff --git") })
     );
 }
 
 #[test]
-fn collects_release_context_since_latest_tag() {
+fn release_metadata_excludes_diff_and_repository_contents() {
     let repository = TestRepository::new();
-    let git = repository.git();
-    let context = ReleaseDocContext::since_latest_tag(&git).unwrap();
-
-    assert_eq!(context.from.as_deref(), Some("v0.1.0"));
-    assert_eq!(context.to, "HEAD");
-    assert_eq!(context.commits.len(), 1);
-    assert!(
-        context
-            .files
-            .iter()
-            .any(|file| file.path == std::path::Path::new("Cargo.toml"))
-    );
+    let context = ReleaseDocContext::since_latest_tag(&repository.git()).unwrap();
+    let metadata = context.release_metadata();
+    assert!(metadata.contains("=== RELEASE RANGE ==="));
+    assert!(metadata.contains("=== COMMITS ==="));
+    assert!(!metadata.contains("=== DIFF ==="));
+    assert!(!metadata.contains("--- FILE:"));
 }
 
 #[test]
-fn formats_release_context_for_llm() {
-    let repository = TestRepository::new();
-    let git = repository.git();
-    let context = ReleaseDocContext::between(&git, "HEAD~1", "HEAD").unwrap();
-    let llm_context = context.to_llm_context();
-
-    assert!(llm_context.contains("=== RELEASE RANGE ==="));
-    assert!(llm_context.contains("=== COMMITS ==="));
-    assert!(llm_context.contains("=== DIFF ==="));
-    assert!(llm_context.contains("=== FILES AT TARGET REF ==="));
-    assert!(llm_context.contains("--- FILE: Cargo.toml ---"));
-}
-
-#[test]
-fn compact_context_lists_files_without_embedding_contents() {
-    let repository = TestRepository::new();
-    let git = repository.git();
-    let context = ReleaseDocContext::between(&git, "HEAD~1", "HEAD").unwrap();
-    let llm_context = context.to_llm_summary_context();
-
-    assert!(llm_context.contains("=== RELEASE RANGE ==="));
-    assert!(llm_context.contains("=== COMMITS ==="));
-    assert!(llm_context.contains("=== DIFF ==="));
-    assert!(llm_context.contains("=== AVAILABLE FILES AT TARGET REF ==="));
-    assert!(llm_context.lines().any(|line| line == "Cargo.toml"));
-    assert!(!llm_context.contains("--- FILE: Cargo.toml ---"));
+fn diff_chunking_preserves_exact_content() {
+    use aiagents::workflows::release_doc::split_diff;
+    let diff = "header\n@@ -1 +1 @@\n-old\n+new\n";
+    let chunks = split_diff(diff, 12);
+    assert!(chunks.len() > 1);
+    assert_eq!(chunks.concat(), diff);
+    assert_eq!(split_diff("", 12), vec![""]);
+    assert_eq!(split_diff("one-long-line", 3), vec!["one-long-line"]);
 }
 
 use aiagents::workflows::release_doc::{ReleaseDocOptions, ReleaseDocOutput, write_release_notes};
@@ -169,9 +141,8 @@ fn release_notes_file_output_writes_exact_content() {
 }
 
 #[test]
-fn release_context_skips_submodule_gitlinks_without_checkout() {
+fn release_context_includes_submodule_change_without_reading_submodule_contents() {
     use std::process::Command;
-
     let repository = TestRepository::new();
     let git = repository.git();
     let head = Command::new("git")
@@ -179,7 +150,6 @@ fn release_context_skips_submodule_gitlinks_without_checkout() {
         .current_dir(repository.path())
         .output()
         .unwrap();
-    assert!(head.status.success());
     let commit = String::from_utf8(head.stdout).unwrap();
     let gitlink = format!("160000,{},vendor/example", commit.trim());
     let staged = Command::new("git")
@@ -187,46 +157,73 @@ fn release_context_skips_submodule_gitlinks_without_checkout() {
         .current_dir(repository.path())
         .output()
         .unwrap();
-    assert!(
-        staged.status.success(),
-        "{}",
-        String::from_utf8_lossy(&staged.stderr)
-    );
-
+    assert!(staged.status.success());
     let committed = Command::new("git")
         .args(["commit", "-m", "Add submodule gitlink"])
         .current_dir(repository.path())
         .output()
         .unwrap();
-    assert!(
-        committed.status.success(),
-        "{}",
-        String::from_utf8_lossy(&committed.stderr)
-    );
-
-    let files = git.files("HEAD").unwrap();
-    assert!(
-        files
-            .iter()
-            .any(|path| path == std::path::Path::new("Cargo.toml"))
-    );
-    assert!(
-        !files
-            .iter()
-            .any(|path| path == std::path::Path::new("vendor/example"))
-    );
-
+    assert!(committed.status.success());
     let context = ReleaseDocContext::between(&git, "HEAD~1", "HEAD").unwrap();
+    assert!(context.changes.iter().any(|change| change.path
+        == std::path::Path::new("vendor/example")
+        && change.diff.contains("Subproject commit")));
+}
+
+#[test]
+fn tracks_additions_deletions_and_renames_as_per_path_diffs() {
+    use std::{fs, process::Command};
+    let repository = TestRepository::new();
+    let root = repository.path();
+    fs::write(root.join("added.txt"), "new\n").unwrap();
+    fs::rename(root.join("README.md"), root.join("renamed.md")).unwrap();
+    let output = Command::new("git")
+        .args(["add", "-A"])
+        .current_dir(root)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let output = Command::new("git")
+        .args(["commit", "-m", "Change files"])
+        .current_dir(root)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let changes = repository
+        .git()
+        .changed_file_diffs("HEAD~1", "HEAD")
+        .unwrap();
+    for path in ["added.txt", "README.md", "renamed.md"] {
+        assert!(
+            changes
+                .iter()
+                .any(|(p, diff)| p == std::path::Path::new(path) && !diff.is_empty()),
+            "{path}"
+        );
+    }
     assert!(
-        context
-            .files
+        !changes
             .iter()
-            .all(|file| file.path != std::path::Path::new("vendor/example"))
+            .any(|(p, _)| p == std::path::Path::new("Cargo.toml"))
     );
+}
+
+#[test]
+fn first_release_without_tag_uses_empty_tree() {
+    use std::process::Command;
+    let repository = TestRepository::new();
+    let output = Command::new("git")
+        .args(["tag", "-d", "v0.1.0"])
+        .current_dir(repository.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let context = ReleaseDocContext::since_latest_tag(&repository.git()).unwrap();
+    assert!(context.from.is_none());
     assert!(
         context
-            .diff
-            .as_ref()
-            .is_some_and(|diff| diff.contains("vendor/example"))
+            .changes
+            .iter()
+            .any(|change| change.path == std::path::Path::new("README.md"))
     );
 }

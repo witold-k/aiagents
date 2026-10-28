@@ -145,6 +145,55 @@ impl Git {
         self.run(["diff", "--no-ext-diff", "--binary", from, to])
     }
 
+    /// Net changes per path, including additions and deletions. Rename pairs are
+    /// intentionally represented as a deletion and an addition.
+    pub fn changed_file_diffs(
+        &self,
+        from: &str,
+        to: &str,
+    ) -> Result<Vec<(PathBuf, String)>, GitError> {
+        let output = self.run_raw(["diff", "--name-only", "-z", "--no-renames", from, to])?;
+        if !output.status.success() {
+            return Err(GitError::CommandFailed {
+                args: vec!["diff".into(), "--name-only".into(), from.into(), to.into()],
+                status: output.status.code(),
+                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            });
+        }
+        output
+            .stdout
+            .split(|byte| *byte == 0)
+            .filter(|path| !path.is_empty())
+            .map(|path| {
+                let path = PathBuf::from(String::from_utf8_lossy(path).into_owned());
+                let diff = self.run_raw([
+                    OsStr::new("diff"),
+                    OsStr::new("--no-ext-diff"),
+                    OsStr::new("--binary"),
+                    OsStr::new("--no-renames"),
+                    OsStr::new(from),
+                    OsStr::new(to),
+                    OsStr::new("--"),
+                    path.as_os_str(),
+                ])?;
+                if !diff.status.success() {
+                    return Err(GitError::CommandFailed {
+                        args: vec![
+                            "diff".into(),
+                            from.into(),
+                            to.into(),
+                            "--".into(),
+                            path.display().to_string(),
+                        ],
+                        status: diff.status.code(),
+                        stderr: String::from_utf8_lossy(&diff.stderr).into_owned(),
+                    });
+                }
+                Ok((path, String::from_utf8_lossy(&diff.stdout).into_owned()))
+            })
+            .collect()
+    }
+
     pub fn files(&self, reference: &str) -> Result<Vec<PathBuf>, GitError> {
         // Gitlinks (mode 160000) point to submodule commits, not file blobs.
         // Do not attempt to read them with `git show REF:path`.

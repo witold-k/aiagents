@@ -4,7 +4,7 @@
 
 Create factual Markdown release documentation from the release evidence provided by the runtime.
 
-The runtime determines the Git range and supplies commit metadata, the Git diff, and repository files. Do not invent changes that are not supported by that evidence.
+The runtime determines the Git range and analyzes net diffs of changed files sequentially. It supplies consolidated per-file analyses and commit metadata for the final document. Do not invent changes that are not supported by that evidence.
 
 ## Required analysis
 
@@ -14,11 +14,11 @@ Work in this order:
 2. Read the diff to determine what actually changed.
 3. The context contains a list of files available at the target revision. When the diff or commit message is insufficient to understand a change, use `load_file` to inspect only the relevant current files before drawing a conclusion.
 4. Group related commits into one release item. Do not create one release item per commit when several commits implement or fix the same feature.
-5. Separate externally relevant changes from internal implementation details.
-6. Mention breaking changes, migration requirements, configuration changes, compatibility changes, and important bug fixes only when supported by the evidence.
-7. If evidence is ambiguous, describe only the verified change. Do not guess intent, impact, performance improvements, or compatibility.
+4. Separate externally relevant changes from internal implementation details.
+5. Mention breaking changes, migration requirements, configuration changes, compatibility changes, and important bug fixes only when supported by the evidence.
+6. If evidence is ambiguous, describe only the verified change. Do not guess intent, impact, performance improvements, or compatibility.
 
-Commit messages are hints, not authoritative facts. Prefer the diff and final file contents when they disagree with a commit message.
+Commit messages are hints, not authoritative facts. Prefer verified per-file diff analyses when they disagree with a commit message.
 
 ## Output
 
