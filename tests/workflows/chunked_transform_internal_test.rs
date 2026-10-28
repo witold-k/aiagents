@@ -453,6 +453,7 @@ mod structured_fact_tests {
 }
 
 mod recovery_window_tests {
+    use super::super::legacy_extraction_format::ExtractedWindow;
     use super::*;
 
     #[test]
@@ -524,4 +525,107 @@ mod absolute_chunk_provenance_tests {
             assert!(pair[0].start_byte + pair[0].text.len() > pair[1].start_byte);
         }
     }
+}
+
+#[test]
+fn primary_windows_keep_one_thousand_characters_of_overlap() {
+    let source = "x".repeat(16_500);
+    let parts = chunks(&source, CHUNK_CHARS);
+    assert_eq!(parts.len(), 3);
+    assert_eq!(parts[0].start_byte, 0);
+    assert_eq!(parts[1].start_byte, 7_000);
+    assert_eq!(parts[2].start_byte, 14_000);
+    assert_eq!(parts[0].text.len(), 8_000);
+    assert_eq!(parts[1].text.len(), 8_000);
+    assert_eq!(parts[2].text.len(), 2_500);
+}
+
+#[test]
+fn primary_windows_preserve_utf8_character_boundaries() {
+    let source = "ä".repeat(8_500);
+    let parts = chunks(&source, CHUNK_CHARS);
+    assert_eq!(parts.len(), 2);
+    assert_eq!(parts[0].text.chars().count(), 8_000);
+    assert_eq!(parts[1].text.chars().count(), 1_500);
+    assert_eq!(parts[1].start_byte, 14_000);
+    assert_eq!(
+        parts[0].text.chars().skip(7_000).collect::<String>(),
+        parts[1].text.chars().take(1_000).collect::<String>()
+    );
+}
+
+#[test]
+fn preceding_context_is_source_derived_even_with_duplicate_windows() {
+    let source = "Type: G\nshared\nType: g\nshared\n";
+    let part = Chunk {
+        start_byte: 0,
+        start_line: 1,
+        end_line: 4,
+        text: source.to_owned(),
+    };
+    // This existing lookup chooses the first matching substring; do not
+    // accidentally claim it resolves repeated recovery windows uniquely.
+    let context = preceding_extraction_context(source, &part, "shared\n");
+    // The prompt instructions mention both "Type: G" and "Type: g" as a
+    // case-sensitivity example. Assert on the actual source-derived blocks,
+    // not on the entire prompt text.
+    assert!(context.contains("Active declaration: Type: G"));
+    assert!(
+        context.contains("=== PRECEDING SOURCE CONTEXT (read-only; not evidence) ===\nType: G\n")
+    );
+    assert!(!context.contains("Active declaration: Type: g"));
+}
+
+#[test]
+fn scoped_context_carries_message_across_window_boundary() {
+    let source = format!("## Type: G\n{}\n", "details ".repeat(1100));
+    let boundary = source.find("details").unwrap() + 8_000.min(source.len() - 12);
+    let context = scoped_source_context(&source, boundary);
+    assert!(context.contains("Active declaration: ## Type: G"));
+}
+
+#[test]
+fn scoped_context_replaces_message_on_new_declaration() {
+    let source = "## Type: G\nfield G\n## Type: g\nfield g\n";
+    let context = scoped_source_context(source, source.len());
+    assert!(context.contains("Active declaration: ## Type: g"));
+    assert!(!context.contains("Active declaration: ## Type: G\n"));
+}
+
+#[test]
+fn scoped_context_discards_message_at_sibling_heading() {
+    let source = "## Type: G\nfield G\n## Other section\nunrelated\n";
+    let context = scoped_source_context(source, source.len());
+    assert!(!context.contains("Active declaration:"));
+    assert!(context.contains("Section: ## Other section"));
+}
+
+#[test]
+fn scoped_context_does_not_promote_partial_type_line() {
+    let source = "## Other\nType: Ga";
+    let context = scoped_source_context(source, source.len());
+    assert!(!context.contains("Active declaration:"));
+}
+
+#[test]
+fn scoped_context_is_empty_without_explicit_structure() {
+    let source = "Plain prose and a tableless document.\n";
+    assert!(scoped_source_context(source, source.len()).is_empty());
+}
+
+#[test]
+fn scoped_context_ignores_type_declarations_inside_fences() {
+    let source = "## Overview\n```md\nType: fake\n```\n";
+    let context = scoped_source_context(source, source.len());
+    assert!(!context.contains("Active declaration:"));
+    assert!(context.contains("Section: ## Overview"));
+}
+
+#[test]
+fn scoped_context_reports_table_columns_without_claiming_identity() {
+    let source = "## Messages\n| Type | Meaning |\n| --- | --- |\n| G | Gain |\n";
+    let context = scoped_source_context(source, source.len());
+    assert!(context.contains("Table columns: Type | Meaning"));
+    assert!(context.contains("Current table row (untyped): G | Gain"));
+    assert!(!context.contains("Active declaration:"));
 }

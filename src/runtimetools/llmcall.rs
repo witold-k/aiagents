@@ -485,6 +485,11 @@ impl<'a> LlmCall<'a> {
         Ok(loaded)
     }
 
+    /// Maximum output tokens configured by -k/--tokens.
+    pub fn max_tokens(&self) -> u32 {
+        self.max_tokens
+    }
+
     pub fn run_text_step(&self, prompt: &str, context: &str) -> Result<String, LlmCallResult> {
         self.run_text_step_limited(prompt, context, self.max_tokens)
     }

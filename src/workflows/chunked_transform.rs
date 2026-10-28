@@ -32,9 +32,8 @@ use crate::utils::stringutils::{resolve_source_quote, strip_code_fences};
 pub use crate::utils::stringutils::{mask_embedded_data_uris, mask_opaque_lines};
 use crate::workflows::workflow::{Workflow, WorkflowResult};
 
-const CHUNK_CHARS: usize = 4_000;
+const CHUNK_CHARS: usize = 8_000;
 pub const CHUNK_OVERLAP_CHARS: usize = 1_000;
-const MAX_TOKENS: u32 = 2_048;
 const MIN_RECOVERY_CHARS: usize = 700;
 const MAX_RECOVERY_WINDOWS: usize = 32;
 const MAX_MERGE_CHARS: usize = 20_000;
@@ -138,30 +137,34 @@ fn verified_fact_quote(response: &str, source: &str) -> Result<String, String> {
         .ok_or_else(|| "Fact quote is too short or absent from the attributed source window".into())
 }
 
+// Legacy JSON response format retained only for compatibility tests.
+// Keep test-specific wire models out of the production module namespace.
 #[cfg(test)]
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ExtractedFact {
-    statement: String,
-    #[serde(default)]
-    source_anchor: Option<String>,
-    #[serde(default)]
-    evidence_quote: Option<String>,
-}
+mod legacy_extraction_format {
+    use serde::Deserialize;
 
-#[cfg(test)]
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ExtractedFile {
-    path: String,
-    facts: Vec<ExtractedFact>,
-}
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub(super) struct ExtractedFact {
+        pub statement: String,
+        #[serde(default)]
+        pub source_anchor: Option<String>,
+        #[serde(default)]
+        pub evidence_quote: Option<String>,
+    }
 
-#[cfg(test)]
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ExtractedWindow {
-    files: Vec<ExtractedFile>,
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub(super) struct ExtractedFile {
+        pub path: String,
+        pub facts: Vec<ExtractedFact>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub(super) struct ExtractedWindow {
+        pub files: Vec<ExtractedFile>,
+    }
 }
 
 type ExtractedRecords = Vec<(String, Vec<(String, Option<String>)>)>;
@@ -215,6 +218,102 @@ fn evidence_segments(source: &str) -> Vec<EvidenceSegment> {
     segments
 }
 
+// SourceTree is the single syntax authority for section/table/fence boundaries.
+// This is a read-only hint; table cells are never promoted to message identity.
+fn scoped_source_context(source: &str, byte_offset: usize) -> String {
+    const MAX_CONTEXT_CHARS: usize = 1_200;
+    let end = byte_offset.min(source.len());
+    if !source.is_char_boundary(end) {
+        return String::new();
+    }
+    let prefix = &source[..end];
+    // Never treat a partially visible source line as an authoritative declaration.
+    let before = if prefix.ends_with('\n') {
+        prefix
+    } else {
+        prefix
+            .rsplit_once('\n')
+            .map_or("", |(complete, _)| complete)
+    };
+    if before.is_empty() {
+        return String::new();
+    }
+    let tree = source_tree::SourceTree::parse(before);
+    let source_lines: Vec<&str> = before.lines().collect();
+    let Some(last_line) = source_lines.len().checked_sub(1) else {
+        return String::new();
+    };
+    let Some(scope) = tree.context_at_line(last_line) else {
+        return String::new();
+    };
+    let mut lines = Vec::new();
+    for section_id in &scope.section_path {
+        let section = &tree.sections[*section_id];
+        lines.push(format!(
+            "Section: {}",
+            source_lines[section.heading_line].trim()
+        ));
+    }
+    // Only the nearest explicit Type declaration in the active section can be
+    // carried. Fenced examples and table cells are not identity declarations.
+    let section_start = scope
+        .section_path
+        .last()
+        .map(|id| tree.sections[*id].heading_line)
+        .unwrap_or(0);
+    let mut message: Option<&str> = None;
+    for (line_no, line) in source_lines.iter().enumerate().skip(section_start) {
+        let trimmed = line.trim();
+        if matches!(
+            tree.block_at_line(line_no).map(|b| b.kind),
+            Some(source_tree::BlockKind::FencedCode | source_tree::BlockKind::Table(_))
+        ) {
+            continue;
+        }
+        if trimmed.starts_with("Type:")
+            && trimmed
+                .strip_prefix("Type:")
+                .is_some_and(|v| !v.trim().is_empty() && v.trim().len() <= 100)
+        {
+            message = Some(trimmed);
+        }
+        if tree.sections.iter().any(|s| s.heading_line == line_no) {
+            message = None;
+            if trimmed
+                .trim_start_matches('#')
+                .trim_start()
+                .starts_with("Type:")
+            {
+                message = Some(trimmed);
+            }
+        }
+    }
+    if let Some(declaration) = message {
+        lines.push(format!("Active declaration: {declaration}"));
+    }
+    // Table context is structural evidence only. Preserve exact cells and
+    // row boundaries; never infer an owning message from a table header.
+    if let Some(source_tree::BlockKind::Table(index)) = scope.block {
+        let table = &tree.tables[index];
+        if let Some(header) = table.rows.first() {
+            lines.push(format!("Table columns: {}", header.cells.join(" | ")));
+        }
+        if let Some(row) = table.rows.last().filter(|row| row.line == last_line) {
+            lines.push(format!(
+                "Current table row (untyped): {}",
+                row.cells.join(" | ")
+            ));
+        }
+    }
+    if lines.is_empty() {
+        return String::new();
+    }
+    let bounded: String = lines.join("\n").chars().take(MAX_CONTEXT_CHARS).collect();
+    format!(
+        "=== DETERMINISTIC SOURCE CONTEXT (read-only; not evidence) ===\n{bounded}\n=== END DETERMINISTIC CONTEXT ===\nThis structure is a hint, not proof of message ownership. A new heading, table row or section can change scope. Cite evidence only from CURRENT SOURCE.\n\n"
+    )
+}
+
 // Context is read from the source before the current window, never from a
 // previous model response. This makes resume and recovery splits deterministic.
 // It is a hint to the model, not evidence for a fact or a message identity.
@@ -228,7 +327,8 @@ fn preceding_extraction_context(source: &str, part: &Chunk, window: &str) -> Str
         .map_or(0, |(offset, _)| offset);
     let tail = &before[tail_start..];
     format!(
-        "=== PRECEDING SOURCE CONTEXT (read-only; not evidence) ===\n{tail}\n=== END PRECEDING CONTEXT ===\n         Use this context only to understand the current section or message type.          A type remains applicable only while the source structure supports it.          A new heading, message declaration, table boundary or unrelated section may end it.          Preserve uppercase/lowercase exactly (Type: G differs from Type: g).          Every emitted fact must cite an S-number from CURRENT SOURCE below;          never cite the preceding context as evidence.\n\n"
+        "{}=== PRECEDING SOURCE CONTEXT (read-only; not evidence) ===\n{tail}\n=== END PRECEDING CONTEXT ===\nUse this context only to understand the current section or message type. A type remains applicable only while the source structure supports it. A new heading, message declaration, table boundary or unrelated section may end it. Preserve uppercase/lowercase exactly (Type: G differs from Type: g). Every emitted fact must cite an S-number from CURRENT SOURCE below; never cite the preceding context as evidence.\n\n",
+        scoped_source_context(source, part.start_byte + local_offset)
     )
 }
 
@@ -701,7 +801,7 @@ fn unsupported_quote_count(records: &ExtractedRecords) -> usize {
 #[cfg(test)]
 fn parse_structured_window(response: &str, source: &str) -> Result<ExtractedRecords, String> {
     let normalized = strip_code_fences(response.trim());
-    let parsed: ExtractedWindow = serde_json::from_str(normalized.trim())
+    let parsed: legacy_extraction_format::ExtractedWindow = serde_json::from_str(normalized.trim())
         .map_err(|e| format!("Invalid structured extraction JSON: {e}"))?;
     let mut result = Vec::new();
     for file in parsed.files {
@@ -739,6 +839,13 @@ fn parse_structured_window(response: &str, source: &str) -> Result<ExtractedReco
 
 // A segment locator proves that source text exists, not that the model's
 // assertion is semantically supported. Always require the later fact audit.
+/// Retain each distinct source occurrence while preserving checkpoint fields.
+fn retain_evidence_occurrence(fact: &mut SourceFact, occurrence: FactEvidenceOccurrence) {
+    if !fact.evidence_occurrences.contains(&occurrence) {
+        fact.evidence_occurrences.push(occurrence);
+    }
+}
+
 fn record_segmented_facts(
     facts: &mut BTreeMap<String, Vec<SourceFact>>,
     path: &str,
@@ -760,9 +867,7 @@ fn record_segmented_facts(
                 evidence_quote: quote.clone(),
                 source_byte_offset: None,
             };
-            if !existing.evidence_occurrences.contains(&occurrence) {
-                existing.evidence_occurrences.push(occurrence);
-            }
+            retain_evidence_occurrence(existing, occurrence);
             // A later source locator may replace a missing one, but never
             // silently turn an unreviewed assertion into a supported fact.
             if existing.evidence_quote.is_none()
@@ -903,9 +1008,7 @@ fn record_positioned_candidate_fact(
     {
         // Exact position is part of occurrence identity: two quotes on the
         // same line must not overwrite each other's source byte offsets.
-        if !existing.evidence_occurrences.contains(&occurrence) {
-            existing.evidence_occurrences.push(occurrence);
-        }
+        retain_evidence_occurrence(existing, occurrence);
         if existing.evidence_quote.is_none() {
             existing.evidence_quote = Some(quote);
             existing.source_chunk = source_chunk;
@@ -1719,16 +1822,6 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 part.start_line,
                 part.end_line
             );
-            let context = format!(
-                "SOURCE: {}\nCHUNK: {}/{}\nLINES: {}-{}\nADJACENT CHUNKS OVERLAP BY UP TO {} CHARACTERS. Do not count repeated source facts twice.\n\n=== SOURCE ===\n{}",
-                input.display(),
-                index + 1,
-                parts.len(),
-                part.start_line,
-                part.end_line,
-                CHUNK_OVERLAP_CHARS,
-                part.text
-            );
             let json_prompt = format!("{requirements}\n\n{}", JSON_EXTRACT_PROMPT);
             // Each source window is committed only after all recovery windows succeed.
             // EOF is usually a truncated model response: retrying the identical
@@ -1758,10 +1851,18 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                     ));
                 }
                 let preceding = preceding_extraction_context(&masked_source, part, &window);
+                // Construct the source section directly. String replacement could
+                // accidentally alter header metadata when it repeats source text.
                 let window_context = if window == part.text {
                     format!(
-                        "{preceding}{}",
-                        context.replace(&part.text, &segmented_source(&window))
+                        "{preceding}SOURCE: {}\nCHUNK: {}/{}\nLINES: {}-{}\nADJACENT CHUNKS OVERLAP BY UP TO {} CHARACTERS. Do not count repeated source facts twice.\n\n=== SOURCE ===\n{}",
+                        input.display(),
+                        index + 1,
+                        parts.len(),
+                        part.start_line,
+                        part.end_line,
+                        CHUNK_OVERLAP_CHARS,
+                        segmented_source(&window)
                     )
                 } else {
                     format!(
@@ -1795,7 +1896,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 let response = match self.llm_call.run_text_step_limited_with_temperature(
                     &json_prompt,
                     &window_context,
-                    MAX_TOKENS * 2,
+                    self.llm_call.max_tokens(),
                     0.0,
                 ) {
                     Ok(text) => text,
@@ -1847,7 +1948,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                                 match self.llm_call.run_text_step_limited_with_temperature(
                                     &retry_prompt,
                                     &window_context,
-                                    MAX_TOKENS * 2,
+                                    self.llm_call.max_tokens(),
                                     0.0,
                                 ) {
                                     Ok(text) => text,
@@ -2027,7 +2128,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                     let response = match self.llm_call.run_text_step_limited_with_temperature(
                         &coverage_prompt,
                         &context,
-                        MAX_TOKENS,
+                        self.llm_call.max_tokens(),
                         0.0,
                     ) {
                         Ok(text) => text,
@@ -2059,7 +2160,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                                     match self.llm_call.run_text_step_limited_with_temperature(
                                         &retry_prompt,
                                         &context,
-                                        MAX_TOKENS * 2,
+                                        self.llm_call.max_tokens(),
                                         0.0,
                                     ) {
                                         Ok(text) => text,
@@ -2416,7 +2517,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                         let response = match self.llm_call.run_text_step_limited_with_temperature(
                             structure_inference::PROMPT,
                             &source_window,
-                            2048,
+                            self.llm_call.max_tokens(),
                             0.0,
                         ) {
                             Ok(response) => response,
@@ -2959,10 +3060,12 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                         source
                     );
                     let prompt = r#"Find a verbatim quotation in ORIGINAL SOURCE that directly supports the FACT. Return ONLY JSON: {"evidence_quote":"exact source substring at least 12 characters"}. If there is no supporting quotation, return exactly UNSUPPORTED. Do not invent quotes or rewrite facts."#;
-                    match self
-                        .llm_call
-                        .run_text_step_limited_with_temperature(prompt, &context, 512, 0.0)
-                    {
+                    match self.llm_call.run_text_step_limited_with_temperature(
+                        prompt,
+                        &context,
+                        self.llm_call.max_tokens().min(512),
+                        0.0,
+                    ) {
                         Ok(answer) if answer.trim() == "UNSUPPORTED" => {
                             Err("Model did not find supporting source evidence".to_owned())
                         }

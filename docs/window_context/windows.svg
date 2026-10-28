@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1050" height="410" viewBox="0 0 1050 410" role="img" aria-labelledby="title desc">
+<title id="title">Overlapping primary source windows and proposed context prefixes</title>
+<desc id="desc">Window 1 spans characters 0 to 8000, Window 2 spans 7000 to 15000, Window 3 spans 14000 to 22000. Adjacent windows share 1000 characters. Each window has a proposed context prefix placed before the source content in the LLM request, independent of source offsets.</desc>
+<rect width="1050" height="410" fill="#ffffff"/>
+<g font-family="DejaVu Sans,Arial,sans-serif" fill="#20252c">
+<text x="24" y="35" font-size="23" font-weight="bold">Primary windows: 8,000 characters, 1,000 overlap</text>
+<text x="24" y="60" font-size="14">Positions in normalized document (Unicode characters)</text>
+</g>
+<g stroke="#c8d0d8" stroke-width="1" stroke-dasharray="4 4">
+<line x1="155" y1="94" x2="155" y2="277"/><line x1="414.5" y1="94" x2="414.5" y2="277"/>
+<line x1="451.5" y1="94" x2="451.5" y2="277"/><line x1="674" y1="94" x2="674" y2="277"/>
+<line x1="711" y1="94" x2="711" y2="277"/><line x1="970" y1="94" x2="970" y2="277"/>
+</g>
+<g font-family="DejaVu Sans,Arial,sans-serif" fill="#20252c" font-size="14" text-anchor="middle">
+<text x="155" y="89">0</text><text x="414.5" y="89">7,000</text><text x="451.5" y="89">8,000</text><text x="674" y="89">14,000</text><text x="711" y="89">15,000</text><text x="970" y="89">22,000</text>
+</g>
+<g font-family="DejaVu Sans,Arial,sans-serif" font-size="17" fill="#20252c">
+<text x="24" y="139">Window 1</text><text x="24" y="194">Window 2</text><text x="24" y="249">Window 3</text>
+</g>
+<rect x="155" y="110" width="296.5" height="42" rx="6" fill="#346ba7"/>
+<rect x="414.5" y="110" width="37" height="42" fill="#e6ad3c"/>
+<rect x="414.5" y="165" width="296.5" height="42" rx="6" fill="#237f75"/>
+<rect x="414.5" y="165" width="37" height="42" fill="#e6ad3c"/>
+<rect x="674" y="165" width="37" height="42" fill="#e6ad3c"/>
+<rect x="674" y="220" width="296" height="42" rx="6" fill="#7755a3"/>
+<rect x="674" y="220" width="37" height="42" fill="#e6ad3c"/>
+<g font-family="DejaVu Sans,Arial,sans-serif" font-size="13" fill="#20252c">
+<rect x="92" y="110" width="59" height="42" rx="5" fill="#d7d9df" stroke="#555b67" stroke-dasharray="5 3"/>
+<text x="121" y="127" text-anchor="middle" font-weight="bold">CTX 1</text><text x="121" y="143" text-anchor="middle" font-size="10">planned</text>
+<rect x="351.5" y="165" width="59" height="42" rx="5" fill="#d7d9df" stroke="#555b67" stroke-dasharray="5 3"/>
+<text x="381" y="182" text-anchor="middle" font-weight="bold">CTX 2</text><text x="381" y="198" text-anchor="middle" font-size="10">planned</text>
+<rect x="611" y="220" width="59" height="42" rx="5" fill="#d7d9df" stroke="#555b67" stroke-dasharray="5 3"/>
+<text x="640" y="237" text-anchor="middle" font-weight="bold">CTX 3</text><text x="640" y="253" text-anchor="middle" font-size="10">planned</text>
+<path d="M151 131 L155 131 M410.5 186 L414.5 186 M670 241 L674 241" stroke="#555b67" stroke-width="2"/>
+</g>
+<g fill="#ffffff" font-family="DejaVu Sans,Arial,sans-serif" font-size="15" text-anchor="middle">
+<text x="280" y="137">0–8,000</text><text x="563" y="192">7,000–15,000</text><text x="832" y="247">14,000–22,000</text>
+</g>
+<g fill="#20252c" font-family="DejaVu Sans,Arial,sans-serif" font-size="14">
+<rect x="155" y="295" width="20" height="17" fill="#e6ad3c" rx="2"/><text x="184" y="309">Yellow = repeated source region (1,000 characters)</text>
+</g>
+<g font-family="DejaVu Sans,Arial,sans-serif" fill="#20252c" font-size="14">
+<rect x="155" y="327" width="20" height="17" rx="2" fill="#d7d9df" stroke="#555b67" stroke-dasharray="5 3"/>
+<text x="184" y="341">CTX = planned, source-grounded context prefix (outside the 8,000-character window)</text>
+<text x="155" y="365">CTX may persist across windows or be discarded at a confirmed message boundary.</text>
+<text x="155" y="389">Currently implemented: up to 1,200 preceding source characters, not scoped semantic context.</text>
+</g>
+</svg>
