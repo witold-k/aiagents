@@ -55,9 +55,31 @@ pub struct Boundaries {
     pub max_tool_call_fail: usize,
 }
 
+/// Retry policy for HTTP 504 responses from the inference endpoint.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HttpRetry {
+    /// Number of additional attempts after the initial request.
+    pub count: usize,
+    /// Fixed delay between attempts in seconds.
+    pub delay_seconds: u64,
+}
+
+impl Default for HttpRetry {
+    fn default() -> Self {
+        Self {
+            count: 3,
+            delay_seconds: 30,
+        }
+    }
+}
+
 /// Main configuration for model providers, execution limits, scanning, and file access.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Config {
+    /// Retry HTTP 504 gateway timeouts; absent in older config files uses defaults.
+    #[serde(default)]
+    pub http_retry: HttpRetry,
     /// Name of the default provider.
     pub provider: String,
     /// Configured model providers available to the application.
@@ -89,6 +111,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            http_retry: HttpRetry::default(),
             provider: "devs".into(),
 
             providerlist: vec![
@@ -322,6 +345,9 @@ impl Default for Config {
                 ".in".into(),
                 ".java".into(),
                 ".jl".into(), // julia
+                ".json".into(),
+                ".lua".into(),
+                ".py".into(), // python
                 ".rs".into(), // rust
                 ".sv".into(), // system verilog
                 ".tcl".into(),

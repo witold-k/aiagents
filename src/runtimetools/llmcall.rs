@@ -28,6 +28,8 @@ use std::cell::RefCell;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::thread;
+use std::time::Duration;
 
 #[expect(dead_code)]
 #[derive(Clone)]
@@ -490,6 +492,36 @@ impl<'a> LlmCall<'a> {
         self.max_tokens
     }
 
+    /// Retry only a gateway timeout, not malformed responses or application errors.
+    /// The HTTP client currently exposes status failures as text.
+    pub fn is_gateway_timeout(result: &AIRequestResult) -> bool {
+        match result {
+            AIRequestResult::RequestFailed(_, message) => {
+                message.contains("status: 504")
+                    || message.contains("status 504")
+                    || message.contains("504 Gateway Timeout")
+            }
+            _ => false,
+        }
+    }
+
+    fn request_with_504_retry(&self, request: &AIRequest, messages: &str) -> AIRequestResult {
+        for attempt in 0..self.config.http_retry.count {
+            let result = request.request(messages);
+            if !Self::is_gateway_timeout(&result) {
+                return result;
+            }
+            eprintln!(
+                "LLM HTTP 504: retry {}/{} in {} seconds",
+                attempt + 1,
+                self.config.http_retry.count,
+                self.config.http_retry.delay_seconds,
+            );
+            thread::sleep(Duration::from_secs(self.config.http_retry.delay_seconds));
+        }
+        request.request(messages)
+    }
+
     pub fn run_text_step(&self, prompt: &str, context: &str) -> Result<String, LlmCallResult> {
         self.run_text_step_limited(prompt, context, self.max_tokens)
     }
@@ -616,7 +648,7 @@ impl<'a> LlmCall<'a> {
             println!("### END");
         }
 
-        let response = match air.request(&json_messages.to_string()) {
+        let response = match self.request_with_504_retry(&air, &json_messages.to_string()) {
             AIRequestResult::Ok(value) => value,
             err => return Err(LlmCallResult::RequestError(Box::new(err))),
         };
@@ -801,7 +833,7 @@ impl<'a> LlmCall<'a> {
                     println!("### END");
                 }
 
-                match air.request(&json_messages.to_string()) {
+                match self.request_with_504_retry(air, &json_messages.to_string()) {
                     AIRequestResult::Ok(val) => val,
                     err => return LlmCallResult::RequestError(Box::new(err)),
                 }

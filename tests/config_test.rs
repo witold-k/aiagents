@@ -63,3 +63,20 @@ fn config_filters_reject_unknown_placeholders() {
     config.readfilter = vec!["{{unknown}}".into()];
     assert!(config.with_expanded_filters().is_err());
 }
+
+#[test]
+fn default_http_retry_policy_and_json_override() {
+    use aiagents::config::Config;
+    let default = Config::default();
+    assert_eq!(default.http_retry.count, 3);
+    assert_eq!(default.http_retry.delay_seconds, 30);
+    let mut json = serde_json::to_value(&default).unwrap();
+    json.as_object_mut().unwrap().remove("http_retry");
+    let legacy: Config = serde_json::from_value(json.clone()).unwrap();
+    assert_eq!(legacy.http_retry.count, 3);
+    assert_eq!(legacy.http_retry.delay_seconds, 30);
+    json["http_retry"] = serde_json::json!({"count": 2, "delay_seconds": 5});
+    let custom: Config = serde_json::from_value(json).unwrap();
+    assert_eq!(custom.http_retry.count, 2);
+    assert_eq!(custom.http_retry.delay_seconds, 5);
+}
