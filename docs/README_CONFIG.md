@@ -14,6 +14,7 @@ By default the file is `$XDG_CONFIG_HOME/aifix/config.json` when `XDG_CONFIG_HOM
 | `providerlist` | array of objects | Available model providers and their launch/request settings |
 | `taskproviderlist` | array of objects | Per-task provider selection and temperature |
 | `max_try_count` | object | Workflow and tool-call failure limits |
+| `http_retry` | object | Additional retries and fixed delay for HTTP 504 responses from the LLM endpoint |
 | `queue_length_max` | integer | Maximum queue length |
 | `queue_length_save` | integer | Queue entries to save (must not exceed `queue_length_max`) |
 | `scanendfilter` | array of strings | Filename suffixes selected by the scanner |
@@ -41,6 +42,21 @@ Each entry in `providerlist` has these fields:
 Entries in `taskproviderlist` use `task`, `provider`, and `temperature`. The `provider` must match an entry in `providerlist`; temperature must be finite.
 
 `max_try_count` contains `max_workflow_fail` and `max_tool_call_fail`.
+
+### HTTP 504 retry policy
+
+`http_retry` contains `count` (number of **additional** requests after the initial attempt) and `delay_seconds` (fixed wait between attempts). The defaults are **3 retries** and **30 seconds**. Set `count` to `0` to disable retries:
+
+```json
+{
+  "http_retry": {
+    "count": 3,
+    "delay_seconds": 30
+  }
+}
+```
+
+Older configuration files without `http_retry` receive these defaults automatically. The retry policy applies to LLM calls made through `LlmCall` and retries only HTTP 504 errors recognized by the HTTP client; it does not retry all HTTP or model errors. Each retry resends the request, so a gateway timeout may cause duplicate inference work if the server is still processing the previous request. The current detection uses the HTTP client's error text rather than a structured status code; this is a known limitation.
 
 ## Filesystem filters and placeholders
 
@@ -73,7 +89,7 @@ Placeholder expansion is textual: it does not create directories, and the result
 
 The loader checks for duplicate provider names, missing provider references, nonfinite task temperatures, invalid queue limits, and an unknown selected provider. After loading, it expands filesystem filter placeholders.
 
-When the application adds configuration fields, existing JSON files may require updating. Consult `Config::default()` in [`src/config.rs`](../src/config.rs) for authoritative current defaults.
+When the application adds required configuration fields, existing JSON files may require updating. The optional `http_retry` field uses defaults when absent. Consult `Config::default()` in [`src/config.rs`](../src/config.rs) for authoritative current defaults.
 
 ## LLM output token limit (CLI)
 

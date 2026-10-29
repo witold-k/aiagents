@@ -33,7 +33,7 @@ Use `-m` for additional literal task instructions; place it before `-a/--args`, 
 | [`extract_message_tables`](docs/tasks/extract_message_tables/README.md) | Protocol fact extraction |
 | [`fix_code`](docs/tasks/fix_code/README.md) | Code repair |
 | [`gen_code`](docs/tasks/gen_code/README.md) | Code generation |
-| [`release_doc`](docs/tasks/release_doc/README.md) | Release notes |
+| [`release_doc`](docs/tasks/release_doc/README.md) | Release notes, technical review and optional validation/revision |
 | [`review_code`](docs/tasks/review_code/README.md) | Code review |
 | [`review_doc`](docs/tasks/review_doc/README.md) | Document review |
 | [`setup_build`](docs/tasks/setup_build/README.md) | Build setup |

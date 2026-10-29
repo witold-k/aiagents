@@ -76,3 +76,23 @@ flowchart LR
 
 A byte-for-byte matching quotation is **not** semantic verification.
 For detailed extraction behavior, see [Chunked Transform](chunked_transform.md).
+
+## 6. Git release documentation and review
+
+```mermaid
+flowchart TD
+    G["Rust: Git range and changed-file net diffs"] --> P["LLM: per-file chunk analyses"]
+    P --> C["LLM: bounded batch consolidation"]
+    C --> N["LLM: release notes"]
+    G --> D["Rust: select complete diffs within shared 64,000-byte review budget"]
+    D --> R["LLM: draft technical review"]
+    R --> V{"LLM: validation feedback"}
+    V -->|"exact OK"| A["Keep draft review"]
+    V -->|"other successful feedback"| X["LLM: one revision attempt"]
+    X --> Y["Revised review; not revalidated"]
+    N --> O["Rust: assemble document and Git-derived changed-files appendix"]
+    A --> O
+    Y --> O
+```
+
+The review, validation, and revision stages are **best-effort**. Failures retain already generated release notes and produce explicit review-status text; the diagram shows the successful path. Review inputs may omit diffs that do not fit the shared byte budget. See [release documentation](tasks/release_doc/README.md) for failure behavior and diagnostic traces.
