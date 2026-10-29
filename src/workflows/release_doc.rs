@@ -449,44 +449,71 @@ impl<'a> Workflow for ReleaseDocWorkflow<'a> {
         if let Some(dir) = &trace_dir {
             trace_write(dir, &repository, "07-review-input.txt", &review_input);
         }
-        let review = match self
+        // A failed review must not discard already generated release notes.
+        // This can happen with large inputs (e.g. binary diffs or token limits),
+        // but also with unrelated LLM failures. Never imply a successful review.
+        let final_review = match self
             .llm_call
             .run_text_step(WorkflowSteps::ReleaseDocReview.get_prompt(), &review_input)
         {
-            Ok(review) => review,
-            Err(result) => return WorkflowResult::LlmCallResult(result),
-        };
-        if let Some(dir) = &trace_dir {
-            trace_write(dir, &repository, "07-technical-review.md", &review);
-        }
-
-        let validation_input = build_review_validation_input(&review_input, &review);
-        let feedback = match self.llm_call.run_text_step(
-            WorkflowSteps::ReleaseDocValidate.get_prompt(),
-            &validation_input,
-        ) {
-            Ok(feedback) => feedback,
-            Err(result) => return WorkflowResult::LlmCallResult(result),
-        };
-        if let Some(dir) = &trace_dir {
-            trace_write(dir, &repository, "08-review-validation.md", &feedback);
-        }
-
-        let final_review = if review_validation_is_ok(&feedback) {
-            review
-        } else {
-            let revision_input = build_review_revision_input(&validation_input, &feedback);
-            let revised = match self.llm_call.run_text_step(
-                WorkflowSteps::ReleaseDocRevise.get_prompt(),
-                &revision_input,
-            ) {
-                Ok(revised) => revised,
-                Err(result) => return WorkflowResult::LlmCallResult(result),
-            };
-            if let Some(dir) = &trace_dir {
-                trace_write(dir, &repository, "09-revised-review.md", &revised);
+            Err(error) => {
+                eprintln!("release_doc: technical review failed: {error}");
+                "Technical review unavailable: the review LLM step failed. Release notes have not been independently reviewed; consult the original Git diffs.".to_string()
             }
-            revised
+            Ok(review) => {
+                if let Some(dir) = &trace_dir {
+                    trace_write(dir, &repository, "07-technical-review.md", &review);
+                }
+                let validation_input = build_review_validation_input(&review_input, &review);
+                match self.llm_call.run_text_step(
+                    WorkflowSteps::ReleaseDocValidate.get_prompt(),
+                    &validation_input,
+                ) {
+                    Err(error) => {
+                        eprintln!("release_doc: technical review validation failed: {error}");
+                        format!(
+                            "{review}\n\n**Review status: NOT VALIDATED.** The validation LLM step failed; the technical review may be incomplete or incorrect."
+                        )
+                    }
+                    Ok(feedback) => {
+                        if let Some(dir) = &trace_dir {
+                            trace_write(dir, &repository, "08-review-validation.md", &feedback);
+                        }
+                        if review_validation_is_ok(&feedback) {
+                            review
+                        } else {
+                            let revision_input =
+                                build_review_revision_input(&validation_input, &feedback);
+                            match self.llm_call.run_text_step(
+                                WorkflowSteps::ReleaseDocRevise.get_prompt(),
+                                &revision_input,
+                            ) {
+                                Ok(revised) => {
+                                    if let Some(dir) = &trace_dir {
+                                        trace_write(
+                                            dir,
+                                            &repository,
+                                            "09-revised-review.md",
+                                            &revised,
+                                        );
+                                    }
+                                    format!(
+                                        "{revised}\n\n**Review status: REVISED, NOT REVALIDATED.**"
+                                    )
+                                }
+                                Err(error) => {
+                                    eprintln!(
+                                        "release_doc: technical review revision failed: {error}"
+                                    );
+                                    format!(
+                                        "{review}\n\n**Review status: VALIDATION FAILED; REVISION UNAVAILABLE.** The revision LLM step failed. Validation feedback:\n\n{feedback}"
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         };
 
         let document = assemble_release_document(&release_notes, &final_review, &context.changes);

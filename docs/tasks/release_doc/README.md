@@ -32,6 +32,12 @@ The workflow reads only paths changed between the selected Git revisions (added,
 
 Do not infer behavior, compatibility or test success from commit messages alone.
 
+## Review failures and incomplete evidence
+
+The technical review is best-effort. Review, validation, or revision LLM calls can fail (for example because the model's input or output token limits are exceeded, a large or binary diff is involved, or the provider returns an unrelated error). Such failures no longer discard already generated release notes. The final document retains the Git-derived changed-files list and marks the technical review as unavailable, unvalidated, or not successfully revised. A warning is also written to stderr.
+
+The review input uses a **shared** 64,000-byte budget for complete per-file diffs, in addition to release metadata and prompts. Diffs that do not fit are explicitly listed as omitted and are **not reviewed**. The initial per-file analysis splits at line boundaries; exceptionally long lines can still exceed its nominal chunk size. Consequently, neither the presence of a technical review nor a successful validation establishes completeness, especially for binary files or large changes. Check the original Git diff when accuracy matters.
+
 ## Source of truth
 
 - [Task description](../../../task_descriptions/tasks/release_doc.md)
