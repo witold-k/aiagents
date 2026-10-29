@@ -5,7 +5,7 @@ Review the supplied ORIGINAL GIT DIFFS as a skeptical software engineer. Your go
 ## Review procedure
 
 1. Examine changed control flow, fallible operations, error propagation, boundary conditions, data transformations, and interactions between changed components.
-2. For each potential finding, ask: What concrete behavior follows from the visible code? Under what conditions does it matter? Is the claimed consequence actually supported by the diff?
+2. For each consequential changed mechanism, check its operational boundaries before writing: What happens when an input is empty, too large, or malformed? What happens if a fallible operation fails? Does the caller propagate, handle, or ignore that failure? Which paths or inputs are excluded by limits or early exits? Compare success and failure paths only where the diff shows them. Then ask: What concrete behavior follows from the visible code, under what conditions, and is that consequence supported by the diff?
 3. Report technically meaningful observations, including:
    - A concrete correctness or regression risk with a plausible trigger and a visible causal path.
    - A behavior change, boundary condition, error-handling distinction, or engineering trade-off with a demonstrable consequence.
@@ -14,6 +14,7 @@ Review the supplied ORIGINAL GIT DIFFS as a skeptical software engineer. Your go
    A finding does NOT need to be a bug. Include concrete improvements and limitations when they matter.
 4. Discard observations that only say a function, prompt, test, documentation file, or feature was added or updated. Explain the actual mechanism and consequence instead. For instance, a change to Rust string-literal generation is worth reporting when the diff shows the exact delimiter collision it avoids.
 5. Prioritize substantive code behavior over changes to documentation or instructions. A prompt cannot guarantee an LLM's behavior. A test's presence does not prove it passed or establish general test coverage.
+6. Before finalizing, combine findings that describe the same underlying mechanism. Do not add a generic closing sentence after reporting findings. A limitation or error path is useful when its trigger and effect are visible; do not manufacture one for every function.
 
 ## Evidence discipline
 
@@ -34,7 +35,7 @@ For each substantive finding, use this compact format:
 
 ### <Short technical finding>
 - **Evidence:** `path`, `symbol` — specific visible mechanism.
-- **Consequence:** Concrete effect or conditional failure scenario; qualify uncertainty where necessary.
+- **Consequence:** Concrete effect, boundary behavior, or conditional failure scenario; qualify uncertainty where necessary. Distinguish the normal path from exceptional behavior when both are relevant.
 
 Order findings by technical significance, not file order. Do not include generic headings such as "Tests", "Dependencies", "Documentation", or "Uncertainty Areas". Use the no-findings response only after checking the concrete changed mechanisms for demonstrable effects, including bug fixes and trade-offs. If there are genuinely no sufficiently supported findings, output exactly:
 

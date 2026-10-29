@@ -326,3 +326,28 @@ fn review_input_omits_entire_oversized_diff_with_explicit_path() {
     assert!(input.contains("- src/huge.rs"));
     assert!(!input.contains(&"x".repeat(100)));
 }
+
+#[test]
+fn validation_accepts_only_explicit_ok() {
+    use aiagents::workflows::release_doc::review_validation_is_ok;
+    assert!(review_validation_is_ok("OK\n"));
+    assert!(!review_validation_is_ok("REVISE\n- missing error path"));
+    assert!(!review_validation_is_ok("OK, but one issue remains"));
+    assert!(!review_validation_is_ok(""));
+}
+
+#[test]
+fn validation_and_revision_keep_original_evidence_and_feedback() {
+    use aiagents::workflows::release_doc::{
+        build_review_revision_input, build_review_validation_input,
+    };
+    let original = "=== ORIGINAL GIT DIFFS ===\n+return WorkflowResult::Error";
+    let draft = "### Trace\n- **Consequence:** Writes never fail.";
+    let validation = build_review_validation_input(original, draft);
+    assert!(validation.contains(original));
+    assert!(validation.contains(draft));
+    let revised = build_review_revision_input(&validation, "REVISE\n- distinguish create_dir_all");
+    assert!(revised.contains(original));
+    assert!(revised.contains(draft));
+    assert!(revised.contains("distinguish create_dir_all"));
+}

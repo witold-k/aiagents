@@ -196,6 +196,20 @@ pub fn build_review_input(
     }
     input
 }
+/// Only an exact OK response skips correction; ambiguous validator output is not silently accepted.
+pub fn review_validation_is_ok(response: &str) -> bool {
+    response.trim() == "OK"
+}
+
+/// Keep original diffs, the draft, and the critique in the correction context.
+pub fn build_review_validation_input(review_input: &str, review: &str) -> String {
+    format!("{review_input}\n=== CURRENT TECHNICAL REVIEW ===\n{review}\n")
+}
+
+pub fn build_review_revision_input(validation_input: &str, feedback: &str) -> String {
+    format!("{validation_input}\n=== VALIDATION FEEDBACK ===\n{feedback}\n")
+}
+
 /// Remove only a full-document Markdown fence, leaving ordinary Markdown untouched.
 fn strip_markdown_fence(markdown: &str) -> &str {
     let text = markdown.trim();
@@ -442,10 +456,42 @@ impl<'a> Workflow for ReleaseDocWorkflow<'a> {
             Ok(review) => review,
             Err(result) => return WorkflowResult::LlmCallResult(result),
         };
-        let document = assemble_release_document(&release_notes, &review, &context.changes);
         if let Some(dir) = &trace_dir {
             trace_write(dir, &repository, "07-technical-review.md", &review);
-            trace_write(dir, &repository, "08-final-document.md", &document);
+        }
+
+        let validation_input = build_review_validation_input(&review_input, &review);
+        let feedback = match self.llm_call.run_text_step(
+            WorkflowSteps::ReleaseDocValidate.get_prompt(),
+            &validation_input,
+        ) {
+            Ok(feedback) => feedback,
+            Err(result) => return WorkflowResult::LlmCallResult(result),
+        };
+        if let Some(dir) = &trace_dir {
+            trace_write(dir, &repository, "08-review-validation.md", &feedback);
+        }
+
+        let final_review = if review_validation_is_ok(&feedback) {
+            review
+        } else {
+            let revision_input = build_review_revision_input(&validation_input, &feedback);
+            let revised = match self.llm_call.run_text_step(
+                WorkflowSteps::ReleaseDocRevise.get_prompt(),
+                &revision_input,
+            ) {
+                Ok(revised) => revised,
+                Err(result) => return WorkflowResult::LlmCallResult(result),
+            };
+            if let Some(dir) = &trace_dir {
+                trace_write(dir, &repository, "09-revised-review.md", &revised);
+            }
+            revised
+        };
+
+        let document = assemble_release_document(&release_notes, &final_review, &context.changes);
+        if let Some(dir) = &trace_dir {
+            trace_write(dir, &repository, "10-final-document.md", &document);
         }
 
         if let Err(err) = write_release_notes(
