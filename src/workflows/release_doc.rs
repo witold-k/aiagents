@@ -471,7 +471,9 @@ impl<'a> Workflow for ReleaseDocWorkflow<'a> {
                 ) {
                     Err(error) => {
                         eprintln!("release_doc: technical review validation failed: {error}");
-                        format!("{review}\n\n**Review status: NOT VALIDATED.** The validation LLM step failed; the technical review may be incomplete or incorrect.")
+                        format!(
+                            "{review}\n\n**Review status: NOT VALIDATED.** The validation LLM step failed; the technical review may be incomplete or incorrect."
+                        )
                     }
                     Ok(feedback) => {
                         if let Some(dir) = &trace_dir {
@@ -480,20 +482,32 @@ impl<'a> Workflow for ReleaseDocWorkflow<'a> {
                         if review_validation_is_ok(&feedback) {
                             review
                         } else {
-                            let revision_input = build_review_revision_input(&validation_input, &feedback);
+                            let revision_input =
+                                build_review_revision_input(&validation_input, &feedback);
                             match self.llm_call.run_text_step(
                                 WorkflowSteps::ReleaseDocRevise.get_prompt(),
                                 &revision_input,
                             ) {
                                 Ok(revised) => {
                                     if let Some(dir) = &trace_dir {
-                                        trace_write(dir, &repository, "09-revised-review.md", &revised);
+                                        trace_write(
+                                            dir,
+                                            &repository,
+                                            "09-revised-review.md",
+                                            &revised,
+                                        );
                                     }
-                                    format!("{revised}\n\n**Review status: REVISED, NOT REVALIDATED.**")
+                                    format!(
+                                        "{revised}\n\n**Review status: REVISED, NOT REVALIDATED.**"
+                                    )
                                 }
                                 Err(error) => {
-                                    eprintln!("release_doc: technical review revision failed: {error}");
-                                    format!("{review}\n\n**Review status: VALIDATION FAILED; REVISION UNAVAILABLE.** The revision LLM step failed. Validation feedback:\n\n{feedback}")
+                                    eprintln!(
+                                        "release_doc: technical review revision failed: {error}"
+                                    );
+                                    format!(
+                                        "{review}\n\n**Review status: VALIDATION FAILED; REVISION UNAVAILABLE.** The revision LLM step failed. Validation feedback:\n\n{feedback}"
+                                    )
                                 }
                             }
                         }
