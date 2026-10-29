@@ -227,3 +227,102 @@ fn first_release_without_tag_uses_empty_tree() {
             .any(|change| change.path == std::path::Path::new("README.md"))
     );
 }
+
+#[test]
+fn assembled_release_document_contains_independent_review_and_all_changed_paths() {
+    use aiagents::runtimetools::releasedoc::ReleaseFileChange;
+    use aiagents::workflows::release_doc::assemble_release_document;
+    let changes = vec![
+        ReleaseFileChange {
+            path: "src/z.rs".into(),
+            diff: "diff".into(),
+        },
+        ReleaseFileChange {
+            path: "src/a.rs".into(),
+            diff: "diff".into(),
+        },
+        ReleaseFileChange {
+            path: "src/z.rs".into(),
+            diff: "diff".into(),
+        },
+    ];
+    let result = assemble_release_document(
+        "# Release Notes\n\n## Changes\n- New behavior.\n",
+        "### Quality\nThe design is simpler, but error handling needs review.",
+        &changes,
+    );
+    assert!(result.starts_with("# Release Notes\n"));
+    assert!(result.contains("## Technical Review\n\n### Quality\n"));
+    assert!(result.contains("## Changed Files\n\n- `src/a.rs`\n- `src/z.rs`\n"));
+    assert_eq!(result.matches("- `src/z.rs`").count(), 1);
+}
+
+#[test]
+fn assembled_release_document_handles_empty_change_list() {
+    use aiagents::workflows::release_doc::assemble_release_document;
+    let result = assemble_release_document("# Release Notes", "No issues identified.", &[]);
+    assert!(result.contains("## Technical Review\n\nNo issues identified."));
+    assert!(result.ends_with("## Changed Files\n\nNo changed files.\n"));
+}
+
+#[test]
+fn assembled_release_document_removes_repeated_heading_and_document_fences() {
+    use aiagents::workflows::release_doc::assemble_release_document;
+    let result = assemble_release_document(
+        "```markdown\n# Release Notes\n\n## Changes\n- One change.\n```",
+        "```markdown\n## Technical Review\n\n### Quality\nConcrete observation.\n```",
+        &[],
+    );
+    assert!(result.starts_with("# Release Notes\n"));
+    assert_eq!(result.matches("## Technical Review").count(), 1);
+    assert!(result.contains("## Technical Review\n\n### Quality\nConcrete observation."));
+    assert!(!result.contains("```"));
+}
+
+#[test]
+fn assembled_release_document_preserves_review_without_repeated_heading() {
+    use aiagents::workflows::release_doc::assemble_release_document;
+    let result = assemble_release_document(
+        "# Release Notes",
+        "### Quality\n## Technical Review is mentioned in prose, not as heading.",
+        &[],
+    );
+    assert!(result.contains("### Quality\n## Technical Review is mentioned"));
+}
+
+#[test]
+fn review_input_contains_original_diffs_without_llm_summaries() {
+    use aiagents::runtimetools::releasedoc::ReleaseFileChange;
+    use aiagents::workflows::release_doc::build_review_input;
+    let changes = vec![ReleaseFileChange {
+        path: "src/a.rs".into(),
+        diff: "diff --git a/src/a.rs b/src/a.rs\n@@ -1 +1 @@\n-old\n+new\n".into(),
+    }];
+    let input = build_review_input("COMMITS", &changes);
+    assert!(input.contains("ORIGINAL GIT DIFFS"));
+    assert!(input.contains("=== FILE: src/a.rs ==="));
+    assert!(input.contains("+new"));
+    assert!(!input.contains("LLM-GENERATED"));
+}
+
+#[test]
+fn review_input_omits_entire_oversized_diff_with_explicit_path() {
+    use aiagents::runtimetools::releasedoc::ReleaseFileChange;
+    use aiagents::workflows::release_doc::build_review_input;
+    let changes = vec![
+        ReleaseFileChange {
+            path: "src/huge.rs".into(),
+            diff: "x".repeat(64_001),
+        },
+        ReleaseFileChange {
+            path: "tests/small.rs".into(),
+            diff: "+small".into(),
+        },
+    ];
+    let input = build_review_input("COMMITS", &changes);
+    assert!(input.contains("=== FILE: tests/small.rs ==="));
+    assert!(input.contains("+small"));
+    assert!(input.contains("OMITTED FILE DIFFS (NOT REVIEWED)"));
+    assert!(input.contains("- src/huge.rs"));
+    assert!(!input.contains(&"x".repeat(100)));
+}

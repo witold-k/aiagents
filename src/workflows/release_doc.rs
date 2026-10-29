@@ -114,23 +114,134 @@ pub fn split_diff(diff: &str, max_chars: usize) -> Vec<String> {
     chunks
 }
 
+/// Optional diagnostic capture. Never changes LLM inputs or the generated document.
+fn trace_write(dir: &Path, repository: &str, filename: &str, content: &str) {
+    if let Err(error) = fs::write(
+        dir.join(format!("release_doc_{repository}_{filename}")),
+        content,
+    ) {
+        eprintln!("release_doc trace: could not write {filename}: {error}");
+    }
+}
+
 fn reduce_summaries(
     llm: &LlmCall<'_>,
     mut summaries: Vec<String>,
+    trace: Option<(&Path, &str, String)>,
 ) -> Result<String, crate::runtimetools::llmcall::LlmCallResult> {
     if summaries.is_empty() {
         return Ok("No changed files.".into());
     }
     // Bounded fan-in ensures that even a large release is processed incrementally.
+    let mut level = 0;
     while summaries.len() > 1 {
         let mut next = Vec::new();
         for batch in summaries.chunks(4) {
-            let prompt = "Consolidate these release change analyses. Preserve verified facts,                 file references, uncertainty and breaking changes; combine related items                 and remove duplicates. Return a concise factual analysis, not release notes.";
+            let prompt = "Consolidate these release change analyses without losing technical evidence. Preserve verified behavioral changes, control flow, error handling, fallible operations, dependencies, tests, file/symbol references and uncertainty. Group related changes across files, but do not replace concrete mechanisms with generic quality claims. Keep technically relevant internal details for the critical review even if not release-worthy. Do not invent risks or assert tests passed. Return factual Markdown analysis, not release notes.";
             next.push(llm.run_text_step(prompt, &batch.join("\n\n--- ANALYSIS ---\n\n"))?);
         }
+        if let Some((dir, repository, ref prefix)) = trace {
+            for (index, summary) in next.iter().enumerate() {
+                trace_write(
+                    dir,
+                    repository,
+                    &format!("{prefix}-level-{level:02}-batch-{index:03}.md"),
+                    summary,
+                );
+            }
+        }
         summaries = next;
+        level += 1;
     }
     Ok(summaries.pop().unwrap())
+}
+
+/// Build review input from original Git diffs, not LLM-generated summaries.
+/// Only complete per-file diffs are included; omitted files are listed explicitly.
+pub fn build_review_input(
+    metadata: &str,
+    changes: &[crate::runtimetools::releasedoc::ReleaseFileChange],
+) -> String {
+    const MAX_DIFF_BYTES: usize = 64_000;
+    let mut input = format!("{metadata}\n=== ORIGINAL GIT DIFFS ===\n");
+    let mut used = 0;
+    let mut omitted = Vec::new();
+    let mut ordered: Vec<_> = changes.iter().collect();
+    ordered.sort_by_key(|change| {
+        let path = change.path.to_string_lossy();
+        if path.starts_with("src/") || path == "build.rs" {
+            0
+        } else if path.starts_with("tests/") {
+            1
+        } else {
+            2
+        }
+    });
+    for change in ordered {
+        let path = change.path.display().to_string();
+        let entry = format!("\n=== FILE: {path} ===\n{}\n", change.diff);
+        if entry.len() <= MAX_DIFF_BYTES.saturating_sub(used) {
+            used += entry.len();
+            input.push_str(&entry);
+        } else {
+            omitted.push(path);
+        }
+    }
+    if !omitted.is_empty() {
+        input.push_str("\n=== OMITTED FILE DIFFS (NOT REVIEWED) ===\n");
+        for path in omitted {
+            input.push_str(&format!("- {path}\n"));
+        }
+        input.push_str("Do not infer behavior from omitted diffs.\n");
+    }
+    input
+}
+/// Remove only a full-document Markdown fence, leaving ordinary Markdown untouched.
+fn strip_markdown_fence(markdown: &str) -> &str {
+    let text = markdown.trim();
+    let Some(first_line_end) = text.find('\n') else {
+        return text;
+    };
+    let first_line = text[..first_line_end].trim();
+    if first_line != "```" && first_line != "```markdown" && first_line != "```md" {
+        return text;
+    }
+    let body = text[first_line_end + 1..].trim_end();
+    body.strip_suffix("```").map(str::trim_end).unwrap_or(text)
+}
+
+/// Append review and the complete Git-derived path list without asking the LLM to invent paths.
+pub fn assemble_release_document(
+    release_notes: &str,
+    review: &str,
+    changes: &[crate::runtimetools::releasedoc::ReleaseFileChange],
+) -> String {
+    let mut document = strip_markdown_fence(release_notes).trim_end().to_owned();
+    document.push_str("\n\n## Technical Review\n\n");
+    let review = strip_markdown_fence(review);
+    let review = review.trim_start();
+    let review = review
+        .strip_prefix("## Technical Review")
+        .filter(|rest| rest.is_empty() || rest.starts_with('\n') || rest.starts_with('\r'))
+        .unwrap_or(review);
+    document.push_str(review.trim());
+    document.push_str("\n\n## Changed Files\n\n");
+    if changes.is_empty() {
+        document.push_str("No changed files.\n");
+    } else {
+        let mut paths: Vec<_> = changes.iter().map(|change| &change.path).collect();
+        paths.sort();
+        paths.dedup();
+        for path in paths {
+            // Keep unusual file names on a single Markdown line.
+            let name = path
+                .to_string_lossy()
+                .replace('\n', "\\n")
+                .replace('\r', "\\r");
+            document.push_str(&format!("- `{}`\n", name.replace('`', "\\`")));
+        }
+    }
+    document
 }
 
 pub struct ReleaseDocWorkflow<'a> {
@@ -187,10 +298,57 @@ impl<'a> Workflow for ReleaseDocWorkflow<'a> {
             }
         };
 
+        // The checkout directory names the repository, without any remote URL.
+        let repository = self
+            .projdir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("repository")
+            .trim_end_matches(".git");
+        let repository = if repository.is_empty() {
+            "repository"
+        } else {
+            repository
+        };
+        let repository: String = repository
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                    ch
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+
+        // Opt-in diagnostic artifacts for locating information loss between stages.
+        // Contents may include source code and commit messages; keep the directory private.
+        let trace_dir = std::env::var_os("AIFIX_RELEASE_DOC_TRACE_DIR").map(|value| {
+            let path = PathBuf::from(value);
+            if path.is_absolute() {
+                path
+            } else {
+                self.projdir.join(path)
+            }
+        });
+        if let Some(dir) = &trace_dir {
+            if let Err(error) = fs::create_dir_all(dir) {
+                return WorkflowResult::Error(format!(
+                    "Failed to create release_doc trace directory: {error}"
+                ));
+            }
+            trace_write(
+                dir,
+                &repository,
+                "00-release-metadata.txt",
+                &context.release_metadata(),
+            );
+        }
+
         // Analyze the net diff of each changed file in sequence. Do not pass
         // the entire repository or a combined release diff to the model.
         let mut file_summaries = Vec::new();
-        for change in &context.changes {
+        for (file_index, change) in context.changes.iter().enumerate() {
             let chunks = split_diff(&change.diff, 16_000);
             let mut chunk_summaries = Vec::new();
             for (index, chunk) in chunks.iter().enumerate() {
@@ -209,20 +367,52 @@ impl<'a> Workflow for ReleaseDocWorkflow<'a> {
                     Ok(summary) => summary,
                     Err(result) => return WorkflowResult::LlmCallResult(result),
                 };
+                if let Some(dir) = &trace_dir {
+                    trace_write(
+                        dir,
+                        &repository,
+                        &format!("01-file-{file_index:03}-chunk-{index:03}.md"),
+                        &summary,
+                    );
+                }
                 chunk_summaries.push(summary);
             }
-            let summary = match reduce_summaries(&self.llm_call, chunk_summaries) {
+            let summary = match reduce_summaries(
+                &self.llm_call,
+                chunk_summaries,
+                trace_dir
+                    .as_deref()
+                    .map(|dir| (dir, repository.as_str(), format!("02-file-{file_index:03}"))),
+            ) {
                 Ok(summary) => summary,
                 Err(result) => return WorkflowResult::LlmCallResult(result),
             };
-            file_summaries.push(format!("FILE: {}\n{}", change.path.display(), summary,));
+            let file_summary = format!("FILE: {}\n{}", change.path.display(), summary);
+            if let Some(dir) = &trace_dir {
+                trace_write(
+                    dir,
+                    &repository,
+                    &format!("03-file-{file_index:03}-summary.md"),
+                    &file_summary,
+                );
+            }
+            file_summaries.push(file_summary);
         }
 
         // Merge related changes across files before writing the final document.
-        let combined = match reduce_summaries(&self.llm_call, file_summaries) {
+        let combined = match reduce_summaries(
+            &self.llm_call,
+            file_summaries,
+            trace_dir
+                .as_deref()
+                .map(|dir| (dir, repository.as_str(), "04-cross-file".to_string())),
+        ) {
             Ok(summary) => summary,
             Err(result) => return WorkflowResult::LlmCallResult(result),
         };
+        if let Some(dir) = &trace_dir {
+            trace_write(dir, &repository, "05-consolidated-analysis.md", &combined);
+        }
         let input = format!(
             "{}\n=== VERIFIED FILE ANALYSES ===\n{}",
             context.release_metadata(),
@@ -236,10 +426,32 @@ impl<'a> Workflow for ReleaseDocWorkflow<'a> {
             Err(result) => return WorkflowResult::LlmCallResult(result),
         };
 
+        if let Some(dir) = &trace_dir {
+            trace_write(dir, &repository, "06-release-notes.md", &release_notes);
+        }
+
+        // Review original Git evidence, independently of LLM reductions.
+        let review_input = build_review_input(&context.release_metadata(), &context.changes);
+        if let Some(dir) = &trace_dir {
+            trace_write(dir, &repository, "07-review-input.txt", &review_input);
+        }
+        let review = match self
+            .llm_call
+            .run_text_step(WorkflowSteps::ReleaseDocReview.get_prompt(), &review_input)
+        {
+            Ok(review) => review,
+            Err(result) => return WorkflowResult::LlmCallResult(result),
+        };
+        let document = assemble_release_document(&release_notes, &review, &context.changes);
+        if let Some(dir) = &trace_dir {
+            trace_write(dir, &repository, "07-technical-review.md", &review);
+            trace_write(dir, &repository, "08-final-document.md", &document);
+        }
+
         if let Err(err) = write_release_notes(
             &options.output,
             self.projdir,
-            &release_notes,
+            &document,
             &mut io::stdout().lock(),
         ) {
             return WorkflowResult::Error(format!("Failed to write release notes: {err}"));

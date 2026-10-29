@@ -124,8 +124,10 @@ fn generate_dimension(
                 match_from_str.push_str(&format!(
                     "            \"{stem}\" => Some({enum_name}::{variant}),\n"
                 ));
+                // Escape prompt text as a Rust string literal. Raw strings with a fixed
+                // delimiter break when Markdown contains sequences such as `"#`.
                 match_content.push_str(&format!(
-                    "            {enum_name}::{variant} => r#\"{content}\"#,\n"
+                    "            {enum_name}::{variant} => {content:?},\n"
                 ));
                 all_list.push_str(&format!("    {enum_name}::{variant},\n"));
             }
