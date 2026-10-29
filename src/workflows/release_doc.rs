@@ -457,7 +457,7 @@ impl<'a> Workflow for ReleaseDocWorkflow<'a> {
             .run_text_step(WorkflowSteps::ReleaseDocReview.get_prompt(), &review_input)
         {
             Err(error) => {
-                eprintln!("release_doc: technical review failed: {error:?}");
+                eprintln!("release_doc: technical review failed: {error}");
                 "Technical review unavailable: the review LLM step failed. Release notes have not been independently reviewed; consult the original Git diffs.".to_string()
             }
             Ok(review) => {
@@ -470,7 +470,7 @@ impl<'a> Workflow for ReleaseDocWorkflow<'a> {
                     &validation_input,
                 ) {
                     Err(error) => {
-                        eprintln!("release_doc: technical review validation failed: {error:?}");
+                        eprintln!("release_doc: technical review validation failed: {error}");
                         format!("{review}\n\n**Review status: NOT VALIDATED.** The validation LLM step failed; the technical review may be incomplete or incorrect.")
                     }
                     Ok(feedback) => {
@@ -492,7 +492,7 @@ impl<'a> Workflow for ReleaseDocWorkflow<'a> {
                                     format!("{revised}\n\n**Review status: REVISED, NOT REVALIDATED.**")
                                 }
                                 Err(error) => {
-                                    eprintln!("release_doc: technical review revision failed: {error:?}");
+                                    eprintln!("release_doc: technical review revision failed: {error}");
                                     format!("{review}\n\n**Review status: VALIDATION FAILED; REVISION UNAVAILABLE.** The revision LLM step failed. Validation feedback:\n\n{feedback}")
                                 }
                             }
