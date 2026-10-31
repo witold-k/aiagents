@@ -6,17 +6,22 @@ target_dir       := `cargo metadata --no-deps --format-version=1 | jq -r '.targe
 
 default: build
 
+clear:
+    tmux clear-history || true
+    clear
+
 pull:
-	git pull --prune --rebase github && git branch
+    python3 build.py github_pull
 
 build:
-	cargo build
-	RUST_BACKTRACE=1 cargo test
-	cargo clippy
-	cargo fmt && git diff --stat
+    python3 build.py build-debug
 
-gbuild: pull build install
-	git diff --stat
+build-release:
+    python3 build.py build-release
+
+gbuild: pull build
+
+rbuild: pull build-release install
 
 build-jvm:
     RUSTFLAGS="-C panic=unwind" cargo jvm build --bin aifix --no-default-features
