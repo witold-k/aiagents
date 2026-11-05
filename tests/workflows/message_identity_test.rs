@@ -645,3 +645,50 @@ fn identity_decisions_are_explicit_and_auditable() {
     assert!(serde_json::to_string(&merge).unwrap().contains("merge"));
     assert!(serde_json::to_string(&split).unwrap().contains("split"));
 }
+
+#[test]
+fn parameter_inventory_maps_offsets_to_original_after_html_normalization() {
+    let original = "# Intro\n<table><tr><td>q</td><td>description</td></tr></table>\n## Hardware\n| Parameter | Description | Data Type |\n| --- | --- | --- |\n| antAz | Antenna azimuth | degrees |\n";
+    let normalized = simplelexer::tablelexer::normalize_table_text(original);
+    let quote = "| antAz | Antenna azimuth | degrees |";
+    let rendered_offset = normalized.text.find(quote).unwrap();
+    let original_offset = original.find(quote).unwrap();
+    assert_ne!(rendered_offset, original_offset);
+    let fact = CandidateFact {
+        statement: "Antenna azimuth".into(),
+        segment_id: "test".into(),
+        evidence_quote: Some(quote.into()),
+        source_byte_offset: Some(rendered_offset),
+        source_locator_ambiguous: false,
+        statement_byte_offset: None,
+    };
+    let candidates = vec![
+        MessageCandidate { id: "window-0-candidate-0".into(), proposed_name: "messages/s.md".into(), facts: vec![fact.clone()] },
+        MessageCandidate { id: "window-0-candidate-1".into(), proposed_name: "anything".into(), facts: vec![fact] },
+    ];
+    let inventory = parameter_facts_in_document(&candidates, &[&normalized.text], &[0], &normalized.text, &normalized, original);
+    assert_eq!(inventory.len(), 1);
+    assert_eq!(inventory[0].source_byte_offset, original_offset);
+    assert_eq!(&original.as_bytes()[original_offset..original_offset + quote.len()], quote.as_bytes());
+    assert_eq!(inventory[0].parameter, "antAz");
+}
+
+#[test]
+fn parameter_inventory_preserves_offsets_without_html_normalization() {
+    let source = "# Appendix\n## Hardware\n| Parameter | Description | Data Type |\n| --- | --- | --- |\n| antAz | Antenna azimuth | degrees |\n";
+    let normalized = simplelexer::tablelexer::normalize_table_text(source);
+    let quote = "| antAz | Antenna azimuth | degrees |";
+    let offset = source.find(quote).unwrap();
+    let fact = CandidateFact {
+        statement: "Antenna azimuth".into(),
+        segment_id: "test".into(),
+        evidence_quote: Some(quote.into()),
+        source_byte_offset: Some(offset),
+        source_locator_ambiguous: false,
+        statement_byte_offset: None,
+    };
+    let candidates = vec![MessageCandidate { id: "window-0-candidate-0".into(), proposed_name: "messages/s.md".into(), facts: vec![fact] }];
+    let inventory = parameter_facts_in_document(&candidates, &[source], &[0], source, &normalized, source);
+    assert_eq!(inventory.len(), 1);
+    assert_eq!(inventory[0].source_byte_offset, offset);
+}

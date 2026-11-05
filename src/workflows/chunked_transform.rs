@@ -1142,6 +1142,64 @@ fn extraction_fingerprint(source: &str, prompts: &[&str]) -> String {
     format!("{hash:016x}")
 }
 
+
+/// Export the unverified inventory without overwriting any existing artifact.
+/// This is deliberately independent of checkpoint and message publication.
+fn export_parameter_inventory(
+    path: &Path,
+    facts: &[message_identity::ParameterFact],
+) -> Result<(), String> {
+    use std::io::Write;
+    let data = serde_json::to_vec_pretty(facts)
+        .map_err(|err| format!("Cannot serialize parameter inventory: {err}"))?;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|err| format!("Cannot create parameter inventory {}: {err}", path.display()))?;
+    file.write_all(&data)
+        .and_then(|_| file.write_all(b"\n"))
+        .map_err(|err| format!("Cannot write parameter inventory {}: {err}", path.display()))
+}
+
+#[cfg(test)]
+mod parameter_inventory_export_tests {
+    use super::*;
+
+    #[test]
+    fn exports_distinct_assertions_without_overwriting() {
+        let dir = std::env::temp_dir().join(format!(
+            "aifix-parameter-inventory-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("parameters-unverified.json");
+        let facts = vec![
+            message_identity::ParameterFact {
+                statement: "trgSatPos is the target longitude".into(),
+                parameter: "trgSatPos".into(),
+                section: "## A.1.3 Configuration".into(),
+                evidence_quote: "| trgSatPos | longitude | float |\n".into(),
+                source_byte_offset: 154593,
+            },
+            message_identity::ParameterFact {
+                statement: "trgSatPos is a float".into(),
+                parameter: "trgSatPos".into(),
+                section: "## A.1.3 Configuration".into(),
+                evidence_quote: "| trgSatPos | longitude | float |\n".into(),
+                source_byte_offset: 154593,
+            },
+        ];
+        export_parameter_inventory(&path, &facts).unwrap();
+        let decoded: Vec<message_identity::ParameterFact> =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(decoded, facts);
+        assert!(export_parameter_inventory(&path, &facts).is_err());
+        assert_eq!(fs::read(&path).unwrap(), serde_json::to_vec_pretty(&facts).unwrap().into_iter().chain([b'\n']).collect::<Vec<_>>());
+        fs::remove_dir_all(dir).unwrap();
+    }
+}
 fn checkpoint_path(output: &Path) -> PathBuf {
     output.with_extension("v10.checkpoint.json")
 }
@@ -1716,8 +1774,8 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             .count();
         let pre_normalized = mask_opaque_lines(&mask_embedded_data_uris(&source));
         let normalized_tables = simplelexer::tablelexer::normalize_table_text(&pre_normalized);
-        let masked_source = normalized_tables.text;
-        let row_mappings = normalized_tables.rows;
+        let masked_source = normalized_tables.text.clone();
+        let row_mappings = normalized_tables.rows.clone();
         // The normalized view is retained for legacy evidence and checkpoints.
         // Its byte spans are NOT interchangeable with source_analysis spans.
         let table_analysis = simplelexer::tablelexer::DocumentAnalysis::parse(&masked_source);
@@ -2391,11 +2449,30 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             &source_windows,
             &source_starts,
             &masked_source,
+            &normalized_tables,
+            &source,
         );
         println!(
             "## [CHUNKED] P4 PARAMETER INVENTORY: {} distinct source-backed parameter assertions; separate from message identity, not published",
             parameter_inventory.len()
         );
+        if std::env::var_os("AIFIX_EXPORT_PARAMETER_INVENTORY").is_some() {
+            if std::env::var_os("AIFIX_IDENTITY_REPLAY").is_none() {
+                return WorkflowResult::Error(
+                    "Parameter inventory export requires AIFIX_IDENTITY_REPLAY=1".into(),
+                );
+            }
+            let stem = input.file_stem().and_then(|s| s.to_str()).unwrap_or("document");
+            let destination = input.with_file_name(format!("{stem}_parameters-unverified.json"));
+            if let Err(err) = export_parameter_inventory(&destination, &parameter_inventory) {
+                return WorkflowResult::Error(err);
+            }
+            println!(
+                "## [CHUNKED] PARAMETER INVENTORY EXPORTED: {} assertions to {} (unverified)",
+                parameter_inventory.len(),
+                destination.display()
+            );
+        }
         // Explicit, read-only deterministic replay. This deliberately stops
         // before fact auditing and publication; neither invokes the model nor
         // mutates the checkpoint or an existing output directory.

@@ -1679,6 +1679,8 @@ pub(super) fn parameter_facts_in_document(
     sources: &[&str],
     starts: &[usize],
     document: &str,
+    normalized: &simplelexer::tablelexer::NormalizedTableText,
+    original: &str,
 ) -> Vec<ParameterFact> {
     let structure = SourceStructure::from_document(document);
     let lines: Vec<&str> = document.lines().collect();
@@ -1711,6 +1713,17 @@ pub(super) fn parameter_facts_in_document(
             if document.get(absolute..absolute.saturating_add(quote.len())) != Some(quote) {
                 continue;
             }
+            // The candidate offset belongs to the normalized view. Only
+            // export an exact location in the original document.
+            let Some(source_offset) = normalized.source_offset(absolute) else {
+                continue;
+            };
+            let Some(source_end) = source_offset.checked_add(quote.len()) else {
+                continue;
+            };
+            if original.get(source_offset..source_end) != Some(quote) {
+                continue;
+            }
             let Some(line_index) =
                 crate::utils::stringutils::line_index_at_byte_offset(document, absolute)
             else {
@@ -1739,13 +1752,13 @@ pub(super) fn parameter_facts_in_document(
                 .find(|line| line.trim_start().starts_with('#'))
                 .map(|line| line.trim().to_owned())
                 .unwrap_or_default();
-            if seen.insert((absolute, fact.statement.clone(), quote.to_owned())) {
+            if seen.insert((source_offset, fact.statement.clone(), quote.to_owned())) {
                 inventory.push(ParameterFact {
                     statement: fact.statement.clone(),
                     parameter: parameter.to_owned(),
                     section,
                     evidence_quote: quote.to_owned(),
-                    source_byte_offset: absolute,
+                    source_byte_offset: source_offset,
                 });
             }
         }
@@ -3063,44 +3076,6 @@ pub(super) fn resolved_source_facts(
         }
     }
     (groups, unresolved)
-}
-
-#[cfg(test)]
-mod parameter_inventory_tests {
-    use super::{CandidateFact, MessageCandidate, parameter_facts_in_document};
-
-    #[test]
-    fn preserves_independent_parameters_and_deduplicates_overlapping_candidates() {
-        let source = "# Appendix\n## Hardware\n| Parameter | Description | Data Type |\n| --- | --- | --- |\n| antAz | Antenna azimuth | degrees |\n";
-        let quote = "| antAz | Antenna azimuth | degrees |";
-        let offset = source.find(quote).unwrap();
-        let fact = CandidateFact {
-            statement: "Antenna azimuth".into(),
-            segment_id: "test".into(),
-            evidence_quote: Some(quote.into()),
-            source_byte_offset: Some(offset),
-            source_locator_ambiguous: false,
-            statement_byte_offset: None,
-        };
-        let candidates = vec![
-            MessageCandidate {
-                id: "window-0-candidate-0".into(),
-                proposed_name: "messages/s.md".into(),
-                facts: vec![fact.clone()],
-            },
-            MessageCandidate {
-                id: "window-0-candidate-1".into(),
-                proposed_name: "anything".into(),
-                facts: vec![fact],
-            },
-        ];
-        let inventory = parameter_facts_in_document(&candidates, &[source], &[0], source);
-        assert_eq!(inventory.len(), 1);
-        assert_eq!(inventory[0].parameter, "antAz");
-        assert_eq!(inventory[0].section, "## Hardware");
-        assert_eq!(inventory[0].source_byte_offset, offset);
-        assert_eq!(inventory[0].evidence_quote, quote);
-    }
 }
 
 #[cfg(test)]
