@@ -8,6 +8,8 @@
 mod extraction_quality;
 #[path = "message_identity.rs"]
 mod message_identity;
+#[path = "llm_structure.rs"]
+mod llm_structure;
 #[path = "source_tree.rs"]
 #[allow(dead_code)] // New structural model is not yet used by identity resolution.
 mod source_tree;
@@ -2464,6 +2466,32 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             &normalized_tables,
             &source,
         );
+        let coverage = message_identity::parameter_coverage_in_document(
+            &checkpoint.candidates,
+            &source_windows,
+            &source_starts,
+            &masked_source,
+            &normalized_tables,
+            &source,
+        );
+        println!(
+            "## [CHUNKED] PARAMETER COVERAGE: unresolved={} matched_parameter_definitions={} unmatched_parameter_facts={} non_parameter_facts={} (exact source evidence; read-only)",
+            coverage.unresolved, coverage.matched, coverage.unmatched_parameter, coverage.other,
+        );
+        println!(
+            "## [CHUNKED] PARAMETER UNCOVERED LEXER KINDS: {:?} (occurrences, source syntax only)",
+            coverage.unmatched_by_lexer_kind,
+        );
+        for (line, row_start, kind) in &coverage.unmatched_rows {
+            println!(
+                "## [CHUNKED] PARAMETER UNCOVERED ROW: line={line} row_byte={row_start} kind={kind} (no ownership inferred)",
+            );
+        }
+        for (section, (matched, unmatched, other)) in coverage.by_section {
+            println!(
+                "## [CHUNKED] PARAMETER COVERAGE BY SECTION: matched={matched} unmatched={unmatched} other={other} section={section:?} (read-only)",
+            );
+        }
         println!(
             "## [CHUNKED] PARAMETER STRUCTURE AUDIT: no_source_type={} verified_parameter_assertions={} parameter_shaped_without_verified_evidence={} other_unresolved={} distinct_parameters={} distinct_sections={} (read-only; no message ownership inferred)",
             audit.no_source_type,
@@ -2513,6 +2541,112 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 "## [CHUNKED] REMAINING OUTSIDE LEXER TABLE: line={} (separate investigation; no table relation inferred)",
                 line,
             );
+        }
+        // Opt-in shadow analysis: never changes the checkpoint, facts or identity projection.
+        if std::env::var_os("AIFIX_LLM_STRUCTURE").is_some() {
+            // Include the complete normalized-document lexer row and its immediate neighbors,
+            // even when those neighbors have no unresolved facts of their own.
+            let targets: std::collections::BTreeSet<_> = audit.remaining_row_neighbors
+                .iter().map(|neighbor| neighbor.row_start).collect();
+            let mut rows = std::collections::BTreeMap::new();
+            for block in &table_analysis.blocks {
+                let simplelexer::tablelexer::DocumentChunk::Table(table) = block else {
+                    continue;
+                };
+                for (index, row) in table.rows.iter().enumerate() {
+                    if !targets.contains(&row.span.start) {
+                        continue;
+                    }
+                    let start = index.saturating_sub(1);
+                    let end = (index + 2).min(table.rows.len());
+                    for position in start..end {
+                        let current = &table.rows[position];
+                        rows.entry(current.span.start).or_insert_with(|| llm_structure::RowEvidence {
+                            line: masked_source[..current.span.start].bytes().filter(|byte| *byte == b'\n').count() + 1,
+                            start: current.span.start,
+                            previous: position.checked_sub(1).map(|previous| table.rows[previous].span.start),
+                            next: table.rows.get(position + 1).map(|next| next.span.start),
+                            cells: current.cells.iter().map(|cell| cell.text.to_string()).collect(),
+                        });
+                    }
+                }
+            }
+            let rows: Vec<_> = rows.into_values().collect();
+            if !rows.is_empty() {
+                let prompt = llm_structure::prompt(&rows);
+                let mut responses = Vec::new();
+                for attempt in 0..3 {
+                    let response = match self.llm_call.run_text_step_limited_with_temperature(
+                        &prompt,
+                        "Return only source-backed structural row relationships in JSON.",
+                        self.llm_call.max_tokens(),
+                        0.2,
+                    ) {
+                        Ok(response) => response,
+                        Err(err) => return WorkflowResult::LlmCallResult(err),
+                    };
+                    println!("## [CHUNKED] LLM STRUCTURE ATTEMPT: {} completed (read-only)", attempt + 1);
+                    responses.push(response);
+                }
+                let llm_structure::RankResult {
+                    valid_attempts: valid,
+                    ranked,
+                    rejected,
+                } = llm_structure::rank(&responses, &rows);
+                for (attempt, reason) in rejected {
+                    println!(
+                        "## [CHUNKED] LLM STRUCTURE REJECTED: attempt={} reason={} (read-only)",
+                        attempt, reason
+                    );
+                }
+                println!(
+                    "## [CHUNKED] LLM STRUCTURE SUMMARY: attempts=3 valid={} proposals={} (read-only; no identity inferred)",
+                    valid, ranked.len()
+                );
+                let graph = llm_structure::source_graph(
+                    &rows, &ranked, valid, &coverage.unmatched_rows,
+                );
+                let units = llm_structure::semantic_units(&graph);
+                println!(
+                    "## [CHUNKED] SEMANTIC UNITS: count={} (unanimous direct source links; proposed only)",
+                    units.len(),
+                );
+                for unit in &units {
+                    let evidence: Vec<_> = unit.row_starts.iter()
+                        .filter_map(|start| graph.rows.iter().find(|row| row.start == *start))
+                        .map(|row| format!("line={} byte={} cells={:?}", row.line, row.start, row.cells))
+                        .collect();
+                    println!(
+                        "## [CHUNKED] SEMANTIC UNIT: entry_byte={} rows={:?} relation_indices={:?} evidence={:?} (proposed; no ownership inferred)",
+                        unit.entry_row, unit.row_starts, unit.supporting_relations, evidence,
+                    );
+                }
+                println!(
+                    "## [CHUNKED] SOURCE GRAPH: rows={} relations={} unresolved_assertions={} (read-only; no identity inferred)",
+                    graph.rows.len(), graph.relations.len(), graph.assertions.len(),
+                );
+                for assertion in &graph.assertions {
+                    let hypotheses: Vec<_> = assertion.relations.iter()
+                        .map(|index| {
+                            let relation = &graph.relations[*index];
+                            format!(
+                                "{}:{}->{}({}/{})",
+                                relation.relation, relation.earlier_row, relation.later_row,
+                                relation.votes, relation.valid_attempts,
+                            )
+                        }).collect();
+                    println!(
+                        "## [CHUNKED] SOURCE GRAPH ASSERTION: line={} row_byte={} lexer_kind={} hypotheses={:?} (no ownership inferred)",
+                        assertion.source_line, assertion.row_start, assertion.lexer_kind, hypotheses,
+                    );
+                }
+                for (earlier, later, relation, votes) in ranked {
+                    println!(
+                        "## [CHUNKED] LLM STRUCTURE PROPOSAL: earlier_byte={} later_byte={} relation={} votes={}/{} (hypothesis only)",
+                        earlier, later, relation, votes, valid,
+                    );
+                }
+            }
         }
         if std::env::var_os("AIFIX_EXPORT_PARAMETER_INVENTORY").is_some() {
             if std::env::var_os("AIFIX_IDENTITY_REPLAY").is_none() {
@@ -2829,18 +2963,30 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 "## [CHUNKED] UNRESOLVED FACT INVENTORY: occurrences={} (all failures, read-only; duplicates retained)",
                 inventory.len()
             );
-            let mut section_counts: BTreeMap<String, usize> = BTreeMap::new();
+            let mut section_counts: BTreeMap<String, (usize, std::collections::BTreeSet<String>)> =
+                BTreeMap::new();
             for record in &inventory {
                 if let Some(section) = record
                     .split(" section=")
                     .nth(1)
                     .and_then(|rest| rest.split(" candidate=").next())
                 {
-                    *section_counts.entry(section.to_owned()).or_default() += 1;
+                    let entry = section_counts.entry(section.to_owned()).or_default();
+                    entry.0 += 1;
+                    if let Some(candidate) = record
+                        .split(" candidate=")
+                        .nth(1)
+                        .and_then(|rest| rest.split(" statement=").next())
+                    {
+                        entry.1.insert(candidate.to_owned());
+                    }
                 }
             }
-            for (section, count) in section_counts {
-                println!("## [CHUNKED] UNRESOLVED SECTION: count={count} section={section}");
+            for (section, (count, candidates)) in section_counts {
+                println!(
+                    "## [CHUNKED] UNRESOLVED SECTION: count={count} distinct_candidates={} section={section} (diagnostic only; no ownership inferred)",
+                    candidates.len()
+                );
             }
             for record in inventory {
                 println!("## [CHUNKED] UNRESOLVED FACT: {record}");

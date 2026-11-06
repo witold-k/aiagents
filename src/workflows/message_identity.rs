@@ -1919,6 +1919,95 @@ fn record_remaining_lexer_row(
     }
 }
 
+/// Exact-source coverage of unresolved facts by the independent parameter inventory.
+/// This is diagnostic only: coverage never establishes message ownership.
+#[derive(Debug, Default)]
+pub(super) struct ParameterCoverage {
+    pub unresolved: usize,
+    pub matched: usize,
+    pub unmatched_parameter: usize,
+    pub other: usize,
+    pub by_section: std::collections::BTreeMap<String, (usize, usize, usize)>,
+    pub unmatched_by_lexer_kind: std::collections::BTreeMap<String, usize>,
+    pub unmatched_rows: Vec<(usize, usize, String)>,
+}
+
+pub(super) fn parameter_coverage_in_document(
+    candidates: &[MessageCandidate],
+    sources: &[&str],
+    starts: &[usize],
+    document: &str,
+    normalized: &simplelexer::tablelexer::NormalizedTableText,
+    original: &str,
+) -> ParameterCoverage {
+    let verified = parameter_facts_in_document(
+        candidates, sources, starts, document, normalized, original,
+    );
+    let anchors: std::collections::BTreeSet<_> = verified.iter()
+        .map(|fact| (fact.source_byte_offset, fact.statement.as_str(), fact.evidence_quote.as_str()))
+        .collect();
+    let structure = SourceStructure::from_document(document);
+    let analysis = simplelexer::tablelexer::DocumentAnalysis::parse(document);
+    let lines: Vec<_> = document.lines().collect();
+    let mut coverage = ParameterCoverage::default();
+    for candidate in candidates {
+        let Some((window, start)) = source_window_index(&candidate.id)
+            .and_then(|index| sources.get(index).zip(starts.get(index)))
+        else { continue };
+        for fact in &candidate.facts {
+            if !matches!(
+                resolve_fact_type_with_flattened_tables(
+                    window, *start, document, fact, true, &structure
+                ),
+                Err(ResolutionFailure::NoSourceType)
+            ) { continue; }
+            coverage.unresolved += 1;
+            let absolute = fact.source_byte_offset.and_then(|offset| start.checked_add(offset));
+            let line_index = absolute.and_then(|offset|
+                crate::utils::stringutils::line_index_at_byte_offset(document, offset)
+            );
+            let section = line_index
+                .and_then(|index| lines.get(..=index))
+                .and_then(|prefix| prefix.iter().rev()
+                    .find(|line| line.trim_start().starts_with('#')))
+                .map(|heading| heading.trim().to_owned())
+                .unwrap_or_default();
+            let counts = coverage.by_section.entry(section).or_default();
+            let is_parameter = line_index
+                .is_some_and(|index| unresolved_source_shape(document, index) == "parameter");
+            let matched = absolute
+                .and_then(|offset| normalized.source_offset(offset))
+                .zip(fact.evidence_quote.as_deref())
+                .is_some_and(|(offset, quote)|
+                    anchors.contains(&(offset, fact.statement.as_str(), quote)));
+            if is_parameter && matched {
+                coverage.matched += 1;
+                counts.0 += 1;
+            } else if is_parameter {
+                coverage.unmatched_parameter += 1;
+                counts.1 += 1;
+                let (kind, row_start) = absolute
+                    .and_then(|offset| analysis.source_row_at(offset))
+                    .map(|(_, row)| {
+                        let cells = row.cells.iter()
+                            .map(|cell| cell.text.trim().to_owned())
+                            .collect::<Vec<_>>();
+                        (audit_parameter_row_kind(&cells).to_owned(), row.span.start)
+                    })
+                    .unwrap_or_else(|| ("outside_lexer_table".to_owned(), usize::MAX));
+                *coverage.unmatched_by_lexer_kind.entry(kind.clone()).or_default() += 1;
+                coverage.unmatched_rows.push((
+                    line_index.map_or(0, |index| index + 1), row_start, kind,
+                ));
+            } else {
+                coverage.other += 1;
+                counts.2 += 1;
+            }
+        }
+    }
+    coverage
+}
+
 pub(super) fn parameter_structure_audit(
     candidates: &[MessageCandidate],
     sources: &[&str],
