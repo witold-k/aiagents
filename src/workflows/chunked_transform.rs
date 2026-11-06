@@ -2608,7 +2608,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 );
                 let units = llm_structure::semantic_units(&graph);
                 println!(
-                    "## [CHUNKED] SEMANTIC UNITS: count={} (unanimous direct source links; proposed only)",
+                    "## [CHUNKED] SEMANTIC UNITS: count={} (source-anchored, majority-supported continuation links; proposed only)",
                     units.len(),
                 );
                 for unit in &units {

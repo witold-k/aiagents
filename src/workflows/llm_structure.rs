@@ -94,6 +94,28 @@ fn named_key_anchor(row: &RowEvidence) -> bool {
         })
 }
 
+/// A compact single-letter entry with a separate parameter-count/type cell.
+/// The two cells provide independent syntax evidence; adjacency or LLM votes
+/// alone never establish an entry boundary.
+fn typed_entry_anchor(row: &RowEvidence) -> bool {
+    let Some(first) = row.cells.first() else { return false };
+    let mut words = first.split_whitespace();
+    let Some(code) = words.next() else { return false };
+    if code.len() != 1 || !code.as_bytes()[0].is_ascii_alphabetic() || words.next().is_none() {
+        return false;
+    }
+    let Some(spec) = row.cells.get(1) else { return false };
+    let mut fields = spec.split_whitespace();
+    fields.next().is_some_and(|count| count.parse::<usize>().is_ok())
+        && fields.next().is_some_and(|kind| {
+            matches!(kind, "int" | "float" | "string" | "bool" | "boolean")
+        })
+}
+
+fn entry_anchor(row: &RowEvidence) -> bool {
+    named_key_anchor(row) || typed_entry_anchor(row)
+}
+
 /// Read-only units with explicit lexical anchors. A majority may disagree on
 /// relation subtype but must agree that the next row belongs to the entry.
 pub(super) fn semantic_units(graph: &SourceGraph) -> Vec<SemanticUnit> {
@@ -101,14 +123,14 @@ pub(super) fn semantic_units(graph: &SourceGraph) -> Vec<SemanticUnit> {
         .map(|row| (row.start, row)).collect();
     let mut units = Vec::new();
     for (&entry, row) in &by_start {
-        if !named_key_anchor(row) { continue; }
+        if !entry_anchor(row) { continue; }
         let mut starts = vec![entry];
         let mut links = Vec::new();
         let mut cursor = entry;
         while let Some(next) = by_start.get(&cursor).and_then(|r| r.next) {
             if by_start.get(&next).and_then(|r| r.previous) != Some(cursor)
                 || starts.contains(&next)
-                || by_start.get(&next).is_some_and(|r| named_key_anchor(r)) {
+                || by_start.get(&next).is_some_and(|r| entry_anchor(r)) {
                 break;
             }
             let candidates: Vec<_> = graph.relations.iter().enumerate()
@@ -300,11 +322,13 @@ mod tests {
     fn semantic_projection_rejects_false_previous_entry_and_keeps_named_keys() {
         let graph = graph_for_projection();
         let units = semantic_units(&graph);
-        assert_eq!(units.len(), 2);
-        assert_eq!(units[0].entry_row, 50);
-        assert_eq!(units[0].row_starts, vec![50, 60]);
-        assert_eq!(units[1].entry_row, 70);
-        assert_eq!(units[1].row_starts, vec![70, 80]);
+        assert_eq!(units.len(), 3);
+        assert_eq!(units[0].entry_row, 20);
+        assert_eq!(units[0].row_starts, vec![20, 30, 40]);
+        assert_eq!(units[1].entry_row, 50);
+        assert_eq!(units[1].row_starts, vec![50, 60]);
+        assert_eq!(units[2].entry_row, 70);
+        assert_eq!(units[2].row_starts, vec![70, 80]);
         assert!(units.iter().all(|u| !u.row_starts.contains(&10)));
     }
 
@@ -354,13 +378,14 @@ mod tests {
         ];
         let graph = source_graph(&rows, &ranked, 3, &[]);
         let units = semantic_units(&graph);
-        assert_eq!(units.len(), 2);
-        assert_eq!(units[0].entry_row, 114576);
-        assert_eq!(units[0].row_starts, vec![114576, 114634, 114700, 114767]);
-        assert_eq!(units[1].entry_row, 114834);
-        assert_eq!(units[1].row_starts, vec![114834, 114910, 114975]);
+        assert_eq!(units.len(), 3);
+        assert_eq!(units[0].entry_row, 110836);
+        assert_eq!(units[0].row_starts, vec![110836, 110910, 110969, 111057]);
+        assert_eq!(units[1].entry_row, 114576);
+        assert_eq!(units[1].row_starts, vec![114576, 114634, 114700, 114767]);
+        assert_eq!(units[2].entry_row, 114834);
+        assert_eq!(units[2].row_starts, vec![114834, 114910, 114975]);
         assert!(units.iter().all(|unit| !unit.row_starts.contains(&110817)));
-        assert!(units.iter().all(|unit| !unit.row_starts.contains(&110836)));
     }
 
     #[test]
