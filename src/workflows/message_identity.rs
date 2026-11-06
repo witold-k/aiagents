@@ -1790,6 +1790,11 @@ pub(super) struct ParameterStructureAudit {
     pub remaining_lexer_row_cells: Vec<(usize, usize, usize, Vec<String>)>,
     /// Source-backed row classification, without inferring parameter ownership.
     pub remaining_row_kinds: Vec<(usize, usize, usize, String)>,
+    /// Adjacent lexer rows in the same table, with exact source boundaries.
+    /// (line, row_start, previous_row_start, next_row_start, empty_first, empty_second).
+    /// Neighbor offsets are observations, never parameter or message ownership.
+    pub remaining_row_neighbors: Vec<RemainingRowNeighbor>,
+
     /// Source-backed cells for remaining facts; never interpreted as ownership.
     /// Includes each cell's own source span when the lexer provides one.
     pub remaining_lexer_cell_spans: Vec<(usize, usize, usize, String)>,
@@ -1797,6 +1802,16 @@ pub(super) struct ParameterStructureAudit {
     pub reserved_marker_lines: Vec<usize>,
     /// Rows with empty first cells or prose-like continuations; observational.
     pub continuation_row_lines: Vec<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) struct RemainingRowNeighbor {
+    pub line: usize,
+    pub row_start: usize,
+    pub previous_row_start: Option<usize>,
+    pub next_row_start: Option<usize>,
+    pub empty_first: bool,
+    pub empty_second: bool,
 }
 
 /// Classify observed source cells without attaching continuation text to
@@ -1857,6 +1872,23 @@ fn record_remaining_lexer_row(
         let cells = row.cells.iter().map(|cell| {
             cell.text.trim().chars().take(120).collect::<String>()
         }).collect::<Vec<_>>();
+        if let Some(index) = table.rows.iter().position(|candidate| candidate.span.start == row.span.start && candidate.span.end == row.span.end) {
+            let previous = index.checked_sub(1)
+                .and_then(|i| table.rows.get(i))
+                .map(|neighbor| neighbor.span.start);
+            let next = table.rows.get(index + 1).map(|neighbor| neighbor.span.start);
+            let neighbor = RemainingRowNeighbor {
+                line,
+                row_start: row.span.start,
+                previous_row_start: previous,
+                next_row_start: next,
+                empty_first: row.cells.first().is_none_or(|cell| cell.text.trim().is_empty()),
+                empty_second: row.cells.get(1).is_none_or(|cell| cell.text.trim().is_empty()),
+            };
+            if !result.remaining_row_neighbors.contains(&neighbor) {
+                result.remaining_row_neighbors.push(neighbor);
+            }
+        }
         let kind = audit_parameter_row_kind(&cells).to_owned();
         let classified = (line, row.span.start, row.span.end, kind);
         if !result.remaining_row_kinds.contains(&classified) {
@@ -1974,6 +2006,7 @@ pub(super) fn parameter_structure_audit(
     result.remaining_outside_lexer_tables.sort_unstable();
     result.remaining_lexer_row_cells.sort_unstable();
     result.remaining_row_kinds.sort_unstable();
+    result.remaining_row_neighbors.sort_unstable();
     result.remaining_lexer_cell_spans.sort_unstable();
     result.reserved_marker_lines.sort_unstable();
     result.reserved_marker_lines.dedup();

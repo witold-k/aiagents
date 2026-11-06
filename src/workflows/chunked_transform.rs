@@ -2501,6 +2501,19 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 line, start, end, kind,
             );
         }
+        for neighbor in &audit.remaining_row_neighbors {
+            println!(
+                "## [CHUNKED] REMAINING LEXER ROW NEIGHBORS: line={} row_byte={} previous_row_byte={:?} next_row_byte={:?} empty_first={} empty_second={} (same lexer table; no ownership inferred)",
+                neighbor.line, neighbor.row_start, neighbor.previous_row_start,
+                neighbor.next_row_start, neighbor.empty_first, neighbor.empty_second,
+            );
+        }
+        for line in &audit.remaining_outside_lexer_tables {
+            println!(
+                "## [CHUNKED] REMAINING OUTSIDE LEXER TABLE: line={} (separate investigation; no table relation inferred)",
+                line,
+            );
+        }
         if std::env::var_os("AIFIX_EXPORT_PARAMETER_INVENTORY").is_some() {
             if std::env::var_os("AIFIX_IDENTITY_REPLAY").is_none() {
                 return WorkflowResult::Error(
