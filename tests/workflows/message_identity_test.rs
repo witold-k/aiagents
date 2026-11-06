@@ -692,3 +692,40 @@ fn parameter_inventory_preserves_offsets_without_html_normalization() {
     assert_eq!(inventory.len(), 1);
     assert_eq!(inventory[0].source_byte_offset, offset);
 }
+
+#[test]
+fn parameter_structure_audit_preserves_independent_parameter_evidence() {
+    let original = "# Intro\n<table><tr><td>q</td><td>x</td></tr></table>\n## Appendix\n| Parameter | Description | Data Type |\n| --- | --- | --- |\n| antAz | Antenna azimuth | degrees |\n";
+    let normalized = simplelexer::tablelexer::normalize_table_text(original);
+    let quote = "| antAz | Antenna azimuth | degrees |";
+    let fact = CandidateFact {
+        statement: "Antenna azimuth".into(),
+        segment_id: "test".into(),
+        evidence_quote: Some(quote.into()),
+        source_byte_offset: Some(normalized.text.find(quote).unwrap()),
+        source_locator_ambiguous: false,
+        statement_byte_offset: None,
+    };
+    let candidates = vec![MessageCandidate {
+        id: "window-0-candidate-0".into(),
+        proposed_name: "messages/s.md".into(),
+        facts: vec![fact],
+    }];
+    let audit = parameter_structure_audit(
+        &candidates, &[&normalized.text], &[0], &normalized.text, &normalized, original,
+    );
+    assert_eq!(audit.no_source_type, 1);
+    assert_eq!(audit.verified_parameter_assertions, 1);
+    assert_eq!(audit.parameter_shaped_without_verified_evidence, 0);
+    assert_eq!(audit.other_unresolved, 0);
+    assert_eq!(audit.distinct_parameters, 1);
+    assert_eq!(audit.distinct_sections, 1);
+}
+
+#[test]
+fn parameter_structure_audit_is_empty_without_tables() {
+    let source = "# Prose\nAn antenna reports its status.\n";
+    let normalized = simplelexer::tablelexer::normalize_table_text(source);
+    let audit = parameter_structure_audit(&[], &[source], &[0], source, &normalized, source);
+    assert_eq!(audit, ParameterStructureAudit::default());
+}

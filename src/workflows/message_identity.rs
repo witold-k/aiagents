@@ -484,50 +484,25 @@ struct SourceSection {
 
 #[derive(Debug)]
 #[allow(dead_code)] // Structural metadata is retained for later source-backed consumers.
-struct SourceTable {
-    section: Option<usize>,
-    rows: Vec<usize>,
-}
-
-#[derive(Debug)]
-#[allow(dead_code)] // Structural metadata is retained for later source-backed consumers.
-struct SourceRow {
-    table: usize,
-    line: usize,
-    cells: Vec<String>,
-}
-
-#[derive(Debug)]
-#[allow(dead_code)] // Structural metadata is retained for later source-backed consumers.
 struct SourceTree {
     sections: Vec<SourceSection>,
-    tables: Vec<SourceTable>,
-    rows: Vec<SourceRow>,
     /// Each source line's innermost enclosing heading.
     section_at_line: Vec<Option<usize>>,
-    /// A physical row can be looked up without scanning other tables.
-    row_at_line: Vec<Option<usize>>,
 }
 
 impl SourceTree {
     fn from_document(document: &str) -> Self {
         let mut tree = Self {
             sections: Vec::new(),
-            tables: Vec::new(),
-            rows: Vec::new(),
             section_at_line: Vec::new(),
-            row_at_line: Vec::new(),
         };
         let mut heading_stack: Vec<usize> = Vec::new();
-        let mut active_table: Option<usize> = None;
         let mut in_fence = false;
         for (line_index, raw) in document.lines().enumerate() {
             let line = raw.trim();
             if line.starts_with("```") {
                 in_fence = !in_fence;
-                active_table = None;
                 tree.section_at_line.push(heading_stack.last().copied());
-                tree.row_at_line.push(None);
                 continue;
             }
             if !in_fence {
@@ -547,50 +522,11 @@ impl SourceTree {
                         parent,
                     });
                     heading_stack.push(index);
-                    active_table = None;
-                }
+                    }
             }
             let section = heading_stack.last().copied();
             tree.section_at_line.push(section);
-            let row_cells = if in_fence || line.starts_with('#') {
-                None
-            } else if line.starts_with('|') && line.ends_with('|') {
-                let cells: Vec<String> = line
-                    .trim_matches('|')
-                    .split('|')
-                    .map(|cell| cell.trim().to_owned())
-                    .collect();
-                (cells.len() >= 2).then_some(cells)
-            } else if line.starts_with("Type:") && line.contains('|') {
-                Some(line.split('|').map(|cell| cell.trim().to_owned()).collect())
-            } else {
-                None
-            };
-            if let Some(cells) = row_cells {
-                let table = *active_table.get_or_insert_with(|| {
-                    let index = tree.tables.len();
-                    tree.tables.push(SourceTable {
-                        section,
-                        rows: Vec::new(),
-                    });
-                    index
-                });
-                let index = tree.rows.len();
-                tree.rows.push(SourceRow {
-                    table,
-                    line: line_index,
-                    cells,
-                });
-                tree.tables[table].rows.push(index);
-                tree.row_at_line.push(Some(index));
-            } else {
-                // A blank line may separate Markdown table blocks. Flattened
-                // conversions require later explicit rows to start new blocks.
-                if !line.is_empty() {
-                    active_table = None;
-                }
-                tree.row_at_line.push(None);
-            }
+
         }
         tree
     }
@@ -635,12 +571,6 @@ impl SourceTree {
         None
     }
 
-    fn row(&self, line: usize) -> Option<&SourceRow> {
-        self.row_at_line
-            .get(line)
-            .and_then(|index| index.map(|i| &self.rows[i]))
-    }
-
     fn section(&self, line: usize) -> Option<&SourceSection> {
         self.section_at_line
             .get(line)
@@ -659,10 +589,11 @@ mod source_tree_tests {
         assert_eq!(tree.section(4).map(|s| s.heading_line), Some(1));
         assert_eq!(tree.section(7).and_then(|s| s.parent), Some(1));
         assert_eq!(tree.section(9).map(|s| s.heading_line), Some(8));
-        assert_eq!(tree.row(4).map(|r| r.cells[0].as_str()), Some("v"));
-        assert_eq!(tree.row(7).map(|r| r.cells[0].as_str()), Some("speed"));
-        assert_ne!(tree.row(4).map(|r| r.table), tree.row(7).map(|r| r.table));
-        assert_eq!(tree.tables.len(), 2);
+        let analysis = simplelexer::tablelexer::DocumentAnalysis::parse(source);
+        assert!(analysis.source_row_at(source.find("| v |").unwrap()).is_some());
+        // This pipe-delimited fragment has no Markdown separator row.
+        // Do not promote malformed table-looking text into a parsed table.
+        assert!(analysis.source_row_at(source.find("| speed |").unwrap()).is_none());
     }
 
     #[test]
@@ -687,10 +618,41 @@ mod source_tree_tests {
     fn code_fences_and_prose_never_become_table_rows() {
         let source = "# Example\n```text\n| not | a table |\n```\nType: v | status\nprose\nType: V | request";
         let tree = SourceTree::from_document(source);
-        assert!(tree.row(2).is_none());
-        assert!(tree.row(5).is_none());
-        assert_eq!(tree.row(4).map(|r| r.cells[0].as_str()), Some("Type: v"));
-        assert_ne!(tree.row(4).map(|r| r.table), tree.row(6).map(|r| r.table));
+        assert_eq!(tree.section(2).map(|s| s.heading_line), Some(0));
+        assert_eq!(tree.section(5).map(|s| s.heading_line), Some(0));
+    }
+}
+
+#[cfg(test)]
+mod parameter_row_audit_tests {
+    use super::audit_parameter_row_kind;
+
+    fn kind(first: &str, second: &str) -> &'static str {
+        audit_parameter_row_kind(&[first.to_owned(), second.to_owned()])
+    }
+
+    #[test]
+    fn reserved_types_are_not_parameter_definitions() {
+        assert_eq!(kind("t Reserved", ""), "reserved_message_type");
+        assert_eq!(kind("u Reserved", ""), "reserved_message_type");
+        assert_eq!(kind("T Reserved", ""), "reserved_message_type");
+    }
+
+    #[test]
+    fn continuation_and_prose_do_not_acquire_parameter_ownership() {
+        assert_eq!(kind("(Optional key value pairs)", ""), "possible_continuation");
+        assert_eq!(kind("Frequency is in MHz.", "string"), "unclassified_row");
+        assert_eq!(kind("Reference required to be present on Rx", ""), "unclassified_row");
+    }
+
+    #[test]
+    fn only_syntactically_simple_names_are_candidates() {
+        assert_eq!(kind("Time to Blockage (blockTime)", "blockTime=&lt;int sec>"), "named_key_candidate");
+        assert_eq!(kind("Additional Antenna Status (statusCode)", "statusCode=&lt;int 0 to 65535>"), "named_key_candidate");
+        assert_eq!(kind("Time to Blockage (blockTime)", "other=1"), "unclassified_row");
+        assert_eq!(kind("blockTime", "int seconds"), "parameter_name_candidate");
+        assert_eq!(kind("statusCode", "int"), "parameter_name_candidate");
+        assert_eq!(kind("blockTime", ""), "unclassified_row");
     }
 }
 
@@ -920,6 +882,14 @@ impl SourceStructure {
             if original.get(source_span.clone()) != pre_normalized.get(source_span.clone()) {
                 continue;
             }
+            // A mapping is valid only for an actual source row. Never promote
+            // adjacent prose or a partial HTML row into message-table evidence.
+            let Some((_, source_row)) = original_analysis.source_row_at(source_span.start) else {
+                continue;
+            };
+            if source_row.span.start != source_span.start || source_row.span.end != source_span.end {
+                continue;
+            }
             if original_structure
                 .table_row_ranges
                 .iter()
@@ -974,8 +944,7 @@ impl SourceStructure {
     }
 
     fn table_type(&self, line_index: usize) -> Option<u8> {
-        // The tree records row/section boundaries independently of ownership.
-        let _structural_row = self.tree.row(line_index);
+        // Section boundaries are independent of message ownership.
         let _structural_section = self.tree.section(line_index);
         self.table_owners.get(line_index).copied().flatten()
     }
@@ -1243,6 +1212,29 @@ mod html_row_identity_tests {
             fallback.table_row_type_at(table_free.find("paragraph").unwrap()),
             None
         );
+    }
+
+    #[test]
+    fn fabricated_partial_source_row_mapping_cannot_claim_identity() {
+        let original = concat!(
+            "## Message Types\n",
+            "<table><tr><td>Type</td><td>Description</td></tr>",
+            "<tr><td>B</td><td>typed evidence</td></tr></table>"
+        );
+        let normalized = original.to_owned();
+        let analysis = simplelexer::tablelexer::DocumentAnalysis::parse(original);
+        let start = original.find("typed evidence").unwrap();
+        let fake = simplelexer::tablelexer::RowTextMapping {
+            source: start..start + "typed evidence".len(),
+            rendered: start..start + "typed evidence".len(),
+        };
+        let structure = SourceStructure::from_analysis(&normalized, &analysis)
+            .with_original_table_rows(original, original, &analysis, &[fake]);
+        // The original parsed row still owns its type; the fabricated
+        // partial mapping must not introduce a second row or owner.
+        assert_eq!(structure.table_row_ranges.len(), 2);
+        assert_eq!(structure.table_row_owners.len(), 1);
+        assert_eq!(structure.table_row_type_at(start), Some(b'B'));
     }
 
     #[test]
@@ -1765,6 +1757,229 @@ pub(super) fn parameter_facts_in_document(
     }
     inventory.sort_by_key(|fact| fact.source_byte_offset);
     inventory
+}
+
+/// Read-only audit of unresolved facts against independently verified parameter
+/// evidence. Matching is by the exact normalized source anchor, never by a
+/// proposed message name or semantic similarity.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(super) struct ParameterStructureAudit {
+    pub no_source_type: usize,
+    pub verified_parameter_assertions: usize,
+    pub parameter_shaped_without_verified_evidence: usize,
+    pub other_unresolved: usize,
+    pub distinct_parameters: usize,
+    pub distinct_sections: usize,
+    /// Exact source lines for parameter-shaped facts without verified parameter evidence.
+    pub unverified_table_lines: Vec<usize>,
+    /// Exact source lines for facts outside recognized parameter tables.
+    pub other_unresolved_lines: Vec<usize>,
+    /// Facts in an explicit message table row declaring its own type.
+    pub explicit_message_row_lines: Vec<(usize, char)>,
+    /// Facts in a message table row without an explicit type declaration.
+    pub untyped_message_row_lines: Vec<usize>,
+    /// Facts outside lexer-recognized message table rows.
+    pub outside_message_row_lines: Vec<usize>,
+    /// Unverified/other occurrences located in any lexer-recognized table row.
+    /// The header is descriptive evidence only, not a message identity.
+    pub remaining_lexer_table_rows: Vec<(usize, String)>,
+    /// Unverified/other occurrences outside all lexer-recognized table rows.
+    pub remaining_outside_lexer_tables: Vec<usize>,
+    /// Distinct lexer rows containing remaining facts: source line, byte span,
+    /// individual cell excerpts. Observational only, no ownership inferred.
+    pub remaining_lexer_row_cells: Vec<(usize, usize, usize, Vec<String>)>,
+    /// Source-backed row classification, without inferring parameter ownership.
+    pub remaining_row_kinds: Vec<(usize, usize, usize, String)>,
+    /// Source-backed cells for remaining facts; never interpreted as ownership.
+    /// Includes each cell's own source span when the lexer provides one.
+    pub remaining_lexer_cell_spans: Vec<(usize, usize, usize, String)>,
+    /// Explicit reserved markers, distinguished from parameter definitions.
+    pub reserved_marker_lines: Vec<usize>,
+    /// Rows with empty first cells or prose-like continuations; observational.
+    pub continuation_row_lines: Vec<usize>,
+}
+
+/// Classify observed source cells without attaching continuation text to
+/// preceding parameters or treating reserved message types as parameters.
+fn audit_parameter_row_kind(cells: &[String]) -> &'static str {
+    let first = cells.first().map(|s| s.trim()).unwrap_or("");
+    let second = cells.get(1).map(|s| s.trim()).unwrap_or("");
+    if first.is_empty() && second.is_empty() {
+        return "empty";
+    }
+    let tokens: Vec<_> = first.split_whitespace().collect();
+    if tokens.len() == 2
+        && tokens[1].eq_ignore_ascii_case("reserved")
+        && tokens[0].len() == 1
+        && tokens[0].bytes().all(|b| b.is_ascii_alphabetic())
+    {
+        return "reserved_message_type";
+    }
+    // A named optional key can be explicitly repeated in the value cell.
+    // This is only a candidate: no ownership or fact verification follows.
+    if let Some((_, name)) = first.rsplit_once('(')
+        && let Some(name) = name.strip_suffix(')')
+    {
+        let name = name.trim();
+        if !name.is_empty()
+            && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+            && second.strip_prefix(name).is_some_and(|tail| tail.starts_with('='))
+        {
+            return "named_key_candidate";
+        }
+    }
+    if first.starts_with('(') || first.ends_with(':') {
+        return "possible_continuation";
+    }
+    if tokens.len() == 1
+        && tokens[0].bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        && !second.is_empty()
+    {
+        return "parameter_name_candidate";
+    }
+    "unclassified_row"
+}
+
+/// Record lexer-backed row evidence without reconstructing a second table
+/// index. Row spans are byte-accurate even when HTML rows share a source line.
+fn record_remaining_lexer_row(
+    analysis: &simplelexer::tablelexer::DocumentAnalysis<'_>,
+    offset: usize,
+    line: usize,
+    result: &mut ParameterStructureAudit,
+) {
+    if let Some((table, row)) = analysis.source_row_at(offset) {
+        let header = table.rows.first().map(|header| {
+            header.cells.iter().map(|cell| cell.text.trim())
+                .collect::<Vec<_>>().join(" | ")
+        }).unwrap_or_default();
+        result.remaining_lexer_table_rows.push((line, header));
+        let cells = row.cells.iter().map(|cell| {
+            cell.text.trim().chars().take(120).collect::<String>()
+        }).collect::<Vec<_>>();
+        let kind = audit_parameter_row_kind(&cells).to_owned();
+        let classified = (line, row.span.start, row.span.end, kind);
+        if !result.remaining_row_kinds.contains(&classified) {
+            result.remaining_row_kinds.push(classified);
+        }
+        let evidence = (line, row.span.start, row.span.end, cells);
+        if !result.remaining_lexer_row_cells.contains(&evidence) {
+            result.remaining_lexer_row_cells.push(evidence);
+        }
+        for cell in &row.cells {
+            let item = (line, cell.span.start, cell.span.end, cell.text.trim().to_owned());
+            if !result.remaining_lexer_cell_spans.contains(&item) {
+                result.remaining_lexer_cell_spans.push(item);
+            }
+        }
+        let first = row.cells.first().map(|cell| cell.text.trim()).unwrap_or("");
+        let mut words = first.split_whitespace();
+        if matches!((words.next(), words.next(), words.next()),
+            (Some("t" | "u"), Some("Reserved"), None))
+        {
+            result.reserved_marker_lines.push(line);
+        } else if first.is_empty() || first.split_whitespace().count() > 5 {
+            // A syntactic continuation candidate, not an inferred parameter.
+            result.continuation_row_lines.push(line);
+        }
+    } else {
+        result.remaining_outside_lexer_tables.push(line);
+    }
+}
+
+pub(super) fn parameter_structure_audit(
+    candidates: &[MessageCandidate],
+    sources: &[&str],
+    starts: &[usize],
+    document: &str,
+    normalized: &simplelexer::tablelexer::NormalizedTableText,
+    original: &str,
+) -> ParameterStructureAudit {
+    let verified = parameter_facts_in_document(
+        candidates, sources, starts, document, normalized, original,
+    );
+    let anchors: std::collections::BTreeSet<_> = verified
+        .iter()
+        .map(|fact| (fact.source_byte_offset, fact.statement.as_str(), fact.evidence_quote.as_str()))
+        .collect();
+    let structure = SourceStructure::from_document(document);
+    let analysis = simplelexer::tablelexer::DocumentAnalysis::parse(document);
+    let mut result = ParameterStructureAudit {
+        distinct_parameters: verified.iter().map(|fact| fact.parameter.as_str())
+            .collect::<std::collections::BTreeSet<_>>().len(),
+        distinct_sections: verified.iter().map(|fact| fact.section.as_str())
+            .collect::<std::collections::BTreeSet<_>>().len(),
+        ..Default::default()
+    };
+    for candidate in candidates {
+        let Some((window, start)) = source_window_index(&candidate.id)
+            .and_then(|index| sources.get(index).zip(starts.get(index)))
+        else { continue };
+        for fact in &candidate.facts {
+            if !matches!(
+                resolve_fact_type_with_flattened_tables(
+                    window, *start, document, fact, true, &structure
+                ),
+                Err(ResolutionFailure::NoSourceType)
+            ) { continue; }
+            result.no_source_type += 1;
+            let absolute = fact.source_byte_offset.and_then(|offset| start.checked_add(offset));
+            let line = absolute.and_then(|offset| {
+                crate::utils::stringutils::line_index_at_byte_offset(document, offset)
+            });
+            // Observe exact lexer row boundaries independently of the
+            // heuristic parameter-shaped triage; never assign identity here.
+            if let (Some(offset), Some(index)) = (absolute, line) {
+                if let Some(owner) = structure.table_row_type_at(offset) {
+                    result.explicit_message_row_lines.push((index + 1, char::from(owner)));
+                } else if structure.is_message_table_row_at(offset) {
+                    result.untyped_message_row_lines.push(index + 1);
+                } else {
+                    result.outside_message_row_lines.push(index + 1);
+                }
+            }
+            if line.map(|index| unresolved_source_shape(document, index)) != Some("parameter") {
+                result.other_unresolved += 1;
+                if let (Some(offset), Some(index)) = (absolute, line) {
+                    record_remaining_lexer_row(
+                        &analysis, offset, index + 1, &mut result,
+                    );
+                }
+                if let Some(index) = line { result.other_unresolved_lines.push(index + 1); }
+                continue;
+            }
+            let verified_anchor = absolute
+                .and_then(|offset| normalized.source_offset(offset))
+                .zip(fact.evidence_quote.as_deref())
+                .is_some_and(|(offset, quote)| anchors.contains(&(offset, fact.statement.as_str(), quote)));
+            if verified_anchor {
+                result.verified_parameter_assertions += 1;
+            } else {
+                result.parameter_shaped_without_verified_evidence += 1;
+                if let (Some(offset), Some(index)) = (absolute, line) {
+                    record_remaining_lexer_row(
+                        &analysis, offset, index + 1, &mut result,
+                    );
+                }
+                if let Some(index) = line { result.unverified_table_lines.push(index + 1); }
+            }
+        }
+    }
+    result.unverified_table_lines.sort_unstable();
+    result.other_unresolved_lines.sort_unstable();
+    result.explicit_message_row_lines.sort_unstable();
+    result.untyped_message_row_lines.sort_unstable();
+    result.outside_message_row_lines.sort_unstable();
+    result.remaining_lexer_table_rows.sort_unstable();
+    result.remaining_outside_lexer_tables.sort_unstable();
+    result.remaining_lexer_row_cells.sort_unstable();
+    result.remaining_row_kinds.sort_unstable();
+    result.remaining_lexer_cell_spans.sort_unstable();
+    result.reserved_marker_lines.sort_unstable();
+    result.reserved_marker_lines.dedup();
+    result.continuation_row_lines.sort_unstable();
+    result.continuation_row_lines.dedup();
+    result
 }
 
 pub(super) struct DocumentIdentityContext<'a> {
@@ -2750,6 +2965,8 @@ pub(super) fn statement_structure_stats(
 ) -> StatementStructureStats {
     let tree = SourceTree::from_document(document);
     let structure = SourceStructure::from_document(document);
+    // Source rows are byte-positioned: multiple HTML rows can share one physical line.
+    let analysis = simplelexer::tablelexer::DocumentAnalysis::parse(document);
     let line_starts: Vec<usize> = std::iter::once(0)
         .chain(document.match_indices('\n').map(|(at, _)| at + 1))
         .collect();
@@ -2797,9 +3014,15 @@ pub(super) fn statement_structure_stats(
             let anchor_line = line_starts
                 .partition_point(|at| *at <= anchor_at)
                 .saturating_sub(1);
-            let statement_row = tree.row(statement_line).map(|row| (row.table, row.line));
-            let anchor_row = tree.row(anchor_line).map(|row| (row.table, row.line));
-            // Also recognize flattened/normalized message-table rows using existing structure ranges.
+            // Prefer simplelexer's original byte spans over the local line-based
+            // Markdown approximation. A physical HTML line can contain many rows.
+            let statement_row = analysis
+                .source_row_at(statement_at)
+                .map(|(_, row)| (row.span.start, row.span.end));
+            let anchor_row = analysis
+                .source_row_at(anchor_at)
+                .map(|(_, row)| (row.span.start, row.span.end));
+            // Retain the existing ranges for normalized/flattened message tables.
             let statement_range = structure
                 .table_row_ranges
                 .iter()

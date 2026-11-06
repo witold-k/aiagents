@@ -2456,6 +2456,51 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             "## [CHUNKED] P4 PARAMETER INVENTORY: {} distinct source-backed parameter assertions; separate from message identity, not published",
             parameter_inventory.len()
         );
+        let audit = message_identity::parameter_structure_audit(
+            &checkpoint.candidates,
+            &source_windows,
+            &source_starts,
+            &masked_source,
+            &normalized_tables,
+            &source,
+        );
+        println!(
+            "## [CHUNKED] PARAMETER STRUCTURE AUDIT: no_source_type={} verified_parameter_assertions={} parameter_shaped_without_verified_evidence={} other_unresolved={} distinct_parameters={} distinct_sections={} (read-only; no message ownership inferred)",
+            audit.no_source_type,
+            audit.verified_parameter_assertions,
+            audit.parameter_shaped_without_verified_evidence,
+            audit.other_unresolved,
+            audit.distinct_parameters,
+            audit.distinct_sections,
+        );
+        println!(
+            "## [CHUNKED] PARAMETER STRUCTURE REMAINING: table_lines={:?} other_lines={:?} (source line numbers; duplicates retained)",
+            audit.unverified_table_lines,
+            audit.other_unresolved_lines,
+        );
+        println!(
+            "## [CHUNKED] MESSAGE ROW STRUCTURE AUDIT: explicit={:?} untyped={:?} outside={:?} (exact lexer row boundaries; no identity inferred)",
+            audit.explicit_message_row_lines,
+            audit.untyped_message_row_lines,
+            audit.outside_message_row_lines,
+        );
+        println!(
+            "## [CHUNKED] REMAINING LEXER TABLE ROWS: in_table={:?} outside={:?} (17 unresolved occurrences; headers only, no ownership inferred)",
+            audit.remaining_lexer_table_rows,
+            audit.remaining_outside_lexer_tables,
+        );
+        for (line, start, end, cells) in &audit.remaining_lexer_row_cells {
+            println!(
+                "## [CHUNKED] REMAINING LEXER ROW CELLS: line={} bytes={}..{} cells={:?} (source syntax only)",
+                line, start, end, cells,
+            );
+        }
+        for (line, start, end, kind) in &audit.remaining_row_kinds {
+            println!(
+                "## [CHUNKED] REMAINING LEXER ROW KIND: line={} bytes={}..{} kind={} (diagnostic only; no ownership inferred)",
+                line, start, end, kind,
+            );
+        }
         if std::env::var_os("AIFIX_EXPORT_PARAMETER_INVENTORY").is_some() {
             if std::env::var_os("AIFIX_IDENTITY_REPLAY").is_none() {
                 return WorkflowResult::Error(
