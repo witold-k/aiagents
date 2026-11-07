@@ -4,6 +4,8 @@
 //! Bounded, source-aware document transformation with independent review.
 
 // P4 staging preserves source-attributed candidates before identity resolution.
+#[path = "coverage_audit.rs"]
+mod coverage_audit;
 #[path = "extraction_quality.rs"]
 mod extraction_quality;
 #[path = "message_identity.rs"]
@@ -2488,6 +2490,40 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             println!(
                 "## [CHUNKED] PARAMETER UNCOVERED ROW: line={line} row_byte={row_start} kind={kind} (no ownership inferred)",
             );
+        }
+        // Optional, read-only JSON summary; never modifies canonical facts or checkpoint.
+        // Set AIFIX_COVERAGE_AUDIT_JSON to an explicit output filename.
+        if let Ok(output) = std::env::var("AIFIX_COVERAGE_AUDIT_JSON") {
+            let summary = coverage_audit::CoverageAudit::new(
+                candidate_facts,
+                distinct_candidate_facts,
+                resolved,
+                unresolved,
+                unresolved_facts,
+                locator_stats.total,
+                locator_stats.located,
+                locator_stats.missing,
+                locator_stats.exact_match,
+                locator_stats.mismatch,
+                parameter_inventory.len(),
+                coverage.unresolved,
+                coverage.matched,
+                coverage.unmatched_parameter,
+                coverage.other,
+            );
+            if !summary.passed() {
+                eprintln!("## [CHUNKED] COVERAGE AUDIT: inconsistent diagnostic counts (see JSON)");
+            }
+            match serde_json::to_string_pretty(&summary) {
+                Ok(json) => {
+                    if let Err(err) = fs::write(&output, format!("{json}\\n")) {
+                        eprintln!("## [CHUNKED] COVERAGE AUDIT: unable to write {output:?}: {err}");
+                    } else {
+                        println!("## [CHUNKED] COVERAGE AUDIT: wrote {output:?} (read-only)");
+                    }
+                }
+                Err(err) => eprintln!("## [CHUNKED] COVERAGE AUDIT: serialization failed: {err}"),
+            }
         }
         for (section, (matched, unmatched, other)) in coverage.by_section {
             println!(
