@@ -111,8 +111,13 @@ impl<'a> Workflow for BLTWorkflow<'a> {
             }
         }
 
+        // Keep analysis prompts bounded even when the selected Rust module is huge.
+        // Full source remains available to the tool-driven apply phase.
+        let source_excerpts = self.llm_call.diagnostic_source_excerpts(&diagnostic);
+        let diagnostic_context = format!("{diagnostic_context}\n\n{source_excerpts}");
+
         self.debug("## [BLT] DIAGNOSE FIX");
-        let diagnosis = match self.llm_call.run_context_step_limited_with_temperature(
+        let diagnosis = match self.llm_call.run_text_step_limited_with_temperature(
             WorkflowSteps::FixCodeDiagnose.get_prompt(),
             &diagnostic_context,
             1024,
@@ -134,7 +139,7 @@ impl<'a> Workflow for BLTWorkflow<'a> {
         let mut fix_designs = Vec::new();
 
         for attempt in 1..=MAX_ANALYSIS_ATTEMPTS {
-            let analysis = match self.llm_call.run_context_step_limited_with_temperature(
+            let analysis = match self.llm_call.run_text_step_limited_with_temperature(
                 WorkflowSteps::FixCodeAnalyze.get_prompt(),
                 &design_request,
                 2048,
@@ -151,7 +156,7 @@ impl<'a> Workflow for BLTWorkflow<'a> {
             let critique_request = format!(
                 "=== DIAGNOSIS AND CONSTRAINTS ===\n{diagnosis}\n\n=== CANDIDATE FIX DESIGN ===\n{analysis}\n\n=== REPAIR CONTEXT ===\n{diagnostic_context}"
             );
-            let critique = match self.llm_call.run_context_step_limited_with_temperature(
+            let critique = match self.llm_call.run_text_step_limited_with_temperature(
                 WorkflowSteps::FixCodeCritique.get_prompt(),
                 &critique_request,
                 1024,
@@ -193,7 +198,7 @@ impl<'a> Workflow for BLTWorkflow<'a> {
             "=== DIAGNOSIS AND CONSTRAINTS ===\n{diagnosis}\n\n=== REPAIR CONTEXT ===\n{diagnostic_context}\n\n=== FIX DESIGN HISTORY ===\n{}",
             fix_history.join("\n\n")
         );
-        let synthesis = match self.llm_call.run_context_choice_step(
+        let synthesis = match self.llm_call.run_text_choice_step(
             WorkflowSteps::FixCodeSynthesize.get_prompt(),
             &synthesis_request,
             fix_designs.len(),

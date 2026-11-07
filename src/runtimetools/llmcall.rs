@@ -508,6 +508,45 @@ impl<'a> LlmCall<'a> {
         self.run_context_step_limited_with_temperature(prompt, context, max_tokens, 0.6)
     }
 
+    /// Build a bounded, diagnostic-centered source excerpt for code-fix analysis.
+    /// Unlike a full FileEntry, this never serializes an entire large source file.
+    pub fn diagnostic_source_excerpts(&self, diagnostic: &str) -> String {
+        const MAX_FILES: usize = 2;
+        const MAX_LINES_PER_FILE: usize = 100;
+        const MAX_CHARS: usize = 16_000;
+        let paths = self.transient_source_files.borrow();
+        let mut output = String::new();
+        for path in paths.iter().take(MAX_FILES) {
+            let Ok(source) = fs::read_to_string(path) else { continue };
+            let lines: Vec<&str> = source.lines().collect();
+            let relative = path.strip_prefix(&self.projdir).unwrap_or(path);
+            let path_text = relative.to_string_lossy().replace('\\', "/");
+            let mut target = None;
+            for line in diagnostic.lines() {
+                if !line.contains(&path_text) && !line.contains(path.file_name().and_then(|n| n.to_str()).unwrap_or("")) {
+                    continue;
+                }
+                if let Some((_, tail)) = line.rsplit_once(".rs:") {
+                    target = tail.split(':').next().and_then(|n| n.parse::<usize>().ok());
+                    if target.is_some() { break; }
+                }
+            }
+            let center = target.unwrap_or(1).saturating_sub(1);
+            let start = center.saturating_sub(MAX_LINES_PER_FILE / 2);
+            let end = (start + MAX_LINES_PER_FILE).min(lines.len());
+            let header = format!("\n=== SOURCE EXCERPT: {} (lines {}..{}, total {}) ===\n", path_text, start + 1, end, lines.len());
+            if output.len() + header.len() > MAX_CHARS { break; }
+            output.push_str(&header);
+            for (index, line) in lines.iter().enumerate().take(end).skip(start) {
+                let numbered = format!("{:>6}: {}\n", index + 1, line);
+                if output.len() + numbered.len() > MAX_CHARS { break; }
+                output.push_str(&numbered);
+            }
+            output.push_str("Further source context can be loaded with load_file/load_file_part during the apply phase.\n");
+        }
+        output
+    }
+
     pub fn run_context_step_limited_with_temperature(
         &self,
         prompt: &str,
@@ -536,6 +575,25 @@ impl<'a> LlmCall<'a> {
                 .join(" | ")
         );
         self.run_text_step_with_context(prompt, context, 8, true, 0.0, Some(&grammar))
+    }
+
+    pub fn run_text_choice_step(
+        &self,
+        prompt: &str,
+        context: &str,
+        choice_count: usize,
+    ) -> Result<String, LlmCallResult> {
+        if choice_count == 0 {
+            return Err(LlmCallResult::RetryFailed);
+        }
+        let grammar = format!(
+            "root ::= {}",
+            (1..=choice_count)
+                .map(|choice| format!("\"{choice}\""))
+                .collect::<Vec<_>>()
+                .join(" | ")
+        );
+        self.run_text_step_with_context(prompt, context, 8, false, 0.0, Some(&grammar))
     }
 
     pub fn run_text_step_limited(

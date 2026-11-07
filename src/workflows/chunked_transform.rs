@@ -4,6 +4,8 @@
 //! Bounded, source-aware document transformation with independent review.
 
 // P4 staging preserves source-attributed candidates before identity resolution.
+#[path = "coverage_audit.rs"]
+mod coverage_audit;
 #[path = "extraction_quality.rs"]
 mod extraction_quality;
 #[path = "message_identity.rs"]
@@ -2488,6 +2490,132 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             println!(
                 "## [CHUNKED] PARAMETER UNCOVERED ROW: line={line} row_byte={row_start} kind={kind} (no ownership inferred)",
             );
+        }
+        // Optional, read-only JSON summary; never modifies canonical facts or checkpoint.
+        // Set AIFIX_COVERAGE_AUDIT_JSON to an explicit output filename.
+        if let Ok(output) = std::env::var("AIFIX_COVERAGE_AUDIT_JSON") {
+            let summary = coverage_audit::CoverageAudit::new(
+                candidate_facts,
+                distinct_candidate_facts,
+                resolved,
+                unresolved,
+                unresolved_facts,
+                locator_stats.total,
+                locator_stats.located,
+                locator_stats.missing,
+                locator_stats.exact_match,
+                locator_stats.mismatch,
+                parameter_inventory.len(),
+                coverage.unresolved,
+                coverage.matched,
+                coverage.unmatched_parameter,
+                coverage.other,
+            );
+            if !summary.passed() {
+                eprintln!("## [CHUNKED] COVERAGE AUDIT: inconsistent diagnostic counts (see JSON)");
+            }
+            let evidence_report = coverage_audit::evidence_coverage_report(
+                &checkpoint.candidates,
+                &source_windows,
+            );
+            let semantic_plan = coverage_audit::semantic_review_plan(
+                &checkpoint.candidates,
+                &source_windows,
+                &source_starts,
+                &source,
+                &evidence_report,
+            );
+            let semantic_output = format!("{output}.semantic-review.json");
+            match serde_json::to_string_pretty(&semantic_plan) {
+                Ok(json) => {
+                    if let Err(err) = fs::write(&semantic_output, format!("{json}\n")) {
+                        eprintln!("## [CHUNKED] COVERAGE AUDIT: unable to write {semantic_output:?}: {err}");
+                    } else {
+                        println!("## [CHUNKED] COVERAGE AUDIT: wrote {semantic_output:?} (pending semantic review; read-only)");
+                    }
+                }
+                Err(err) => eprintln!("## [CHUNKED] COVERAGE AUDIT: semantic review serialization failed: {err}"),
+            }
+
+            // Explicit opt-in, bounded, diagnostic-only LLM verification.
+            if std::env::var_os("AIFIX_SEMANTIC_VERIFY").is_some() {
+                let limit = std::env::var("AIFIX_SEMANTIC_VERIFY_LIMIT")
+                    .ok().and_then(|value| value.parse::<usize>().ok())
+                    .unwrap_or(12).min(200);
+                let mut report = coverage_audit::SemanticVerificationReport::new();
+                for (window_index, line_number, excerpt, statements) in
+                    semantic_plan.verifier_tasks(limit)
+                {
+                    let context = serde_json::json!({
+                        "source_excerpt": excerpt,
+                        "candidate_statements": statements,
+                    }).to_string();
+                    let response = match self.llm_call.run_text_step_limited_with_temperature(
+                        coverage_audit::SEMANTIC_VERIFIER_PROMPT,
+                        &context,
+                        self.llm_call.max_tokens().min(512),
+                        0.0,
+                    ) {
+                        Ok(response) => response,
+                        Err(err) => return WorkflowResult::LlmCallResult(err),
+                    };
+                    report.record(window_index, line_number, &excerpt, statements.len(), &response);
+                }
+                let verdict_output = format!("{output}.semantic-verification.json");
+                match serde_json::to_string_pretty(&report) {
+                    Ok(json) => {
+                        if let Err(err) = fs::write(&verdict_output, format!("{json}\\n")) {
+                            eprintln!("## [CHUNKED] SEMANTIC VERIFY: unable to write {verdict_output:?}: {err}");
+                        } else {
+                            println!("## [CHUNKED] SEMANTIC VERIFY: wrote {verdict_output:?} (LLM judgments; diagnostic only)");
+                        }
+                    }
+                    Err(err) => eprintln!("## [CHUNKED] SEMANTIC VERIFY: serialization failed: {err}"),
+                }
+            }
+            let evidence_output = format!("{output}.evidence-coverage.json");
+            match serde_json::to_string_pretty(&evidence_report) {
+                Ok(json) => {
+                    if let Err(err) = fs::write(&evidence_output, format!("{json}\n")) {
+                        eprintln!("## [CHUNKED] COVERAGE AUDIT: unable to write {evidence_output:?}: {err}");
+                    } else {
+                        println!("## [CHUNKED] COVERAGE AUDIT: wrote {evidence_output:?} (read-only)");
+                    }
+                }
+                Err(err) => eprintln!("## [CHUNKED] COVERAGE AUDIT: evidence serialization failed: {err}"),
+            }
+            let details = coverage_audit::missing_locator_details(
+                &checkpoint.candidates,
+                &source_windows,
+            );
+            let detail_output = format!("{output}.missing-locators.json");
+            if details.len() != locator_stats.missing {
+                eprintln!(
+                    "## [CHUNKED] COVERAGE AUDIT: missing locator detail count {} differs from {}",
+                    details.len(),
+                    locator_stats.missing
+                );
+            }
+            match serde_json::to_string_pretty(&details) {
+                Ok(json) => {
+                    if let Err(err) = fs::write(&detail_output, format!("{json}\n")) {
+                        eprintln!("## [CHUNKED] COVERAGE AUDIT: unable to write {detail_output:?}: {err}");
+                    } else {
+                        println!("## [CHUNKED] COVERAGE AUDIT: wrote {detail_output:?} (read-only)");
+                    }
+                }
+                Err(err) => eprintln!("## [CHUNKED] COVERAGE AUDIT: detail serialization failed: {err}"),
+            }
+            match serde_json::to_string_pretty(&summary) {
+                Ok(json) => {
+                    if let Err(err) = fs::write(&output, format!("{json}\n")) {
+                        eprintln!("## [CHUNKED] COVERAGE AUDIT: unable to write {output:?}: {err}");
+                    } else {
+                        println!("## [CHUNKED] COVERAGE AUDIT: wrote {output:?} (read-only)");
+                    }
+                }
+                Err(err) => eprintln!("## [CHUNKED] COVERAGE AUDIT: serialization failed: {err}"),
+            }
         }
         for (section, (matched, unmatched, other)) in coverage.by_section {
             println!(
