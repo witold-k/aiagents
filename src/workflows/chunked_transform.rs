@@ -371,10 +371,12 @@ struct SegmentedWindow {
     files: Vec<SegmentedFile>,
 }
 
-// Preserve the case of one-letter protocol types. OpenAMIP uses distinct
-// uppercase modem and lowercase antenna messages (e.g. X and x).
-// Legacy messages/x.md is accepted for uppercase X only when no lowercase
-// x declaration exists. In the ambiguous case, uppercase uses upper_x.md.
+// Protocol identifiers are case-sensitive: an uppercase and lowercase
+// one-letter type can denote distinct messages in any source specification.
+// For compatibility, a single-letter messages/<lowercase>.md path may denote
+// the uppercase type only when the source does not declare the lowercase type.
+// If both are declared, the uppercase path must use upper_<lowercase>.md.
+// Resolve this from explicit source declarations, never from protocol names.
 fn declared_message_identity(path: &str, source: &str) -> bool {
     let slug = path
         .strip_prefix("messages/")
@@ -478,8 +480,8 @@ fn message_path_type(path: &str, identity_source: &str) -> Option<u8> {
     }
 }
 
-// When both cases are declared, legacy messages/x.md is ambiguous. Only
-// an explicit statement or source identity may resolve it.
+// When both cases are declared, a lowercase filename alone is ambiguous.
+// Only an explicit statement or source identity may resolve it.
 fn fact_message_path(
     path: &str,
     fact_type: Option<u8>,
@@ -2619,6 +2621,82 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                     println!(
                         "## [CHUNKED] SEMANTIC UNIT: entry_byte={} rows={:?} relation_indices={:?} evidence={:?} (proposed; no ownership inferred)",
                         unit.entry_row, unit.row_starts, unit.supporting_relations, evidence,
+                    );
+                }
+                let hypothetical = llm_structure::hypothetical_units(&graph, &units);
+                println!(
+                    "## [CHUNKED] HYPOTHETICAL SEMANTIC UNITS: count={} (voted structural boundary, no lexical anchor; excluded from verified coverage and identity)",
+                    hypothetical.len(),
+                );
+                for unit in &hypothetical {
+                    println!(
+                        "## [CHUNKED] HYPOTHETICAL SEMANTIC UNIT: entry_byte={} rows={:?} relation_indices={:?} (read-only, no fact verification or ownership)",
+                        unit.entry_row, unit.row_starts, unit.supporting_relations,
+                    );
+                }
+                let (unit_counts, outside) =
+                    llm_structure::unit_fact_coverage(&units, &coverage.unmatched_rows);
+                let covered: usize = unit_counts.iter().map(|(_, count)| count).sum();
+                println!(
+                    "## [CHUNKED] SEMANTIC UNIT FACT COVERAGE: covered={} outside_or_ambiguous={} total={} (unmatched source-row occurrences; no fact validation or identity inferred)",
+                    covered, outside, coverage.unmatched_rows.len(),
+                );
+                for (entry, count) in unit_counts {
+                    println!(
+                        "## [CHUNKED] SEMANTIC UNIT FACT COVERAGE ENTRY: entry_byte={} occurrences={} (exact lexer row membership; proposed only)",
+                        entry, count,
+                    );
+                }
+                let mut exact = 0usize;
+                let mut unverified = 0usize;
+                let mut outside = 0usize;
+                for (row_start, evidence_ok) in &coverage.unmatched_evidence {
+                    let matching_units = units.iter()
+                        .filter(|unit| unit.row_starts.contains(row_start))
+                        .count();
+                    if matching_units != 1 {
+                        outside += 1;
+                    } else if *evidence_ok {
+                        exact += 1;
+                    } else {
+                        unverified += 1;
+                    }
+                }
+                println!(
+                    "## [CHUNKED] SEMANTIC UNIT EVIDENCE: exact_in_row={} unverified_in_unit={} outside_or_ambiguous={} total={} (exact quote at source anchor, within lexer row; read-only, no identity inferred)",
+                    exact, unverified, outside, coverage.unmatched_evidence.len(),
+                );
+                let tiers = llm_structure::tiered_unit_evidence(
+                    &units, &hypothetical, &coverage.unmatched_evidence,
+                );
+                println!(
+                    "## [CHUNKED] TIERED SEMANTIC UNIT EVIDENCE: lexical_exact={} lexical_unverified={} relational_exact={} relational_unverified={} outside_or_ambiguous={} total={} (exact quote within source lexer row only; no statement validation or message identity)",
+                    tiers.lexical_exact,
+                    tiers.lexical_unverified,
+                    tiers.relational_exact,
+                    tiers.relational_unverified,
+                    tiers.outside_or_ambiguous,
+                    coverage.unmatched_evidence.len(),
+                );
+                let remaining = llm_structure::remaining_unit_evidence(
+                    &graph, &units, &hypothetical, &coverage.unmatched_rows,
+                );
+                println!(
+                    "## [CHUNKED] SEMANTIC EVIDENCE DISPOSITION: lexical_exact={} relational_exact={} structural_headings={} reserved_boundaries={} unresolved={} total={} (source structure and quote position only; no semantic validation or message identity)",
+                    tiers.lexical_exact,
+                    tiers.relational_exact,
+                    remaining.structural_headings,
+                    remaining.reserved_boundaries,
+                    remaining.unresolved
+                        + tiers.lexical_unverified + tiers.relational_unverified,
+                    coverage.unmatched_rows.len(),
+                );
+                for (line, row_start, reason) in llm_structure::outside_unit_evidence(
+                    &graph, &units, &coverage.unmatched_rows,
+                ) {
+                    println!(
+                        "## [CHUNKED] SEMANTIC UNIT OUTSIDE: line={} row_byte={} reason={} (source structure only; no identity inferred)",
+                        line, row_start, reason,
                     );
                 }
                 println!(

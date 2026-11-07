@@ -636,6 +636,10 @@ mod parameter_row_audit_tests {
         assert_eq!(kind("t Reserved", ""), "reserved_message_type");
         assert_eq!(kind("u Reserved", ""), "reserved_message_type");
         assert_eq!(kind("T Reserved", ""), "reserved_message_type");
+        assert_eq!(kind("q Reserved", ""), "reserved_message_type");
+        assert_eq!(kind("Z reserved", ""), "reserved_message_type");
+        assert_eq!(kind("aa Reserved", ""), "unclassified_row");
+        assert_eq!(kind("q Available", ""), "unclassified_row");
     }
 
     #[test]
@@ -1889,8 +1893,8 @@ fn record_remaining_lexer_row(
                 result.remaining_row_neighbors.push(neighbor);
             }
         }
-        let kind = audit_parameter_row_kind(&cells).to_owned();
-        let classified = (line, row.span.start, row.span.end, kind);
+        let kind = audit_parameter_row_kind(&cells);
+        let classified = (line, row.span.start, row.span.end, kind.to_owned());
         if !result.remaining_row_kinds.contains(&classified) {
             result.remaining_row_kinds.push(classified);
         }
@@ -1905,10 +1909,8 @@ fn record_remaining_lexer_row(
             }
         }
         let first = row.cells.first().map(|cell| cell.text.trim()).unwrap_or("");
-        let mut words = first.split_whitespace();
-        if matches!((words.next(), words.next(), words.next()),
-            (Some("t" | "u"), Some("Reserved"), None))
-        {
+        if kind == "reserved_message_type" {
+            // Use the same syntax-based classifier for every reserved type.
             result.reserved_marker_lines.push(line);
         } else if first.is_empty() || first.split_whitespace().count() > 5 {
             // A syntactic continuation candidate, not an inferred parameter.
@@ -1930,6 +1932,9 @@ pub(super) struct ParameterCoverage {
     pub by_section: std::collections::BTreeMap<String, (usize, usize, usize)>,
     pub unmatched_by_lexer_kind: std::collections::BTreeMap<String, usize>,
     pub unmatched_rows: Vec<(usize, usize, String)>,
+    /// (lexer row start, quote begins at the stored source anchor and fits in row).
+    /// Occurrences are retained; false also covers missing or inconsistent evidence.
+    pub unmatched_evidence: Vec<(usize, bool)>,
 }
 
 pub(super) fn parameter_coverage_in_document(
@@ -1999,6 +2004,16 @@ pub(super) fn parameter_coverage_in_document(
                 coverage.unmatched_rows.push((
                     line_index.map_or(0, |index| index + 1), row_start, kind,
                 ));
+                let evidence_in_row = absolute
+                    .and_then(|offset| analysis.source_row_at(offset).map(|(_, row)| (offset, row)))
+                    .zip(fact.evidence_quote.as_deref())
+                    .is_some_and(|((offset, row), quote)| {
+                        !quote.is_empty()
+                            && offset >= row.span.start
+                            && offset.checked_add(quote.len()).is_some_and(|end| end <= row.span.end)
+                            && document.get(offset..offset + quote.len()) == Some(quote)
+                    });
+                coverage.unmatched_evidence.push((row_start, evidence_in_row));
             } else {
                 coverage.other += 1;
                 counts.2 += 1;

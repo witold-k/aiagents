@@ -81,6 +81,229 @@ pub(super) struct SemanticUnit {
     pub supporting_relations: Vec<usize>,
 }
 
+/// Separate, read-only units whose entry boundary is supported by a voted
+/// heading relation and a voted continuation, but has no lexical entry anchor.
+/// They never participate in verified coverage or message identity.
+pub(super) fn hypothetical_units(
+    graph: &SourceGraph,
+    verified: &[SemanticUnit],
+) -> Vec<SemanticUnit> {
+    let by_start: BTreeMap<_, _> = graph.rows.iter()
+        .map(|row| (row.start, row)).collect();
+    let occupied: BTreeSet<_> = verified.iter()
+        .flat_map(|unit| unit.row_starts.iter().copied()).collect();
+    let reserved: BTreeSet<_> = graph.assertions.iter()
+        .filter(|assertion| assertion.lexer_kind == "reserved_message_type")
+        .map(|assertion| assertion.row_start).collect();
+    let majority = |earlier: usize, later: usize, kinds: &[&str]| -> Vec<usize> {
+        let candidates: Vec<_> = graph.relations.iter().enumerate()
+            .filter(|(_, relation)| relation.earlier_row == earlier
+                && relation.later_row == later)
+            .collect();
+        let Some(valid) = candidates.first().map(|(_, relation)| relation.valid_attempts) else {
+            return Vec::new();
+        };
+        if valid == 0 || candidates.iter().any(|(_, relation)| relation.valid_attempts != valid) {
+            return Vec::new();
+        }
+        let support: Vec<_> = candidates.into_iter()
+            .filter(|(_, relation)| kinds.contains(&relation.relation.as_str()))
+            .collect();
+        if support.iter().map(|(_, relation)| relation.votes).sum::<usize>() <= valid / 2 {
+            return Vec::new();
+        }
+        support.into_iter().map(|(index, _)| index).collect()
+    };
+    let mut result = Vec::new();
+    for (&entry, row) in &by_start {
+        if entry_anchor(row) || occupied.contains(&entry) || reserved.contains(&entry) {
+            continue;
+        }
+        let Some(previous) = row.previous else { continue };
+        if by_start.get(&previous).and_then(|r| r.next) != Some(entry)
+            || majority(previous, entry, &["heading_to_entry"]).is_empty() {
+            continue;
+        }
+        let mut starts = vec![entry];
+        let mut links = Vec::new();
+        let mut cursor = entry;
+        while let Some(next) = by_start.get(&cursor).and_then(|r| r.next) {
+            if by_start.get(&next).and_then(|r| r.previous) != Some(cursor)
+                || occupied.contains(&next) || reserved.contains(&next)
+                || entry_anchor(by_start[&next]) || starts.contains(&next) {
+                break;
+            }
+            let support = majority(cursor, next, &["entry_description", "text_continuation"]);
+            if support.is_empty() { break; }
+            links.extend(support);
+            starts.push(next);
+            cursor = next;
+        }
+        if starts.len() > 1 && !result.iter().any(|unit: &SemanticUnit| {
+            unit.row_starts.iter().any(|start| starts.contains(start))
+        }) {
+            result.push(SemanticUnit {
+                entry_row: entry, row_starts: starts, supporting_relations: links,
+            });
+        }
+    }
+    result
+}
+
+/// Count unresolved source-row occurrences covered by each proposed unit.
+/// Exact row offsets only: this does not validate facts or assign message identity.
+/// Duplicate occurrences remain distinct, and rows outside units remain uncovered.
+pub(super) fn unit_fact_coverage(
+    units: &[SemanticUnit],
+    unmatched_rows: &[(usize, usize, String)],
+) -> (Vec<(usize, usize)>, usize) {
+    let mut counts = vec![0; units.len()];
+    let mut outside = 0;
+    for (_, row_start, _) in unmatched_rows {
+        let matches: Vec<_> = units.iter().enumerate()
+            .filter(|(_, unit)| unit.row_starts.contains(row_start))
+            .map(|(index, _)| index)
+            .collect();
+        if matches.len() == 1 {
+            counts[matches[0]] += 1;
+        } else {
+            // Ambiguous overlap is deliberately not counted as covered.
+            outside += 1;
+        }
+    }
+    (units.iter().zip(counts).map(|(unit, count)| (unit.entry_row, count)).collect(), outside)
+}
+
+/// Partition exact source-quote evidence by anchor strength. Each occurrence is
+/// counted once; overlaps or missing/ambiguous units remain outside.
+/// Evidence verifies only quote position within a lexer row, not statement truth.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(super) struct TieredEvidence {
+    pub lexical_exact: usize,
+    pub lexical_unverified: usize,
+    pub relational_exact: usize,
+    pub relational_unverified: usize,
+    pub outside_or_ambiguous: usize,
+}
+
+pub(super) fn tiered_unit_evidence(
+    lexical: &[SemanticUnit],
+    relational: &[SemanticUnit],
+    evidence: &[(usize, bool)],
+) -> TieredEvidence {
+    let mut result = TieredEvidence::default();
+    for &(row_start, exact_quote) in evidence {
+        let lexical_count = lexical.iter()
+            .filter(|unit| unit.row_starts.contains(&row_start)).count();
+        let relational_count = relational.iter()
+            .filter(|unit| unit.row_starts.contains(&row_start)).count();
+        match (lexical_count, relational_count, exact_quote) {
+            (1, 0, true) => result.lexical_exact += 1,
+            (1, 0, false) => result.lexical_unverified += 1,
+            (0, 1, true) => result.relational_exact += 1,
+            (0, 1, false) => result.relational_unverified += 1,
+            _ => result.outside_or_ambiguous += 1,
+        }
+    }
+    result
+}
+
+/// Classify only evidence outside both unit tiers. A heading is a structural
+/// element only when its next row is a lexical entry and the link has majority
+/// support. Reserved rows are explicit boundaries, not missing definitions.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(super) struct RemainingEvidence {
+    pub structural_headings: usize,
+    pub reserved_boundaries: usize,
+    pub unresolved: usize,
+}
+
+pub(super) fn remaining_unit_evidence(
+    graph: &SourceGraph,
+    lexical: &[SemanticUnit],
+    relational: &[SemanticUnit],
+    unmatched: &[(usize, usize, String)],
+) -> RemainingEvidence {
+    let mut result = RemainingEvidence::default();
+    for (_, start, kind) in unmatched {
+        let matches = lexical.iter().chain(relational)
+            .filter(|unit| unit.row_starts.contains(start)).count();
+        if matches == 1 { continue; }
+        // Ambiguous ownership remains unresolved, even for a reserved-looking row.
+        if matches > 1 {
+            result.unresolved += 1;
+            continue;
+        }
+        if kind == "reserved_message_type" {
+            result.reserved_boundaries += 1;
+            continue;
+        }
+        let heading = graph.rows.iter().find(|row| row.start == *start)
+            .and_then(|row| row.next)
+            .and_then(|next| {
+                let next_row = graph.rows.iter().find(|row| row.start == next)?;
+                if next_row.previous != Some(*start) || !entry_anchor(next_row) {
+                    return None;
+                }
+                let valid = graph.relations.iter().any(|relation| {
+                    relation.earlier_row == *start
+                        && relation.later_row == next
+                        && relation.relation == "heading_to_entry"
+                        && relation.valid_attempts > 0
+                        && relation.votes > relation.valid_attempts / 2
+                });
+                Some(valid)
+            }).unwrap_or(false);
+        if heading {
+            result.structural_headings += 1;
+        } else {
+            result.unresolved += 1;
+        }
+    }
+    result
+}
+
+/// Explain why an unresolved source row is not covered by a semantic unit.
+/// This is a read-only classification of evidence, not an inferred owner.
+pub(super) fn outside_unit_evidence(
+    graph: &SourceGraph,
+    units: &[SemanticUnit],
+    unmatched: &[(usize, usize, String)],
+) -> Vec<(usize, usize, &'static str)> {
+    let covered: BTreeSet<_> = units.iter()
+        .flat_map(|unit| unit.row_starts.iter().copied())
+        .collect();
+    unmatched.iter().filter_map(|(line, start, kind)| {
+        if covered.contains(start) { return None; }
+        let row = graph.rows.iter().find(|row| row.start == *start)?;
+        let boundary = kind == "reserved_message_type";
+        let heading = graph.relations.iter().any(|relation| {
+            relation.later_row == *start
+                && relation.relation == "heading_to_entry"
+                && relation.valid_attempts > 0
+                && relation.votes > relation.valid_attempts / 2
+        });
+        let heading_to_next = graph.relations.iter().any(|relation| {
+            relation.earlier_row == *start
+                && relation.relation == "heading_to_entry"
+                && relation.valid_attempts > 0
+                && relation.votes > relation.valid_attempts / 2
+        });
+        let label = if boundary {
+            "explicit_reserved_boundary"
+        } else if entry_anchor(row) {
+            "lexical_entry_without_unit"
+        } else if heading {
+            "heading_link_without_entry_anchor"
+        } else if heading_to_next {
+            "heading_before_entry"
+        } else {
+            "no_verified_unit_anchor"
+        };
+        Some((*line, *start, label))
+    }).collect()
+}
+
 /// Recognize only a key explicitly present in both source cells.
 /// This is an anchor, not a claim about message identity or ownership.
 fn named_key_anchor(row: &RowEvidence) -> bool {
@@ -333,6 +556,22 @@ mod tests {
     }
 
     #[test]
+    fn unit_coverage_preserves_occurrences_and_excludes_unanchored_rows() {
+        let units = semantic_units(&graph_for_projection());
+        let unmatched = vec![
+            (1, 10, "unclassified_row".to_owned()),
+            (2, 20, "unclassified_row".to_owned()),
+            (2, 20, "unclassified_row".to_owned()),
+            (3, 30, "unclassified_row".to_owned()),
+            (6, 60, "unclassified_row".to_owned()),
+            (9, 90, "unclassified_row".to_owned()),
+        ];
+        let (counts, outside) = unit_fact_coverage(&units, &unmatched);
+        assert_eq!(counts, vec![(20, 3), (50, 1), (70, 0)]);
+        assert_eq!(outside, 2);
+    }
+
+    #[test]
     fn semantic_projection_does_not_cross_independent_boundary() {
         let graph = graph_for_projection();
         assert!(semantic_units(&graph).iter().all(|unit| {
@@ -386,6 +625,131 @@ mod tests {
         assert_eq!(units[2].entry_row, 114834);
         assert_eq!(units[2].row_starts, vec![114834, 114910, 114975]);
         assert!(units.iter().all(|unit| !unit.row_starts.contains(&110817)));
+    }
+
+    #[test]
+    fn outside_rows_keep_headings_separate_from_reserved_boundaries() {
+        let starts = [10, 20, 30, 40];
+        let cells = [
+            vec!["Section title", ""],
+            vec!["Continuation without an entry key", "int index"],
+            vec!["(Optional key value pairs)", ""],
+            vec!["q Reserved", ""],
+        ];
+        let rows: Vec<_> = starts.iter().enumerate().map(|(i, start)| RowEvidence {
+            line: i + 1,
+            start: *start,
+            previous: i.checked_sub(1).map(|j| starts[j]),
+            next: starts.get(i + 1).copied(),
+            cells: cells[i].iter().map(|s| (*s).to_owned()).collect(),
+        }).collect();
+        let graph = source_graph(&rows, &[
+            (10, 20, "heading_to_entry".to_owned(), 3),
+            (20, 30, "independent".to_owned(), 3),
+            (30, 40, "independent".to_owned(), 3),
+        ], 3, &[]);
+        let unmatched = vec![
+            (2, 20, "unclassified_row".to_owned()),
+            (3, 30, "possible_continuation".to_owned()),
+            (4, 40, "reserved_message_type".to_owned()),
+        ];
+        assert_eq!(outside_unit_evidence(&graph, &[], &unmatched), vec![
+            (2, 20, "heading_link_without_entry_anchor"),
+            (3, 30, "no_verified_unit_anchor"),
+            (4, 40, "explicit_reserved_boundary"),
+        ]);
+    }
+
+    #[test]
+    fn hypothetical_entry_requires_heading_and_continuation_without_ownership() {
+        let starts = [10, 20, 30, 40, 50, 60];
+        let cells = [
+            vec!["Heading", ""],
+            vec!["The next parameter describes an index", "int chain_index"],
+            vec!["used for selecting the chain", ""],
+            vec!["(Optional key value pairs)", ""],
+            vec!["Named option (optionKey)", "optionKey=<int>"],
+            vec!["q Reserved", ""],
+        ];
+        let rows: Vec<_> = starts.iter().enumerate().map(|(i, start)| RowEvidence {
+            line: i + 1, start: *start,
+            previous: i.checked_sub(1).map(|j| starts[j]),
+            next: starts.get(i + 1).copied(),
+            cells: cells[i].iter().map(|s| (*s).to_owned()).collect(),
+        }).collect();
+        let uncovered = vec![(6, 60, "reserved_message_type".to_owned())];
+        let graph = source_graph(&rows, &[
+            (10, 20, "heading_to_entry".to_owned(), 3),
+            (20, 30, "text_continuation".to_owned(), 3),
+            (30, 40, "independent".to_owned(), 3),
+            (40, 50, "heading_to_entry".to_owned(), 3),
+            (50, 60, "independent".to_owned(), 3),
+        ], 3, &uncovered);
+        let verified = semantic_units(&graph);
+        let units = hypothetical_units(&graph, &verified);
+        assert_eq!(units.len(), 1);
+        assert_eq!(units[0].entry_row, 20);
+        assert_eq!(units[0].row_starts, vec![20, 30]);
+        assert!(!units[0].row_starts.contains(&40));
+        assert!(!units[0].row_starts.contains(&60));
+    }
+
+    #[test]
+    fn tiered_evidence_is_disjoint_and_preserves_duplicate_occurrences() {
+        let lexical = vec![SemanticUnit {
+            entry_row: 10, row_starts: vec![10, 20], supporting_relations: vec![],
+        }];
+        let relational = vec![SemanticUnit {
+            entry_row: 30, row_starts: vec![30, 40], supporting_relations: vec![],
+        }];
+        let evidence = vec![
+            (10, true), (10, true), (20, false),
+            (30, true), (40, false), (50, true),
+        ];
+        assert_eq!(tiered_unit_evidence(&lexical, &relational, &evidence),
+            TieredEvidence {
+                lexical_exact: 2, lexical_unverified: 1,
+                relational_exact: 1, relational_unverified: 1,
+                outside_or_ambiguous: 1,
+            });
+        let overlapping = vec![SemanticUnit {
+            entry_row: 30, row_starts: vec![10, 30], supporting_relations: vec![],
+        }];
+        assert_eq!(tiered_unit_evidence(&lexical, &overlapping, &[(10, true)]),
+            TieredEvidence { outside_or_ambiguous: 1, ..TieredEvidence::default() });
+    }
+
+    #[test]
+    fn remaining_evidence_distinguishes_headings_and_reserved_boundaries() {
+        let starts = [10, 20, 30, 40];
+        let cells = [
+            vec!["(Optional key value pairs)", ""],
+            vec!["Time to Blockage (blockTime)", "blockTime=<int sec>"],
+            vec!["q Reserved", ""],
+            vec!["Other text", ""],
+        ];
+        let rows: Vec<_> = starts.iter().enumerate().map(|(i, start)| RowEvidence {
+            line: i + 1, start: *start,
+            previous: i.checked_sub(1).map(|j| starts[j]),
+            next: starts.get(i + 1).copied(),
+            cells: cells[i].iter().map(|s| (*s).to_owned()).collect(),
+        }).collect();
+        let unmatched = vec![
+            (1, 10, "possible_continuation".to_owned()),
+            (3, 30, "reserved_message_type".to_owned()),
+            (4, 40, "unclassified_row".to_owned()),
+        ];
+        let graph = source_graph(&rows,
+            &[(10, 20, "heading_to_entry".to_owned(), 3)], 3, &unmatched);
+        assert_eq!(remaining_unit_evidence(&graph, &[], &[], &unmatched),
+            RemainingEvidence {
+                structural_headings: 1, reserved_boundaries: 1, unresolved: 1,
+            });
+        let graph_without_votes = source_graph(&rows, &[], 3, &unmatched);
+        assert_eq!(remaining_unit_evidence(&graph_without_votes, &[], &[], &unmatched),
+            RemainingEvidence {
+                structural_headings: 0, reserved_boundaries: 1, unresolved: 2,
+            });
     }
 
     #[test]

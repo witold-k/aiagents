@@ -14,7 +14,6 @@ use crate::config::Config;
 use crate::generated_tasks::Tasks;
 use crate::runtimetools::aimessage::{AIMessageList, AIMessageListData, AIMessageType};
 use crate::utils::{
-    ast::get_ast_string,
     scan_dir::scan_with_suffix_and_filter,
     stringutils::{extract_known_paths, raw_fence_to_string, strip_code_fences},
 };
@@ -144,98 +143,72 @@ impl<'a> LlmCall<'a> {
         }
     }
 
-    const SOURCE_ROOT_SEARCH_DEPTH: usize = 4;
+    /// Build a small navigation map. Detailed AST and source remain available via tools.
+    fn source_navigation(filelist: &[PathBuf], diagnostic: &str, projdir: &Path) -> String {
+        use std::collections::{BTreeMap, BTreeSet};
 
-    fn find_source_roots(dir: &Path, depth: usize, roots: &mut Vec<PathBuf>) {
-        if depth > Self::SOURCE_ROOT_SEARCH_DEPTH {
-            return;
+        let mut files = filelist.to_vec();
+        files.sort();
+        files.dedup();
+
+        // Match Rust module names against known files, never guess dependencies.
+        let mut modules: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for file in &files {
+            let name = file.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+            if !name.is_empty() && name != "mod" && name != "lib" && name != "main" {
+                modules.entry(name.to_string()).or_default().push(file.to_string_lossy().replace('\\', "/"));
+            }
         }
 
-        let Ok(entries) = fs::read_dir(dir) else {
-            return;
-        };
-
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
+        let mut result = String::from("SOURCE NAVIGATION (file -> local dependencies; request detailed AST/source as needed):\n");
+        for file in &files {
+            let relative = file.to_string_lossy().replace('\\', "/");
+            let path = projdir.join(file);
+            let mut dependencies = BTreeSet::new();
+            if file.extension().is_some_and(|ext| ext == "rs")
+                && let Ok(source) = fs::read_to_string(&path)
+            {
+                    // Inspect only Rust import paths; avoid transmitting signatures or bodies.
+                    // Handles nested use trees because every crate module path starts at
+                    // `crate::`, `super::` or `self::`.
+                    for statement in source.split(';') {
+                        let trimmed = statement.trim_start();
+                        if !trimmed.starts_with("use ") && !trimmed.contains("\nuse ") &&
+                            !trimmed.contains("\npub use ") && !trimmed.starts_with("pub use ") {
+                            continue;
+                        }
+                        for prefix in ["crate::", "super::", "self::"] {
+                            for fragment in statement.split(prefix).skip(1) {
+                                let module = fragment.split(|c: char| !c.is_ascii_alphanumeric() && c != '_').next().unwrap_or("");
+                                if let Some(targets) = modules.get(module) {
+                                    for target in targets {
+                                        if target != &relative {
+                                            dependencies.insert(target.clone());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
             }
-
-            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-                continue;
-            };
-
-            if matches!(name, "build" | "target" | ".git") {
-                continue;
+            let priority = if diagnostic.contains(&relative) { "* " } else { "  " };
+            result.push_str(priority);
+            result.push_str(&relative);
+            if !dependencies.is_empty() {
+                result.push_str(" -> ");
+                result.push_str(&dependencies.into_iter().collect::<Vec<_>>().join(", "));
             }
-
-            if matches!(name, "src" | "include" | "lib") {
-                roots.push(path);
-                continue;
-            }
-
-            Self::find_source_roots(&path, depth + 1, roots);
+            result.push('\n');
         }
+        result
     }
 
     pub fn update_structure_info(&self, diagnostic: &str) {
-        let mut roots = Vec::new();
-        Self::find_source_roots(&self.projdir, 0, &mut roots);
-
+        let filelist = self.messages.borrow().filelist.clone();
+        let structureinfo = Self::source_navigation(&filelist, diagnostic, &self.projdir);
         if self.dump {
-            println!("## [LLM] SOURCE ROOT SEARCH: {}", self.projdir.display());
-            println!("## [LLM] SOURCE ROOT SEARCH FOUND: {}", roots.len());
-            for root in &roots {
-                println!("## [LLM] SOURCE ROOT: {}", root.display());
-            }
+            println!("## [LLM] SOURCE NAVIGATION: {} files, {} bytes", filelist.len(), structureinfo.len());
         }
-
-        let matching_roots = roots
-            .iter()
-            .filter(|root| {
-                let relative = root.strip_prefix(&self.projdir).unwrap_or(root);
-                diagnostic.contains(&relative.to_string_lossy().replace('\\', "/"))
-            })
-            .collect::<Vec<_>>();
-
-        let selected_roots = if matching_roots.is_empty() {
-            roots.iter().collect::<Vec<_>>()
-        } else {
-            matching_roots
-        };
-
-        let mut structure_targets = selected_roots.into_iter().cloned().collect::<Vec<_>>();
-
-        if let Ok(entries) = fs::read_dir(&self.projdir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if !path.is_file() {
-                    continue;
-                }
-
-                let Some(filename) = path.file_name().and_then(|name| name.to_str()) else {
-                    continue;
-                };
-
-                if diagnostic.contains(filename)
-                    && self
-                        .messages
-                        .borrow()
-                        .filelist
-                        .iter()
-                        .any(|listed| listed == Path::new(filename))
-                {
-                    structure_targets.push(path);
-                }
-            }
-        }
-
-        let structureinfo = structure_targets
-            .into_iter()
-            .map(|path| get_ast_string(&path.to_string_lossy()))
-            .collect::<Vec<_>>()
-            .join("\n");
-
         self.messages.borrow_mut().structureinfo = structureinfo;
     }
 
