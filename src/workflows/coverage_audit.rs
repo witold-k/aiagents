@@ -91,6 +91,87 @@ impl CoverageAudit {
     }
 }
 
+
+#[derive(Debug, Serialize)]
+pub(super) struct MissingLocatorDetail {
+    candidate_id: String,
+    proposed_name: String,
+    fact_index: usize,
+    segment_id: String,
+    statement: String,
+    evidence_quote: Option<String>,
+    source_window: Option<usize>,
+    source_byte_offset: Option<usize>,
+    source_locator_ambiguous: bool,
+    exact_statement_occurrences_in_window: Option<usize>,
+    exact_quote_occurrences_in_window: Option<usize>,
+    reason: &'static str,
+}
+
+fn window_index(candidate_id: &str) -> Option<usize> {
+    candidate_id
+        .strip_prefix("window-")?
+        .split('-')
+        .next()?
+        .parse()
+        .ok()
+}
+
+/// Enumerate missing statement locators without inferring a replacement position.
+/// A statement can be a valid paraphrase even when it does not occur verbatim.
+pub(super) fn missing_locator_details(
+    candidates: &[super::message_identity::MessageCandidate],
+    windows: &[&str],
+) -> Vec<MissingLocatorDetail> {
+    let mut result = Vec::new();
+    for candidate in candidates {
+        let window_index = window_index(&candidate.id);
+        let window = window_index.and_then(|index| windows.get(index)).copied();
+        for (fact_index, fact) in candidate.facts.iter().enumerate() {
+            if fact.statement_byte_offset.is_some() {
+                continue;
+            }
+            let statement_hits = window.map(|source| {
+                if fact.statement.is_empty() { 0 } else { source.matches(&fact.statement).count() }
+            });
+            let quote_hits = window.and_then(|source| {
+                fact.evidence_quote.as_ref().map(|quote| {
+                    if quote.is_empty() { 0 } else { source.matches(quote).count() }
+                })
+            });
+            let reason = if window.is_none() {
+                "source_window_unavailable"
+            } else if fact.source_locator_ambiguous {
+                "ambiguous_source_locator"
+            } else if fact.statement.is_empty() {
+                "empty_statement"
+            } else {
+                match statement_hits {
+                    Some(0) => "statement_not_verbatim_in_window",
+                    Some(1) => "unique_statement_without_locator",
+                    Some(_) => "repeated_statement_in_window",
+                    None => "source_window_unavailable",
+                }
+            };
+            result.push(MissingLocatorDetail {
+                candidate_id: candidate.id.clone(),
+                proposed_name: candidate.proposed_name.clone(),
+                fact_index,
+                segment_id: fact.segment_id.clone(),
+                statement: fact.statement.clone(),
+                evidence_quote: fact.evidence_quote.clone(),
+                source_window: window_index,
+                source_byte_offset: fact.source_byte_offset,
+                source_locator_ambiguous: fact.source_locator_ambiguous,
+                exact_statement_occurrences_in_window: statement_hits,
+                exact_quote_occurrences_in_window: quote_hits,
+                reason,
+            });
+        }
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
