@@ -2516,7 +2516,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             }
             match serde_json::to_string_pretty(&summary) {
                 Ok(json) => {
-                    if let Err(err) = fs::write(&output, format!("{json}\\n")) {
+                    if let Err(err) = fs::write(&output, format!("{json}\n")) {
                         eprintln!("## [CHUNKED] COVERAGE AUDIT: unable to write {output:?}: {err}");
                     } else {
                         println!("## [CHUNKED] COVERAGE AUDIT: wrote {output:?} (read-only)");
