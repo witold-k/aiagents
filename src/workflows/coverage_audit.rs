@@ -176,6 +176,39 @@ pub(super) fn missing_locator_details(
 mod tests {
     use super::*;
 
+    #[test]
+    fn missing_locator_reasons_preserve_source_evidence() {
+        use super::super::message_identity::{CandidateFact, MessageCandidate};
+        let candidate = MessageCandidate {
+            id: "window-0-candidate-0".into(),
+            proposed_name: "unknown".into(),
+            facts: [
+                ("alpha", Some("alpha"), false),
+                ("beta", Some("beta"), false),
+                ("paraphrase", Some("alpha"), false),
+                ("alpha", Some("alpha"), true),
+            ]
+            .into_iter()
+            .map(|(statement, quote, ambiguous)| CandidateFact {
+                statement: statement.into(),
+                segment_id: "S1".into(),
+                evidence_quote: quote.map(str::to_owned),
+                source_byte_offset: Some(0),
+                source_locator_ambiguous: ambiguous,
+                statement_byte_offset: None,
+            })
+            .collect(),
+        };
+        let details = missing_locator_details(&[candidate], &["alpha beta alpha"]);
+        let json = serde_json::to_value(&details).unwrap();
+        assert_eq!(json[0]["reason"], "repeated_statement_in_window");
+        assert_eq!(json[1]["reason"], "unique_statement_without_locator");
+        assert_eq!(json[2]["reason"], "statement_not_verbatim_in_window");
+        assert_eq!(json[3]["reason"], "ambiguous_source_locator");
+        assert_eq!(json[0]["exact_quote_occurrences_in_window"], 2);
+        assert_eq!(json[0]["source_byte_offset"], 0);
+    }
+
     fn example() -> CoverageAudit {
         CoverageAudit::new(238, 235, 15, 10, 115, 238, 124, 114, 124, 0, 78, 95, 78, 13, 4)
     }
