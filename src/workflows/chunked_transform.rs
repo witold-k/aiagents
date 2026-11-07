@@ -2514,6 +2514,28 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             if !summary.passed() {
                 eprintln!("## [CHUNKED] COVERAGE AUDIT: inconsistent diagnostic counts (see JSON)");
             }
+            let details = coverage_audit::missing_locator_details(
+                &checkpoint.candidates,
+                &source_windows,
+            );
+            let detail_output = format!("{output}.missing-locators.json");
+            if details.len() != locator_stats.missing {
+                eprintln!(
+                    "## [CHUNKED] COVERAGE AUDIT: missing locator detail count {} differs from {}",
+                    details.len(),
+                    locator_stats.missing
+                );
+            }
+            match serde_json::to_string_pretty(&details) {
+                Ok(json) => {
+                    if let Err(err) = fs::write(&detail_output, format!("{json}\n")) {
+                        eprintln!("## [CHUNKED] COVERAGE AUDIT: unable to write {detail_output:?}: {err}");
+                    } else {
+                        println!("## [CHUNKED] COVERAGE AUDIT: wrote {detail_output:?} (read-only)");
+                    }
+                }
+                Err(err) => eprintln!("## [CHUNKED] COVERAGE AUDIT: detail serialization failed: {err}"),
+            }
             match serde_json::to_string_pretty(&summary) {
                 Ok(json) => {
                     if let Err(err) = fs::write(&output, format!("{json}\n")) {
