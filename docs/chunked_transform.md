@@ -83,7 +83,7 @@ A completed checkpoint can be inspected without rerunning the model:
 AIFIX_IDENTITY_REPLAY=1 aifix -t extract_message_tables -a document.md
 ```
 
-Replay is diagnostic: it does not publish output or establish verified identities. A normal run can also resume a completed checkpoint and report diagnostic counters before detecting an already published destination.
+Replay is diagnostic: it does not publish output or establish verified identities. Leave `AIFIX_SEMANTIC_VERIFY` unset to avoid optional LLM verification calls. A normal run can also resume a completed checkpoint and report diagnostic counters before detecting an already published destination.
 
 ## Provenance and structure diagnostics
 
@@ -97,6 +97,45 @@ The current workflow reports:
 
 These counters describe *source locations and classification behavior*, not semantic correctness. In particular, `different_segment` in the locator inventory means different byte offsets; it does not prove different table rows or different messages. A shared section does not establish shared message identity. Diagnostic parameter assertions are not automatically published as typed parameters.
 
+## Global evidence coverage and semantic review
+
+The read-only global evidence audit combines source-line coverage across overlapping windows, rather than counting the same normalized source line repeatedly. It distinguishes lines with and without exact source-quote evidence, records skipped lines, and keeps a bounded uncovered-line inventory. These counts measure **textual evidence presence**, not whether every implementable requirement has been extracted.
+
+`semantic_review_plan()` builds a prioritized queue from uncovered lines, using source-tree section/block information and simple lexical hints. It suppresses obvious navigation, headings and table metadata; it keeps table rows atomic and may join adjacent prose within source-block boundaries. Short protocol assignments such as `replyTo=getExtAntStatus` are eligible even without explanatory prose. Captions such as `Table A-5. Transceiver` are not treated as requirements solely because they contain technical terms. The heuristic can still omit real requirements or select administrative text. Queue size is **not** a coverage or correctness score.
+
+Optional semantic verification is controlled by `AIFIX_SEMANTIC_VERIFY`; `AIFIX_SEMANTIC_VERIFY_LIMIT` defaults to 12 and is capped at 200. It asks an LLM to review selected source lines against candidate statements. Results are diagnostic judgments, not automatically accepted facts. **A replay with this option enabled can make LLM calls**, even though replay skips the completed extraction passes.
+
+The audit files use the base name `coverage-audit.json`:
+
+| Artifact | Interpretation |
+| --- | --- |
+| `coverage-audit.json` | Source/fact and parameter coverage |
+| `coverage-audit.json.missing-locators.json` | Statement location diagnostics |
+| `coverage-audit.json.evidence-coverage.json` | Deduplicated source-line evidence coverage |
+| `coverage-audit.json.semantic-review.json` | Pending, heuristic review queue |
+| `coverage-audit.json.semantic-verification.json` | Optional LLM review judgments |
+| `coverage-audit.json.codegen-readiness.json` | Code-generation prerequisite inventory (not a schema) |
+
+## Code-generation readiness: a diagnostic, not a generator
+
+`src/workflows/codegen_readiness.rs` inventories each staged candidate and its facts, counting exact source-anchored evidence quotes and ambiguous/missing anchors. It labels identities as unverified candidates and field schemas as not derived. The output is intentionally conservative: a correct source quote is not a verified type, field, or message definition.
+
+The current report explicitly leaves these prerequisites unestablished:
+
+- Canonical message identities and wire discriminators/encoding.
+- Field names, types, cardinality, constraints, defaults, and optionality.
+- Conditional relationships, protocol state, and parser/serializer error behavior.
+
+These are **questions for subsequent source-backed model construction**, not assertions that the original document lacks this information. The audit neither modifies published JSON nor generates C++ or Rust. The intended consumer is a separate language-specific generator after a sufficiently verified, language-independent model exists.
+
+## Parameter rows, structure proposals and remaining uncertainty
+
+The runtime reports source-backed parameter assertions separately from message identity. `simplelexer` supplies normalized table rows and cell boundaries; `aiagents` uses them as supplementary evidence, not as a reason to reconstruct HTML tables. Multi-row continuation and heading relationships can be proposed by an LLM, with exact source-row membership tracked separately from the proposed relation. Majority agreement does **not** prove semantic correctness or establish ownership.
+
+A source-tree shadow model records sections, blocks, tables and transitions. The diagnostics distinguish exact lexical anchors, proposed relations, structural headings, and reserved boundaries. Even when all unresolved occurrences have a structural disposition, message ownership and field semantics may remain unknown.
+
+The recent OpenAMIP replay retained 25 candidates and 238 source-attributed facts, with 78 distinct source-backed parameter assertions. These are **one checkpoint's diagnostic figures**, not general benchmarks; earlier measurements in this document's history used different checkpoints and must not be compared as equivalent runs.
+
 ## JSON output and verification boundary
 
 The workflow publishes JSON specifications in an `<input-stem>_messages-json` directory, or an `-unverified` diagnostic destination where appropriate. The JSON output uses schema version 1 and includes `facts.json`, `manifest.json`, and per-topic JSON files such as `general.json`, `infrastructure.json` and `messages/<slug>.json`.
@@ -109,6 +148,8 @@ Publication is staged and does not silently overwrite an existing output directo
 
 - [Implementation](../src/workflows/chunked_transform.rs)
 - [Identity and source-locator implementation](../src/workflows/message_identity.rs)
+- [Evidence coverage and semantic review](../src/workflows/coverage_audit.rs)
+- [Codegen readiness inventory](../src/workflows/codegen_readiness.rs)
 - [Task contract](../task_descriptions/tasks/extract_message_tables.md)
 - [Task overview](tasks/extract_message_tables/README.md)
 - [Architecture diagrams](architecture_diagrams.md)

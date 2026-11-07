@@ -6,6 +6,10 @@
 // P4 staging preserves source-attributed candidates before identity resolution.
 #[path = "coverage_audit.rs"]
 mod coverage_audit;
+#[path = "codegen_readiness.rs"]
+mod codegen_readiness;
+#[path = "protocol_model.rs"]
+mod protocol_model;
 #[path = "extraction_quality.rs"]
 mod extraction_quality;
 #[path = "message_identity.rs"]
@@ -2514,15 +2518,41 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             if !summary.passed() {
                 eprintln!("## [CHUNKED] COVERAGE AUDIT: inconsistent diagnostic counts (see JSON)");
             }
-            let evidence_report = coverage_audit::evidence_coverage_report(
+            let evidence_report = coverage_audit::evidence_coverage_report_global(
                 &checkpoint.candidates,
                 &source_windows,
+                &source_starts,
+                &masked_source,
             );
+            let staged_model = protocol_model::stage(&checkpoint.candidates, &source_windows);
+            let model_output = format!("{output}.protocol-model.json");
+            match serde_json::to_string_pretty(&staged_model) {
+                Ok(json) => {
+                    if let Err(err) = fs::write(&model_output, format!("{json}\n")) {
+                        eprintln!("## [CHUNKED] PROTOCOL MODEL: unable to write {model_output:?}: {err}");
+                    } else {
+                        println!("## [CHUNKED] PROTOCOL MODEL: wrote {model_output:?} (hypotheses only)");
+                    }
+                }
+                Err(err) => eprintln!("## [CHUNKED] PROTOCOL MODEL: serialization failed: {err}"),
+            }
+            let readiness = codegen_readiness::audit(&checkpoint.candidates, &source_windows);
+            let readiness_output = format!("{output}.codegen-readiness.json");
+            match serde_json::to_string_pretty(&readiness) {
+                Ok(json) => {
+                    if let Err(err) = fs::write(&readiness_output, format!("{json}\n")) {
+                        eprintln!("## [CHUNKED] CODEGEN READINESS: unable to write {readiness_output:?}: {err}");
+                    } else {
+                        println!("## [CHUNKED] CODEGEN READINESS: wrote {readiness_output:?} (diagnostic only)");
+                    }
+                }
+                Err(err) => eprintln!("## [CHUNKED] CODEGEN READINESS: serialization failed: {err}"),
+            }
             let semantic_plan = coverage_audit::semantic_review_plan(
                 &checkpoint.candidates,
                 &source_windows,
                 &source_starts,
-                &source,
+                &masked_source,
                 &evidence_report,
             );
             let semantic_output = format!("{output}.semantic-review.json");
