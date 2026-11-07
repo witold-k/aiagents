@@ -663,13 +663,31 @@ fn parameter_inventory_maps_offsets_to_original_after_html_normalization() {
         statement_byte_offset: None,
     };
     let candidates = vec![
-        MessageCandidate { id: "window-0-candidate-0".into(), proposed_name: "messages/s.md".into(), facts: vec![fact.clone()] },
-        MessageCandidate { id: "window-0-candidate-1".into(), proposed_name: "anything".into(), facts: vec![fact] },
+        MessageCandidate {
+            id: "window-0-candidate-0".into(),
+            proposed_name: "messages/s.md".into(),
+            facts: vec![fact.clone()],
+        },
+        MessageCandidate {
+            id: "window-0-candidate-1".into(),
+            proposed_name: "anything".into(),
+            facts: vec![fact],
+        },
     ];
-    let inventory = parameter_facts_in_document(&candidates, &[&normalized.text], &[0], &normalized.text, &normalized, original);
+    let inventory = parameter_facts_in_document(
+        &candidates,
+        &[&normalized.text],
+        &[0],
+        &normalized.text,
+        &normalized,
+        original,
+    );
     assert_eq!(inventory.len(), 1);
     assert_eq!(inventory[0].source_byte_offset, original_offset);
-    assert_eq!(&original.as_bytes()[original_offset..original_offset + quote.len()], quote.as_bytes());
+    assert_eq!(
+        &original.as_bytes()[original_offset..original_offset + quote.len()],
+        quote.as_bytes()
+    );
     assert_eq!(inventory[0].parameter, "antAz");
 }
 
@@ -687,8 +705,13 @@ fn parameter_inventory_preserves_offsets_without_html_normalization() {
         source_locator_ambiguous: false,
         statement_byte_offset: None,
     };
-    let candidates = vec![MessageCandidate { id: "window-0-candidate-0".into(), proposed_name: "messages/s.md".into(), facts: vec![fact] }];
-    let inventory = parameter_facts_in_document(&candidates, &[source], &[0], source, &normalized, source);
+    let candidates = vec![MessageCandidate {
+        id: "window-0-candidate-0".into(),
+        proposed_name: "messages/s.md".into(),
+        facts: vec![fact],
+    }];
+    let inventory =
+        parameter_facts_in_document(&candidates, &[source], &[0], source, &normalized, source);
     assert_eq!(inventory.len(), 1);
     assert_eq!(inventory[0].source_byte_offset, offset);
 }
@@ -712,7 +735,12 @@ fn parameter_structure_audit_preserves_independent_parameter_evidence() {
         facts: vec![fact],
     }];
     let audit = parameter_structure_audit(
-        &candidates, &[&normalized.text], &[0], &normalized.text, &normalized, original,
+        &candidates,
+        &[&normalized.text],
+        &[0],
+        &normalized.text,
+        &normalized,
+        original,
     );
     assert_eq!(audit.no_source_type, 1);
     assert_eq!(audit.verified_parameter_assertions, 1);

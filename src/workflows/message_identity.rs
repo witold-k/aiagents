@@ -112,45 +112,8 @@ fn unique_statement_in_parent(
 }
 
 #[cfg(test)]
-mod unique_statement_in_parent_tests {
-    use super::unique_statement_in_parent;
-
-    #[test]
-    fn exact_statement_has_independent_parent_offset() {
-        assert_eq!(
-            unique_statement_in_parent("alpha | beta", "beta", Some(20)),
-            Some(28)
-        );
-        assert_eq!(
-            unique_statement_in_parent("alpha | beta", "alpha", Some(20)),
-            Some(20)
-        );
-    }
-
-    #[test]
-    fn ambiguous_missing_or_unplaced_statement_is_not_located() {
-        assert_eq!(
-            unique_statement_in_parent("beta | beta", "beta", Some(20)),
-            None
-        );
-        assert_eq!(
-            unique_statement_in_parent("alpha | beta", "paraphrase", Some(20)),
-            None
-        );
-        assert_eq!(
-            unique_statement_in_parent("alpha | beta", "beta", None),
-            None
-        );
-        assert_eq!(
-            unique_statement_in_parent("alpha", "alpha", Some(usize::MAX)),
-            Some(usize::MAX)
-        );
-        assert_eq!(
-            unique_statement_in_parent("xalpha", "alpha", Some(usize::MAX)),
-            None
-        );
-    }
-}
+#[path = "../../tests/workflows/message_identity_unique_statement_in_parent_tests.rs"]
+mod unique_statement_in_parent_tests;
 
 /// The model sees a possibly split recovery window, but checkpoint locators
 /// always refer to its original parent chunk. Ambiguous parent placements
@@ -398,34 +361,8 @@ fn flattened_message_table_type(source: &str, line_index: usize) -> Option<u8> {
 }
 
 #[cfg(test)]
-mod structural_table_ownership_tests {
-    use super::flattened_message_table_type;
-
-    #[test]
-    fn long_converted_table_row_keeps_its_explicit_identity() {
-        let mut lines = vec![
-            "## Message Types".to_owned(),
-            "Type: q | status | 3 | int value".to_owned(),
-        ];
-        lines.extend((0..25).map(|n| format!("Continuation of parameter {n}")));
-        let document = lines.join("\n");
-        assert_eq!(flattened_message_table_type(&document, 26), Some(b'q'));
-    }
-
-    #[test]
-    fn new_row_and_heading_are_hard_boundaries() {
-        let source = "## Message Types\nType: Q | description\ncontinuation\nType: q | response\ncontinuation\n## Appendix\nother prose";
-        assert_eq!(flattened_message_table_type(source, 2), Some(b'Q'));
-        assert_eq!(flattened_message_table_type(source, 4), Some(b'q'));
-        assert_eq!(flattened_message_table_type(source, 6), None);
-    }
-
-    #[test]
-    fn damaged_declaration_does_not_inherit_previous_row() {
-        let source = "## Message Types\nType: Q | description\nType: ?? | damaged\ncontinuation";
-        assert_eq!(flattened_message_table_type(source, 3), None);
-    }
-}
+#[path = "../../tests/workflows/message_identity_structural_table_ownership_tests.rs"]
+mod structural_table_ownership_tests;
 
 /// A single-letter command is evidence only inside a fenced example under
 /// an explicit message-example section. Neither prose nor arbitrary code
@@ -522,11 +459,10 @@ impl SourceTree {
                         parent,
                     });
                     heading_stack.push(index);
-                    }
+                }
             }
             let section = heading_stack.last().copied();
             tree.section_at_line.push(section);
-
         }
         tree
     }
@@ -579,86 +515,12 @@ impl SourceTree {
 }
 
 #[cfg(test)]
-mod source_tree_tests {
-    use super::SourceTree;
-
-    #[test]
-    fn preserves_heading_hierarchy_and_independent_table_rows() {
-        let source = "# Specification\n## Commands\n| Type | Description |\n| --- | --- |\n| v | status |\n### Parameters\n| Parameter | Format |\n| speed | float |\n## Semantics\nProse";
-        let tree = SourceTree::from_document(source);
-        assert_eq!(tree.section(4).map(|s| s.heading_line), Some(1));
-        assert_eq!(tree.section(7).and_then(|s| s.parent), Some(1));
-        assert_eq!(tree.section(9).map(|s| s.heading_line), Some(8));
-        let analysis = simplelexer::tablelexer::DocumentAnalysis::parse(source);
-        assert!(analysis.source_row_at(source.find("| v |").unwrap()).is_some());
-        // This pipe-delimited fragment has no Markdown separator row.
-        // Do not promote malformed table-looking text into a parsed table.
-        assert!(analysis.source_row_at(source.find("| speed |").unwrap()).is_none());
-    }
-
-    #[test]
-    fn flattened_table_continuation_inherits_only_explicit_row() {
-        let source = "## Reserved\nType | Description | Parameters\nType: v | status | key\nContinuation one\nContinuation two\nType: V | request | key\nContinuation three\n## Semantics\nOrdinary prose";
-        let tree = SourceTree::from_document(source);
-        assert_eq!(tree.flattened_table_owner(source, 4), Some(b'v'));
-        assert_eq!(tree.flattened_table_owner(source, 6), Some(b'V'));
-        assert_eq!(tree.flattened_table_owner(source, 8), None);
-    }
-
-    #[test]
-    fn flattened_table_requires_header_and_valid_declaration() {
-        let source = "## Notes\nType: v | text\nProse\nType | Description | Parameters\nType: ? | malformed\nMore prose\nType: v | valid\nContinuation";
-        let tree = SourceTree::from_document(source);
-        assert_eq!(tree.flattened_table_owner(source, 2), None);
-        assert_eq!(tree.flattened_table_owner(source, 5), None);
-        assert_eq!(tree.flattened_table_owner(source, 7), Some(b'v'));
-    }
-
-    #[test]
-    fn code_fences_and_prose_never_become_table_rows() {
-        let source = "# Example\n```text\n| not | a table |\n```\nType: v | status\nprose\nType: V | request";
-        let tree = SourceTree::from_document(source);
-        assert_eq!(tree.section(2).map(|s| s.heading_line), Some(0));
-        assert_eq!(tree.section(5).map(|s| s.heading_line), Some(0));
-    }
-}
+#[path = "../../tests/workflows/message_identity_source_tree_tests.rs"]
+mod source_tree_tests;
 
 #[cfg(test)]
-mod parameter_row_audit_tests {
-    use super::audit_parameter_row_kind;
-
-    fn kind(first: &str, second: &str) -> &'static str {
-        audit_parameter_row_kind(&[first.to_owned(), second.to_owned()])
-    }
-
-    #[test]
-    fn reserved_types_are_not_parameter_definitions() {
-        assert_eq!(kind("t Reserved", ""), "reserved_message_type");
-        assert_eq!(kind("u Reserved", ""), "reserved_message_type");
-        assert_eq!(kind("T Reserved", ""), "reserved_message_type");
-        assert_eq!(kind("q Reserved", ""), "reserved_message_type");
-        assert_eq!(kind("Z reserved", ""), "reserved_message_type");
-        assert_eq!(kind("aa Reserved", ""), "unclassified_row");
-        assert_eq!(kind("q Available", ""), "unclassified_row");
-    }
-
-    #[test]
-    fn continuation_and_prose_do_not_acquire_parameter_ownership() {
-        assert_eq!(kind("(Optional key value pairs)", ""), "possible_continuation");
-        assert_eq!(kind("Frequency is in MHz.", "string"), "unclassified_row");
-        assert_eq!(kind("Reference required to be present on Rx", ""), "unclassified_row");
-    }
-
-    #[test]
-    fn only_syntactically_simple_names_are_candidates() {
-        assert_eq!(kind("Time to Blockage (blockTime)", "blockTime=&lt;int sec>"), "named_key_candidate");
-        assert_eq!(kind("Additional Antenna Status (statusCode)", "statusCode=&lt;int 0 to 65535>"), "named_key_candidate");
-        assert_eq!(kind("Time to Blockage (blockTime)", "other=1"), "unclassified_row");
-        assert_eq!(kind("blockTime", "int seconds"), "parameter_name_candidate");
-        assert_eq!(kind("statusCode", "int"), "parameter_name_candidate");
-        assert_eq!(kind("blockTime", ""), "unclassified_row");
-    }
-}
+#[path = "../../tests/workflows/message_identity_parameter_row_audit_tests.rs"]
+mod parameter_row_audit_tests;
 
 /// Source tree projected onto physical lines. Headings delimit sections;
 /// explicit table rows and fenced examples establish ownership within them.
@@ -891,7 +753,8 @@ impl SourceStructure {
             let Some((_, source_row)) = original_analysis.source_row_at(source_span.start) else {
                 continue;
             };
-            if source_row.span.start != source_span.start || source_row.span.end != source_span.end {
+            if source_row.span.start != source_span.start || source_row.span.end != source_span.end
+            {
                 continue;
             }
             if original_structure
@@ -1153,319 +1016,16 @@ fn resolve_fact_type_with_flattened_tables(
 }
 
 #[cfg(test)]
-mod html_row_identity_tests {
-    use super::*;
-
-    #[test]
-    fn separate_messages_on_one_html_line_keep_case() {
-        let document = concat!(
-            "## Message Types\n",
-            "<table><tr><td>Type</td><td>Description</td></tr>",
-            "<tr><td>B</td><td>upper</td></tr>",
-            "<tr><td>b</td><td>lower</td></tr></table>"
-        );
-        let structure = SourceStructure::from_document(document);
-        for (letter, description) in [(b'B', "upper"), (b'b', "lower")] {
-            let offset = document.find(description).unwrap();
-            let fact = CandidateFact {
-                statement: description.to_owned(),
-                segment_id: String::new(),
-                evidence_quote: Some(description.to_owned()),
-                source_byte_offset: Some(offset),
-                source_locator_ambiguous: false,
-                statement_byte_offset: None,
-            };
-            assert_eq!(
-                resolve_fact_type_with_flattened_tables(
-                    document, 0, document, &fact, true, &structure
-                ),
-                Ok(letter)
-            );
-        }
-    }
-
-    #[test]
-    fn normalized_rows_keep_original_case_and_table_free_fallback() {
-        let original = concat!(
-            "## Message Types\n",
-            "<table><tr><td>Type</td><td>Description</td></tr>",
-            "<tr><td>B</td><td>upper evidence</td></tr>",
-            "<tr><td>b</td><td>lower evidence</td></tr></table>\n",
-            "## Other\nplain paragraph"
-        );
-        let normalized_tables = simplelexer::tablelexer::normalize_table_text(original);
-        let normalized = normalized_tables.text;
-        let spans = normalized_tables.rows;
-        let original_analysis = simplelexer::tablelexer::DocumentAnalysis::parse(original);
-        let normalized_analysis = simplelexer::tablelexer::DocumentAnalysis::parse(&normalized);
-        let structure = SourceStructure::from_analysis(&normalized, &normalized_analysis)
-            .with_original_table_rows(original, original, &original_analysis, &spans);
-        for (letter, evidence) in [(b'B', "upper evidence"), (b'b', "lower evidence")] {
-            let offset = normalized.find(evidence).unwrap();
-            assert_eq!(structure.table_row_type_at(offset), Some(letter));
-        }
-        assert_eq!(
-            structure.table_row_type_at(normalized.find("plain paragraph").unwrap()),
-            None
-        );
-        let table_free = "## Message Types\nplain paragraph";
-        let analysis = simplelexer::tablelexer::DocumentAnalysis::parse(table_free);
-        let fallback = SourceStructure::from_analysis(table_free, &analysis)
-            .with_original_table_rows(table_free, table_free, &analysis, &[]);
-        assert_eq!(
-            fallback.table_row_type_at(table_free.find("paragraph").unwrap()),
-            None
-        );
-    }
-
-    #[test]
-    fn fabricated_partial_source_row_mapping_cannot_claim_identity() {
-        let original = concat!(
-            "## Message Types\n",
-            "<table><tr><td>Type</td><td>Description</td></tr>",
-            "<tr><td>B</td><td>typed evidence</td></tr></table>"
-        );
-        let normalized = original.to_owned();
-        let analysis = simplelexer::tablelexer::DocumentAnalysis::parse(original);
-        let start = original.find("typed evidence").unwrap();
-        let fake = simplelexer::tablelexer::RowTextMapping {
-            source: start..start + "typed evidence".len(),
-            rendered: start..start + "typed evidence".len(),
-        };
-        let structure = SourceStructure::from_analysis(&normalized, &analysis)
-            .with_original_table_rows(original, original, &analysis, &[fake]);
-        // The original parsed row still owns its type; the fabricated
-        // partial mapping must not introduce a second row or owner.
-        assert_eq!(structure.table_row_ranges.len(), 2);
-        assert_eq!(structure.table_row_owners.len(), 1);
-        assert_eq!(structure.table_row_type_at(start), Some(b'B'));
-    }
-
-    #[test]
-    fn empty_html_type_cell_does_not_panic_or_claim_identity() {
-        let document = concat!(
-            "## Message Types\n",
-            "<table><tr><td>Type</td><td>Description</td></tr>",
-            "<tr><td></td><td>untyped evidence</td></tr>",
-            "<tr><td>B</td><td>typed evidence</td></tr></table>"
-        );
-        // Parsing the original HTML exercises the empty-cell path that
-        // previously panicked; positive row ownership is covered separately.
-        let structure = SourceStructure::from_document(document);
-        assert_eq!(
-            structure.table_row_type_at(document.find("untyped evidence").unwrap()),
-            None
-        );
-    }
-
-    #[test]
-    fn untyped_html_row_blocks_line_fallback_after_typed_row() {
-        let document = concat!(
-            "## Message Types\n",
-            "<table><tr><td>Type</td><td>Description</td></tr>",
-            "<tr><td>B</td><td>typed evidence</td></tr>",
-            "<tr><td></td><td>untyped evidence</td></tr></table>"
-        );
-        let structure = SourceStructure::from_document(document);
-        let offset = document.find("untyped evidence").unwrap();
-        let fact = CandidateFact {
-            statement: "untyped evidence".to_owned(),
-            segment_id: String::new(),
-            evidence_quote: Some("untyped evidence".to_owned()),
-            source_byte_offset: Some(offset),
-            source_locator_ambiguous: false,
-            statement_byte_offset: None,
-        };
-        assert!(structure.is_message_table_row_at(offset));
-        assert_eq!(
-            resolve_fact_type_with_flattened_tables(document, 0, document, &fact, true, &structure),
-            Err(ResolutionFailure::NoSourceType)
-        );
-    }
-
-    #[test]
-    fn normalized_untyped_html_row_remains_a_boundary() {
-        let original = concat!(
-            "## Message Types\n",
-            "<table><tr><td>Type</td><td>Description</td></tr>",
-            "<tr><td>B</td><td>typed evidence</td></tr>",
-            "<tr><td></td><td>untyped evidence</td></tr></table>"
-        );
-        let normalized_tables = simplelexer::tablelexer::normalize_table_text(original);
-        let normalized = normalized_tables.text;
-        let spans = normalized_tables.rows;
-        let original_analysis = simplelexer::tablelexer::DocumentAnalysis::parse(original);
-        let normalized_analysis = simplelexer::tablelexer::DocumentAnalysis::parse(&normalized);
-        let structure = SourceStructure::from_analysis(&normalized, &normalized_analysis)
-            .with_original_table_rows(original, original, &original_analysis, &spans);
-        let offset = normalized.find("untyped evidence").unwrap();
-        assert!(structure.is_message_table_row_at(offset));
-        assert_eq!(structure.table_row_type_at(offset), None);
-        assert!(!structure.is_message_table_row_at(normalized.len()));
-    }
-
-    #[test]
-    fn adjacent_html_tables_do_not_share_row_ownership() {
-        let document = concat!(
-            "## Message Types\n",
-            "<table><tr><td>Type</td><td>Description</td></tr>",
-            "<tr><td>B</td><td>first message</td></tr></table>\n",
-            "<table><tr><td>Type</td><td>Description</td></tr>",
-            "<tr><td></td><td>second untyped</td></tr></table>\n",
-            "## Other\nordinary prose"
-        );
-        let structure = SourceStructure::from_document(document);
-        let typed = document.find("first message").unwrap();
-        let untyped = document.find("second untyped").unwrap();
-        let prose = document.find("ordinary prose").unwrap();
-        assert_eq!(structure.table_row_type_at(typed), Some(b'B'));
-        assert!(structure.is_message_table_row_at(untyped));
-        assert_eq!(structure.table_row_type_at(untyped), None);
-        assert!(!structure.is_message_table_row_at(prose));
-        assert_eq!(structure.table_row_type_at(prose), None);
-    }
-
-    #[test]
-    fn html_row_with_conflicting_fact_type_is_rejected() {
-        let document = concat!(
-            "## Message Types\n",
-            "<table><tr><td>Type</td><td>Description</td></tr>",
-            "<tr><td>B</td><td>typed evidence</td></tr></table>"
-        );
-        let structure = SourceStructure::from_document(document);
-        let offset = document.find("typed evidence").unwrap();
-        let fact = CandidateFact {
-            statement: "Type: b | typed evidence".to_owned(),
-            segment_id: String::new(),
-            evidence_quote: Some("typed evidence".to_owned()),
-            source_byte_offset: Some(offset),
-            source_locator_ambiguous: false,
-            statement_byte_offset: None,
-        };
-        assert_eq!(
-            resolve_fact_type_with_flattened_tables(document, 0, document, &fact, true, &structure),
-            Err(ResolutionFailure::ConflictingType)
-        );
-    }
-
-    #[test]
-    fn description_rowspan_never_inherits_message_type() {
-        // A rowspan in the Description column is structural grouping, not
-        // evidence that an empty Type cell belongs to the previous message.
-        let document = concat!(
-            "## Message Types\n",
-            "<table><tr><td>Type</td><td>Description</td><td>Parameters</td></tr>",
-            "<tr><td>y</td><td>typed response</td><td>replyTo=getConfigB</td></tr>",
-            "<tr><td></td><td rowspan=\"3\">getConfigB response</td><td>first detail</td></tr>",
-            "<tr><td></td><td>second detail</td></tr>",
-            "<tr><td></td><td>third detail</td></tr></table>"
-        );
-        let structure = SourceStructure::from_document(document);
-        assert_eq!(
-            structure.table_row_type_at(document.find("typed response").unwrap()),
-            Some(b'y')
-        );
-        for evidence in ["first detail", "second detail", "third detail"] {
-            let offset = document.find(evidence).unwrap();
-            assert!(structure.is_message_table_row_at(offset));
-            assert_eq!(structure.table_row_type_at(offset), None);
-            let fact = CandidateFact {
-                statement: evidence.to_owned(),
-                segment_id: String::new(),
-                evidence_quote: Some(evidence.to_owned()),
-                source_byte_offset: Some(offset),
-                source_locator_ambiguous: false,
-                statement_byte_offset: None,
-            };
-            assert_eq!(
-                resolve_fact_type_with_flattened_tables(
-                    document, 0, document, &fact, true, &structure
-                ),
-                Err(ResolutionFailure::NoSourceType)
-            );
-        }
-    }
-
-    #[test]
-    fn unrelated_html_tables_do_not_declare_message_types() {
-        let document = "<table><tr><td>Name</td><td>Description</td></tr><tr><td>B</td><td>ordinary</td></tr></table>";
-        let structure = SourceStructure::from_document(document);
-        assert_eq!(
-            structure.table_row_type_at(document.find("ordinary").unwrap()),
-            None
-        );
-    }
-}
+#[path = "../../tests/workflows/message_identity_html_row_identity_tests.rs"]
+mod html_row_identity_tests;
 
 #[cfg(test)]
-mod source_structure_tests {
-    use super::SourceStructure;
-
-    #[test]
-    fn table_tree_owns_flattened_rows_and_respects_next_declaration() {
-        let source = "## Message Types\nType: v | status | value\ncontinuation\nmore details\nType: V | request | key\nmore details\n## Semantics\nnot a row";
-        let tree = SourceStructure::from_document(source);
-        assert_eq!(tree.table_type(3), Some(b'v'));
-        assert_eq!(tree.table_type(5), Some(b'V'));
-        assert_eq!(tree.table_type(7), None);
-    }
-
-    #[test]
-    fn table_tree_does_not_inherit_malformed_declarations_or_pipe_prose() {
-        let source = "## Message Types\nType: v | status\nType: ?? | unknown\ncontinuation\n## Other\n| ordinary | prose |";
-        let tree = SourceStructure::from_document(source);
-        assert_eq!(tree.table_type(1), Some(b'v'));
-        assert_eq!(tree.table_type(3), None);
-        assert_eq!(tree.table_type(5), None);
-    }
-
-    #[test]
-    fn owns_immediate_continuation_of_fenced_command() {
-        let source = "## Messages from Modem to Antenna\n```txt\nB 100 200 rx2=300\ntx3=400 # additional frequency\n```";
-        let structure = SourceStructure::from_document(source);
-        assert_eq!(structure.example_type(2), Some(b'B'));
-        assert_eq!(structure.example_type(3), Some(b'B'));
-    }
-
-    #[test]
-    fn never_inherits_across_blank_lines_fences_or_sections() {
-        let source = "## Messages from Modem to Antenna\n```txt\nB 100 # example\n\ntx3=400 # detached\n```\n## Appendix\n```txt\nB 100 # unrelated\n```";
-        let structure = SourceStructure::from_document(source);
-        assert_eq!(structure.example_type(4), None);
-        assert_eq!(structure.example_type(8), None);
-    }
-
-    #[test]
-    fn preserves_case_and_does_not_claim_arbitrary_prose() {
-        let source = "## Messages from Modem to Antenna\n```txt\nb 100 # command\nplain prose # comment\nQ 20 # different command\n```";
-        let structure = SourceStructure::from_document(source);
-        assert_eq!(structure.example_type(2), Some(b'b'));
-        assert_eq!(structure.example_type(3), None);
-        assert_eq!(structure.example_type(4), Some(b'Q'));
-    }
-}
+#[path = "../../tests/workflows/message_identity_source_structure_tests.rs"]
+mod source_structure_tests;
 
 #[cfg(test)]
-mod example_identity_tests {
-    use super::message_example_type_for_line;
-
-    #[test]
-    fn recognizes_only_message_examples_and_preserves_case() {
-        let source = "## Messages from Modem to Antenna\n```txt\nB 100 200 # frequency\na 60 # alive\n```\n## Other examples\n```txt\nZ 100\n```";
-        assert_eq!(message_example_type_for_line(source, 2), Some(b'B'));
-        assert_eq!(message_example_type_for_line(source, 3), Some(b'a'));
-        assert_eq!(message_example_type_for_line(source, 7), None);
-    }
-
-    #[test]
-    fn rejects_prose_continuations_and_unfenced_commands() {
-        let source = "## Messages from Controller\nA 10\n```txt\nA 10 # ping\ncontinued line\n# comment\n```";
-        assert_eq!(message_example_type_for_line(source, 1), None);
-        assert_eq!(message_example_type_for_line(source, 3), Some(b'A'));
-        assert_eq!(message_example_type_for_line(source, 4), None);
-        assert_eq!(message_example_type_for_line(source, 5), None);
-    }
-}
+#[path = "../../tests/workflows/message_identity_example_identity_tests.rs"]
+mod example_identity_tests;
 
 /// A source-ordered history probe. This is deliberately diagnostic: a previous
 /// type declaration is context, not automatically proof of ownership. The
@@ -1842,7 +1402,9 @@ fn audit_parameter_row_kind(cells: &[String]) -> &'static str {
         let name = name.trim();
         if !name.is_empty()
             && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
-            && second.strip_prefix(name).is_some_and(|tail| tail.starts_with('='))
+            && second
+                .strip_prefix(name)
+                .is_some_and(|tail| tail.starts_with('='))
         {
             return "named_key_candidate";
         }
@@ -1851,7 +1413,9 @@ fn audit_parameter_row_kind(cells: &[String]) -> &'static str {
         return "possible_continuation";
     }
     if tokens.len() == 1
-        && tokens[0].bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        && tokens[0]
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_')
         && !second.is_empty()
     {
         return "parameter_name_candidate";
@@ -1868,26 +1432,48 @@ fn record_remaining_lexer_row(
     result: &mut ParameterStructureAudit,
 ) {
     if let Some((table, row)) = analysis.source_row_at(offset) {
-        let header = table.rows.first().map(|header| {
-            header.cells.iter().map(|cell| cell.text.trim())
-                .collect::<Vec<_>>().join(" | ")
-        }).unwrap_or_default();
+        let header = table
+            .rows
+            .first()
+            .map(|header| {
+                header
+                    .cells
+                    .iter()
+                    .map(|cell| cell.text.trim())
+                    .collect::<Vec<_>>()
+                    .join(" | ")
+            })
+            .unwrap_or_default();
         result.remaining_lexer_table_rows.push((line, header));
-        let cells = row.cells.iter().map(|cell| {
-            cell.text.trim().chars().take(120).collect::<String>()
-        }).collect::<Vec<_>>();
-        if let Some(index) = table.rows.iter().position(|candidate| candidate.span.start == row.span.start && candidate.span.end == row.span.end) {
-            let previous = index.checked_sub(1)
+        let cells = row
+            .cells
+            .iter()
+            .map(|cell| cell.text.trim().chars().take(120).collect::<String>())
+            .collect::<Vec<_>>();
+        if let Some(index) = table.rows.iter().position(|candidate| {
+            candidate.span.start == row.span.start && candidate.span.end == row.span.end
+        }) {
+            let previous = index
+                .checked_sub(1)
                 .and_then(|i| table.rows.get(i))
                 .map(|neighbor| neighbor.span.start);
-            let next = table.rows.get(index + 1).map(|neighbor| neighbor.span.start);
+            let next = table
+                .rows
+                .get(index + 1)
+                .map(|neighbor| neighbor.span.start);
             let neighbor = RemainingRowNeighbor {
                 line,
                 row_start: row.span.start,
                 previous_row_start: previous,
                 next_row_start: next,
-                empty_first: row.cells.first().is_none_or(|cell| cell.text.trim().is_empty()),
-                empty_second: row.cells.get(1).is_none_or(|cell| cell.text.trim().is_empty()),
+                empty_first: row
+                    .cells
+                    .first()
+                    .is_none_or(|cell| cell.text.trim().is_empty()),
+                empty_second: row
+                    .cells
+                    .get(1)
+                    .is_none_or(|cell| cell.text.trim().is_empty()),
             };
             if !result.remaining_row_neighbors.contains(&neighbor) {
                 result.remaining_row_neighbors.push(neighbor);
@@ -1903,7 +1489,12 @@ fn record_remaining_lexer_row(
             result.remaining_lexer_row_cells.push(evidence);
         }
         for cell in &row.cells {
-            let item = (line, cell.span.start, cell.span.end, cell.text.trim().to_owned());
+            let item = (
+                line,
+                cell.span.start,
+                cell.span.end,
+                cell.text.trim().to_owned(),
+            );
             if !result.remaining_lexer_cell_spans.contains(&item) {
                 result.remaining_lexer_cell_spans.push(item);
             }
@@ -1945,11 +1536,17 @@ pub(super) fn parameter_coverage_in_document(
     normalized: &simplelexer::tablelexer::NormalizedTableText,
     original: &str,
 ) -> ParameterCoverage {
-    let verified = parameter_facts_in_document(
-        candidates, sources, starts, document, normalized, original,
-    );
-    let anchors: std::collections::BTreeSet<_> = verified.iter()
-        .map(|fact| (fact.source_byte_offset, fact.statement.as_str(), fact.evidence_quote.as_str()))
+    let verified =
+        parameter_facts_in_document(candidates, sources, starts, document, normalized, original);
+    let anchors: std::collections::BTreeSet<_> = verified
+        .iter()
+        .map(|fact| {
+            (
+                fact.source_byte_offset,
+                fact.statement.as_str(),
+                fact.evidence_quote.as_str(),
+            )
+        })
         .collect();
     let structure = SourceStructure::from_document(document);
     let analysis = simplelexer::tablelexer::DocumentAnalysis::parse(document);
@@ -1958,23 +1555,33 @@ pub(super) fn parameter_coverage_in_document(
     for candidate in candidates {
         let Some((window, start)) = source_window_index(&candidate.id)
             .and_then(|index| sources.get(index).zip(starts.get(index)))
-        else { continue };
+        else {
+            continue;
+        };
         for fact in &candidate.facts {
             if !matches!(
                 resolve_fact_type_with_flattened_tables(
                     window, *start, document, fact, true, &structure
                 ),
                 Err(ResolutionFailure::NoSourceType)
-            ) { continue; }
+            ) {
+                continue;
+            }
             coverage.unresolved += 1;
-            let absolute = fact.source_byte_offset.and_then(|offset| start.checked_add(offset));
-            let line_index = absolute.and_then(|offset|
+            let absolute = fact
+                .source_byte_offset
+                .and_then(|offset| start.checked_add(offset));
+            let line_index = absolute.and_then(|offset| {
                 crate::utils::stringutils::line_index_at_byte_offset(document, offset)
-            );
+            });
             let section = line_index
                 .and_then(|index| lines.get(..=index))
-                .and_then(|prefix| prefix.iter().rev()
-                    .find(|line| line.trim_start().starts_with('#')))
+                .and_then(|prefix| {
+                    prefix
+                        .iter()
+                        .rev()
+                        .find(|line| line.trim_start().starts_with('#'))
+                })
                 .map(|heading| heading.trim().to_owned())
                 .unwrap_or_default();
             let counts = coverage.by_section.entry(section).or_default();
@@ -1983,8 +1590,9 @@ pub(super) fn parameter_coverage_in_document(
             let matched = absolute
                 .and_then(|offset| normalized.source_offset(offset))
                 .zip(fact.evidence_quote.as_deref())
-                .is_some_and(|(offset, quote)|
-                    anchors.contains(&(offset, fact.statement.as_str(), quote)));
+                .is_some_and(|(offset, quote)| {
+                    anchors.contains(&(offset, fact.statement.as_str(), quote))
+                });
             if is_parameter && matched {
                 coverage.matched += 1;
                 counts.0 += 1;
@@ -1994,15 +1602,22 @@ pub(super) fn parameter_coverage_in_document(
                 let (kind, row_start) = absolute
                     .and_then(|offset| analysis.source_row_at(offset))
                     .map(|(_, row)| {
-                        let cells = row.cells.iter()
+                        let cells = row
+                            .cells
+                            .iter()
                             .map(|cell| cell.text.trim().to_owned())
                             .collect::<Vec<_>>();
                         (audit_parameter_row_kind(&cells).to_owned(), row.span.start)
                     })
                     .unwrap_or_else(|| ("outside_lexer_table".to_owned(), usize::MAX));
-                *coverage.unmatched_by_lexer_kind.entry(kind.clone()).or_default() += 1;
+                *coverage
+                    .unmatched_by_lexer_kind
+                    .entry(kind.clone())
+                    .or_default() += 1;
                 coverage.unmatched_rows.push((
-                    line_index.map_or(0, |index| index + 1), row_start, kind,
+                    line_index.map_or(0, |index| index + 1),
+                    row_start,
+                    kind,
                 ));
                 let evidence_in_row = absolute
                     .and_then(|offset| analysis.source_row_at(offset).map(|(_, row)| (offset, row)))
@@ -2010,10 +1625,14 @@ pub(super) fn parameter_coverage_in_document(
                     .is_some_and(|((offset, row), quote)| {
                         !quote.is_empty()
                             && offset >= row.span.start
-                            && offset.checked_add(quote.len()).is_some_and(|end| end <= row.span.end)
+                            && offset
+                                .checked_add(quote.len())
+                                .is_some_and(|end| end <= row.span.end)
                             && document.get(offset..offset + quote.len()) == Some(quote)
                     });
-                coverage.unmatched_evidence.push((row_start, evidence_in_row));
+                coverage
+                    .unmatched_evidence
+                    .push((row_start, evidence_in_row));
             } else {
                 coverage.other += 1;
                 counts.2 += 1;
@@ -2031,35 +1650,52 @@ pub(super) fn parameter_structure_audit(
     normalized: &simplelexer::tablelexer::NormalizedTableText,
     original: &str,
 ) -> ParameterStructureAudit {
-    let verified = parameter_facts_in_document(
-        candidates, sources, starts, document, normalized, original,
-    );
+    let verified =
+        parameter_facts_in_document(candidates, sources, starts, document, normalized, original);
     let anchors: std::collections::BTreeSet<_> = verified
         .iter()
-        .map(|fact| (fact.source_byte_offset, fact.statement.as_str(), fact.evidence_quote.as_str()))
+        .map(|fact| {
+            (
+                fact.source_byte_offset,
+                fact.statement.as_str(),
+                fact.evidence_quote.as_str(),
+            )
+        })
         .collect();
     let structure = SourceStructure::from_document(document);
     let analysis = simplelexer::tablelexer::DocumentAnalysis::parse(document);
     let mut result = ParameterStructureAudit {
-        distinct_parameters: verified.iter().map(|fact| fact.parameter.as_str())
-            .collect::<std::collections::BTreeSet<_>>().len(),
-        distinct_sections: verified.iter().map(|fact| fact.section.as_str())
-            .collect::<std::collections::BTreeSet<_>>().len(),
+        distinct_parameters: verified
+            .iter()
+            .map(|fact| fact.parameter.as_str())
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        distinct_sections: verified
+            .iter()
+            .map(|fact| fact.section.as_str())
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
         ..Default::default()
     };
     for candidate in candidates {
         let Some((window, start)) = source_window_index(&candidate.id)
             .and_then(|index| sources.get(index).zip(starts.get(index)))
-        else { continue };
+        else {
+            continue;
+        };
         for fact in &candidate.facts {
             if !matches!(
                 resolve_fact_type_with_flattened_tables(
                     window, *start, document, fact, true, &structure
                 ),
                 Err(ResolutionFailure::NoSourceType)
-            ) { continue; }
+            ) {
+                continue;
+            }
             result.no_source_type += 1;
-            let absolute = fact.source_byte_offset.and_then(|offset| start.checked_add(offset));
+            let absolute = fact
+                .source_byte_offset
+                .and_then(|offset| start.checked_add(offset));
             let line = absolute.and_then(|offset| {
                 crate::utils::stringutils::line_index_at_byte_offset(document, offset)
             });
@@ -2067,7 +1703,9 @@ pub(super) fn parameter_structure_audit(
             // heuristic parameter-shaped triage; never assign identity here.
             if let (Some(offset), Some(index)) = (absolute, line) {
                 if let Some(owner) = structure.table_row_type_at(offset) {
-                    result.explicit_message_row_lines.push((index + 1, char::from(owner)));
+                    result
+                        .explicit_message_row_lines
+                        .push((index + 1, char::from(owner)));
                 } else if structure.is_message_table_row_at(offset) {
                     result.untyped_message_row_lines.push(index + 1);
                 } else {
@@ -2077,27 +1715,29 @@ pub(super) fn parameter_structure_audit(
             if line.map(|index| unresolved_source_shape(document, index)) != Some("parameter") {
                 result.other_unresolved += 1;
                 if let (Some(offset), Some(index)) = (absolute, line) {
-                    record_remaining_lexer_row(
-                        &analysis, offset, index + 1, &mut result,
-                    );
+                    record_remaining_lexer_row(&analysis, offset, index + 1, &mut result);
                 }
-                if let Some(index) = line { result.other_unresolved_lines.push(index + 1); }
+                if let Some(index) = line {
+                    result.other_unresolved_lines.push(index + 1);
+                }
                 continue;
             }
             let verified_anchor = absolute
                 .and_then(|offset| normalized.source_offset(offset))
                 .zip(fact.evidence_quote.as_deref())
-                .is_some_and(|(offset, quote)| anchors.contains(&(offset, fact.statement.as_str(), quote)));
+                .is_some_and(|(offset, quote)| {
+                    anchors.contains(&(offset, fact.statement.as_str(), quote))
+                });
             if verified_anchor {
                 result.verified_parameter_assertions += 1;
             } else {
                 result.parameter_shaped_without_verified_evidence += 1;
                 if let (Some(offset), Some(index)) = (absolute, line) {
-                    record_remaining_lexer_row(
-                        &analysis, offset, index + 1, &mut result,
-                    );
+                    record_remaining_lexer_row(&analysis, offset, index + 1, &mut result);
                 }
-                if let Some(index) = line { result.unverified_table_lines.push(index + 1); }
+                if let Some(index) = line {
+                    result.unverified_table_lines.push(index + 1);
+                }
             }
         }
     }
@@ -2381,64 +2021,8 @@ pub(super) fn unresolved_message_reference_inventory(
 }
 
 #[cfg(test)]
-mod message_reference_inventory_tests {
-    use super::explicit_message_mentions;
-
-    #[test]
-    fn recognizes_multiple_explicit_quoted_message_mentions() {
-        assert_eq!(
-            explicit_message_mentions(
-                r#"When the controller receives an "F" message, it must respond with an "s" message."#
-            ),
-            vec!['F', 's']
-        );
-    }
-
-    #[test]
-    fn does_not_infer_identity_from_incidental_letters_or_unquoted_words() {
-        assert!(
-            explicit_message_mentions(
-                r#"The F message changes state. 'X' setting, 'F' field and "s" status."#
-            )
-            .is_empty()
-        );
-    }
-
-    #[test]
-    fn recognizes_enumerated_commands_with_unicode_quotes() {
-        assert_eq!(
-            explicit_message_mentions("If the modem issues a “P”, ‘B’, or \"F\" command"),
-            vec!['B', 'F', 'P']
-        );
-    }
-
-    #[test]
-    fn does_not_include_unrelated_quoted_tokens_in_a_list() {
-        assert_eq!(
-            explicit_message_mentions("'X' setting and 'P', 'B', or 'F' command"),
-            vec!['B', 'F', 'P']
-        );
-        assert!(explicit_message_mentions("'X', 'Y' settings").is_empty());
-    }
-
-    #[test]
-    fn identifies_protocol_examples_separately() {
-        assert_eq!(
-            super::protocol_example_prefix("  W 1 # periodic report"),
-            Some('W')
-        );
-        assert_eq!(super::protocol_example_prefix("The W command # note"), None);
-        assert_eq!(super::protocol_example_prefix("W 1"), None);
-    }
-
-    #[test]
-    fn recognizes_quoted_command_without_duplicate_mentions() {
-        assert_eq!(
-            explicit_message_mentions("The 'K' command and 'K' message."),
-            vec!['K']
-        );
-    }
-}
+#[path = "../../tests/workflows/message_identity_message_reference_inventory_tests.rs"]
+mod message_reference_inventory_tests;
 
 /// Replay-only audit of assignments removed by the untyped HTML-row boundary.
 /// Compares the same resolver with and without that boundary; no projection changes.
@@ -2764,38 +2348,8 @@ fn quote_anchor_audit(
 }
 
 #[cfg(test)]
-mod quote_anchor_audit_tests {
-    use super::quote_anchor_audit;
-
-    #[test]
-    fn distinguishes_exact_overlap_and_disjoint() {
-        let doc = "abc\nmulti\nline\nother";
-        assert_eq!(
-            quote_anchor_audit(doc, "multi\nline", 4).0,
-            "quote_starts_at_anchor"
-        );
-        assert_eq!(
-            quote_anchor_audit(doc, "multi\nline", 8).0,
-            "quote_overlaps_anchor"
-        );
-        assert_eq!(
-            quote_anchor_audit(doc, "other", 4).0,
-            "quote_disjoint_from_anchor"
-        );
-    }
-
-    #[test]
-    fn short_repeated_quotes_are_reported_as_ambiguous() {
-        assert_eq!(
-            quote_anchor_audit("x applied. y applied. ", " applied. ", 0).1,
-            2
-        );
-        assert_eq!(
-            quote_anchor_audit("abc", "", 0).0,
-            "missing_quote_or_anchor"
-        );
-    }
-}
+#[path = "../../tests/workflows/message_identity_quote_anchor_audit_tests.rs"]
+mod quote_anchor_audit_tests;
 
 /// Independently verify the statement text, not just the evidence quote.
 /// A quote at the anchor does not establish that a different statement is there.
@@ -2832,36 +2386,8 @@ fn statement_anchor_audit(
 }
 
 #[cfg(test)]
-mod statement_anchor_audit_tests {
-    use super::statement_anchor_audit;
-
-    #[test]
-    fn shared_quote_anchor_does_not_validate_unrelated_statements() {
-        let doc = "time is zero. applied. | float latitude (degrees)";
-        let anchor = doc.find(" applied. ").unwrap();
-        assert_eq!(
-            statement_anchor_audit(doc, "float latitude (degrees)", anchor, |_| true),
-            ("statement_elsewhere_in_owner", 1, 1)
-        );
-        assert_eq!(
-            statement_anchor_audit(doc, "not present in source", anchor, |_| true),
-            ("statement_not_found", 0, 0)
-        );
-    }
-
-    #[test]
-    fn exact_statement_anchor_is_distinct_from_quote_anchor() {
-        let doc = "first statement\nsecond statement";
-        assert_eq!(
-            statement_anchor_audit(doc, "second statement", 16, |_| true).0,
-            "statement_starts_at_anchor"
-        );
-        assert_eq!(
-            statement_anchor_audit(doc, "first statement", 16, |_| false).0,
-            "statement_elsewhere"
-        );
-    }
-}
+#[path = "../../tests/workflows/message_identity_statement_anchor_audit_tests.rs"]
+mod statement_anchor_audit_tests;
 
 /// A statement-specific locator is usable for diagnostics only when its exact
 /// text occurs once within the proposed owner region. The owner itself is
@@ -2883,36 +2409,8 @@ fn unique_statement_offset_in_owner(
 }
 
 #[cfg(test)]
-mod unique_statement_offset_tests {
-    use super::unique_statement_offset_in_owner;
-
-    #[test]
-    fn unique_statement_is_located_independently_of_shared_quote() {
-        let doc = "applied. | float latitude | float longitude";
-        let at = doc.find("float longitude").unwrap();
-        assert_eq!(
-            unique_statement_offset_in_owner(doc, "float longitude", |_| true),
-            Some(at)
-        );
-    }
-
-    #[test]
-    fn repeated_statement_or_unrelated_owner_is_not_located() {
-        let doc = "latitude | latitude | longitude";
-        assert_eq!(
-            unique_statement_offset_in_owner(doc, "latitude", |_| true),
-            None
-        );
-        assert_eq!(
-            unique_statement_offset_in_owner(doc, "longitude", |_| false),
-            None
-        );
-        assert_eq!(
-            unique_statement_offset_in_owner(doc, "paraphrased longitude", |_| true),
-            None
-        );
-    }
-}
+#[path = "../../tests/workflows/message_identity_unique_statement_offset_tests.rs"]
+mod unique_statement_offset_tests;
 
 /// Classify a uniquely located statement against the original extraction
 /// window. A matching statement outside the window must not silently become
@@ -2942,49 +2440,8 @@ fn statement_window_relation(
 }
 
 #[cfg(test)]
-mod statement_window_relation_tests {
-    use super::statement_window_relation;
-
-    #[test]
-    fn requires_entire_statement_inside_window() {
-        assert_eq!(
-            statement_window_relation(Some(110), 10, 100, 30),
-            "inside_window"
-        );
-        assert_eq!(
-            statement_window_relation(Some(125), 10, 100, 30),
-            "crosses_window_boundary"
-        );
-        assert_eq!(
-            statement_window_relation(Some(95), 10, 100, 30),
-            "crosses_window_boundary"
-        );
-        assert_eq!(
-            statement_window_relation(Some(80), 10, 100, 30),
-            "outside_window"
-        );
-        assert_eq!(
-            statement_window_relation(None, 10, 100, 30),
-            "no_unique_statement"
-        );
-    }
-
-    #[test]
-    fn boundary_and_overflow_are_conservative() {
-        assert_eq!(
-            statement_window_relation(Some(120), 10, 100, 30),
-            "inside_window"
-        );
-        assert_eq!(
-            statement_window_relation(Some(130), 1, 100, 30),
-            "outside_window"
-        );
-        assert_eq!(
-            statement_window_relation(Some(usize::MAX), 2, 100, 30),
-            "outside_window"
-        );
-    }
-}
+#[path = "../../tests/workflows/message_identity_statement_window_relation_tests.rs"]
+mod statement_window_relation_tests;
 
 /// Read-only inventory of statement locators for every staged fact occurrence.
 /// No identity decision is made from these counts.
@@ -3046,40 +2503,8 @@ pub(super) fn statement_locator_stats(
 }
 
 #[cfg(test)]
-mod statement_locator_stats_tests {
-    use super::*;
-
-    #[test]
-    fn counts_exact_missing_and_bad_positions_without_identity_changes() {
-        let candidate = MessageCandidate {
-            id: "window-0-candidate-0".into(),
-            proposed_name: "messages/unknown.md".into(),
-            facts: [("beta", Some(8)), ("alpha", None), ("beta", Some(2))]
-                .into_iter()
-                .map(|(statement, statement_byte_offset)| CandidateFact {
-                    statement: statement.into(),
-                    segment_id: "S1".into(),
-                    evidence_quote: Some("alpha".into()),
-                    source_byte_offset: Some(0),
-                    source_locator_ambiguous: false,
-                    statement_byte_offset,
-                })
-                .collect(),
-        };
-        let stats = statement_locator_stats(
-            &[candidate],
-            &["alpha | beta"],
-            &[10],
-            "0123456789alpha | beta",
-        );
-        assert_eq!(stats.total, 3);
-        assert_eq!(stats.located, 2);
-        assert_eq!(stats.missing, 1);
-        assert_eq!(stats.exact_match, 1);
-        assert_eq!(stats.mismatch, 1);
-        assert_eq!(stats.different_segment, 2);
-    }
-}
+#[path = "../../tests/workflows/message_identity_statement_locator_stats_tests.rs"]
+mod statement_locator_stats_tests;
 
 /// Compare source structures at the evidence anchor and exact statement position.
 /// Diagnostic only: an equal section is not proof of equal message identity.

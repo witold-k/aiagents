@@ -4,18 +4,18 @@
 //! Bounded, source-aware document transformation with independent review.
 
 // P4 staging preserves source-attributed candidates before identity resolution.
-#[path = "coverage_audit.rs"]
-mod coverage_audit;
 #[path = "codegen_readiness.rs"]
 mod codegen_readiness;
-#[path = "protocol_model.rs"]
-mod protocol_model;
+#[path = "coverage_audit.rs"]
+mod coverage_audit;
 #[path = "extraction_quality.rs"]
 mod extraction_quality;
-#[path = "message_identity.rs"]
-mod message_identity;
 #[path = "llm_structure.rs"]
 mod llm_structure;
+#[path = "message_identity.rs"]
+mod message_identity;
+#[path = "protocol_model.rs"]
+mod protocol_model;
 #[path = "source_tree.rs"]
 #[allow(dead_code)] // New structural model is not yet used by identity resolution.
 mod source_tree;
@@ -1152,7 +1152,6 @@ fn extraction_fingerprint(source: &str, prompts: &[&str]) -> String {
     format!("{hash:016x}")
 }
 
-
 /// Export the unverified inventory without overwriting any existing artifact.
 /// This is deliberately independent of checkpoint and message publication.
 fn export_parameter_inventory(
@@ -1166,50 +1165,20 @@ fn export_parameter_inventory(
         .write(true)
         .create_new(true)
         .open(path)
-        .map_err(|err| format!("Cannot create parameter inventory {}: {err}", path.display()))?;
+        .map_err(|err| {
+            format!(
+                "Cannot create parameter inventory {}: {err}",
+                path.display()
+            )
+        })?;
     file.write_all(&data)
         .and_then(|_| file.write_all(b"\n"))
         .map_err(|err| format!("Cannot write parameter inventory {}: {err}", path.display()))
 }
 
 #[cfg(test)]
-mod parameter_inventory_export_tests {
-    use super::*;
-
-    #[test]
-    fn exports_distinct_assertions_without_overwriting() {
-        let dir = std::env::temp_dir().join(format!(
-            "aifix-parameter-inventory-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
-        fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("parameters-unverified.json");
-        let facts = vec![
-            message_identity::ParameterFact {
-                statement: "trgSatPos is the target longitude".into(),
-                parameter: "trgSatPos".into(),
-                section: "## A.1.3 Configuration".into(),
-                evidence_quote: "| trgSatPos | longitude | float |\n".into(),
-                source_byte_offset: 154593,
-            },
-            message_identity::ParameterFact {
-                statement: "trgSatPos is a float".into(),
-                parameter: "trgSatPos".into(),
-                section: "## A.1.3 Configuration".into(),
-                evidence_quote: "| trgSatPos | longitude | float |\n".into(),
-                source_byte_offset: 154593,
-            },
-        ];
-        export_parameter_inventory(&path, &facts).unwrap();
-        let decoded: Vec<message_identity::ParameterFact> =
-            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-        assert_eq!(decoded, facts);
-        assert!(export_parameter_inventory(&path, &facts).is_err());
-        assert_eq!(fs::read(&path).unwrap(), serde_json::to_vec_pretty(&facts).unwrap().into_iter().chain([b'\n']).collect::<Vec<_>>());
-        fs::remove_dir_all(dir).unwrap();
-    }
-}
+#[path = "../../tests/workflows/chunked_transform_parameter_inventory_export_tests.rs"]
+mod parameter_inventory_export_tests;
 fn checkpoint_path(output: &Path) -> PathBuf {
     output.with_extension("v10.checkpoint.json")
 }
@@ -2529,9 +2498,13 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             match serde_json::to_string_pretty(&staged_model) {
                 Ok(json) => {
                     if let Err(err) = fs::write(&model_output, format!("{json}\n")) {
-                        eprintln!("## [CHUNKED] PROTOCOL MODEL: unable to write {model_output:?}: {err}");
+                        eprintln!(
+                            "## [CHUNKED] PROTOCOL MODEL: unable to write {model_output:?}: {err}"
+                        );
                     } else {
-                        println!("## [CHUNKED] PROTOCOL MODEL: wrote {model_output:?} (hypotheses only)");
+                        println!(
+                            "## [CHUNKED] PROTOCOL MODEL: wrote {model_output:?} (hypotheses only)"
+                        );
                     }
                 }
                 Err(err) => eprintln!("## [CHUNKED] PROTOCOL MODEL: serialization failed: {err}"),
@@ -2541,12 +2514,18 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             match serde_json::to_string_pretty(&readiness) {
                 Ok(json) => {
                     if let Err(err) = fs::write(&readiness_output, format!("{json}\n")) {
-                        eprintln!("## [CHUNKED] CODEGEN READINESS: unable to write {readiness_output:?}: {err}");
+                        eprintln!(
+                            "## [CHUNKED] CODEGEN READINESS: unable to write {readiness_output:?}: {err}"
+                        );
                     } else {
-                        println!("## [CHUNKED] CODEGEN READINESS: wrote {readiness_output:?} (diagnostic only)");
+                        println!(
+                            "## [CHUNKED] CODEGEN READINESS: wrote {readiness_output:?} (diagnostic only)"
+                        );
                     }
                 }
-                Err(err) => eprintln!("## [CHUNKED] CODEGEN READINESS: serialization failed: {err}"),
+                Err(err) => {
+                    eprintln!("## [CHUNKED] CODEGEN READINESS: serialization failed: {err}")
+                }
             }
             let semantic_plan = coverage_audit::semantic_review_plan(
                 &checkpoint.candidates,
@@ -2559,19 +2538,27 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             match serde_json::to_string_pretty(&semantic_plan) {
                 Ok(json) => {
                     if let Err(err) = fs::write(&semantic_output, format!("{json}\n")) {
-                        eprintln!("## [CHUNKED] COVERAGE AUDIT: unable to write {semantic_output:?}: {err}");
+                        eprintln!(
+                            "## [CHUNKED] COVERAGE AUDIT: unable to write {semantic_output:?}: {err}"
+                        );
                     } else {
-                        println!("## [CHUNKED] COVERAGE AUDIT: wrote {semantic_output:?} (pending semantic review; read-only)");
+                        println!(
+                            "## [CHUNKED] COVERAGE AUDIT: wrote {semantic_output:?} (pending semantic review; read-only)"
+                        );
                     }
                 }
-                Err(err) => eprintln!("## [CHUNKED] COVERAGE AUDIT: semantic review serialization failed: {err}"),
+                Err(err) => eprintln!(
+                    "## [CHUNKED] COVERAGE AUDIT: semantic review serialization failed: {err}"
+                ),
             }
 
             // Explicit opt-in, bounded, diagnostic-only LLM verification.
             if std::env::var_os("AIFIX_SEMANTIC_VERIFY").is_some() {
                 let limit = std::env::var("AIFIX_SEMANTIC_VERIFY_LIMIT")
-                    .ok().and_then(|value| value.parse::<usize>().ok())
-                    .unwrap_or(12).min(200);
+                    .ok()
+                    .and_then(|value| value.parse::<usize>().ok())
+                    .unwrap_or(12)
+                    .min(200);
                 let mut report = coverage_audit::SemanticVerificationReport::new();
                 for (window_index, line_number, excerpt, statements) in
                     semantic_plan.verifier_tasks(limit)
@@ -2579,7 +2566,8 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                     let context = serde_json::json!({
                         "source_excerpt": excerpt,
                         "candidate_statements": statements,
-                    }).to_string();
+                    })
+                    .to_string();
                     let response = match self.llm_call.run_text_step_limited_with_temperature(
                         coverage_audit::SEMANTIC_VERIFIER_PROMPT,
                         &context,
@@ -2589,35 +2577,51 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                         Ok(response) => response,
                         Err(err) => return WorkflowResult::LlmCallResult(err),
                     };
-                    report.record(window_index, line_number, &excerpt, statements.len(), &response);
+                    report.record(
+                        window_index,
+                        line_number,
+                        &excerpt,
+                        statements.len(),
+                        &response,
+                    );
                 }
                 let verdict_output = format!("{output}.semantic-verification.json");
                 match serde_json::to_string_pretty(&report) {
                     Ok(json) => {
                         if let Err(err) = fs::write(&verdict_output, format!("{json}\\n")) {
-                            eprintln!("## [CHUNKED] SEMANTIC VERIFY: unable to write {verdict_output:?}: {err}");
+                            eprintln!(
+                                "## [CHUNKED] SEMANTIC VERIFY: unable to write {verdict_output:?}: {err}"
+                            );
                         } else {
-                            println!("## [CHUNKED] SEMANTIC VERIFY: wrote {verdict_output:?} (LLM judgments; diagnostic only)");
+                            println!(
+                                "## [CHUNKED] SEMANTIC VERIFY: wrote {verdict_output:?} (LLM judgments; diagnostic only)"
+                            );
                         }
                     }
-                    Err(err) => eprintln!("## [CHUNKED] SEMANTIC VERIFY: serialization failed: {err}"),
+                    Err(err) => {
+                        eprintln!("## [CHUNKED] SEMANTIC VERIFY: serialization failed: {err}")
+                    }
                 }
             }
             let evidence_output = format!("{output}.evidence-coverage.json");
             match serde_json::to_string_pretty(&evidence_report) {
                 Ok(json) => {
                     if let Err(err) = fs::write(&evidence_output, format!("{json}\n")) {
-                        eprintln!("## [CHUNKED] COVERAGE AUDIT: unable to write {evidence_output:?}: {err}");
+                        eprintln!(
+                            "## [CHUNKED] COVERAGE AUDIT: unable to write {evidence_output:?}: {err}"
+                        );
                     } else {
-                        println!("## [CHUNKED] COVERAGE AUDIT: wrote {evidence_output:?} (read-only)");
+                        println!(
+                            "## [CHUNKED] COVERAGE AUDIT: wrote {evidence_output:?} (read-only)"
+                        );
                     }
                 }
-                Err(err) => eprintln!("## [CHUNKED] COVERAGE AUDIT: evidence serialization failed: {err}"),
+                Err(err) => {
+                    eprintln!("## [CHUNKED] COVERAGE AUDIT: evidence serialization failed: {err}")
+                }
             }
-            let details = coverage_audit::missing_locator_details(
-                &checkpoint.candidates,
-                &source_windows,
-            );
+            let details =
+                coverage_audit::missing_locator_details(&checkpoint.candidates, &source_windows);
             let detail_output = format!("{output}.missing-locators.json");
             if details.len() != locator_stats.missing {
                 eprintln!(
@@ -2629,12 +2633,18 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             match serde_json::to_string_pretty(&details) {
                 Ok(json) => {
                     if let Err(err) = fs::write(&detail_output, format!("{json}\n")) {
-                        eprintln!("## [CHUNKED] COVERAGE AUDIT: unable to write {detail_output:?}: {err}");
+                        eprintln!(
+                            "## [CHUNKED] COVERAGE AUDIT: unable to write {detail_output:?}: {err}"
+                        );
                     } else {
-                        println!("## [CHUNKED] COVERAGE AUDIT: wrote {detail_output:?} (read-only)");
+                        println!(
+                            "## [CHUNKED] COVERAGE AUDIT: wrote {detail_output:?} (read-only)"
+                        );
                     }
                 }
-                Err(err) => eprintln!("## [CHUNKED] COVERAGE AUDIT: detail serialization failed: {err}"),
+                Err(err) => {
+                    eprintln!("## [CHUNKED] COVERAGE AUDIT: detail serialization failed: {err}")
+                }
             }
             match serde_json::to_string_pretty(&summary) {
                 Ok(json) => {
@@ -2663,8 +2673,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         );
         println!(
             "## [CHUNKED] PARAMETER STRUCTURE REMAINING: table_lines={:?} other_lines={:?} (source line numbers; duplicates retained)",
-            audit.unverified_table_lines,
-            audit.other_unresolved_lines,
+            audit.unverified_table_lines, audit.other_unresolved_lines,
         );
         println!(
             "## [CHUNKED] MESSAGE ROW STRUCTURE AUDIT: explicit={:?} untyped={:?} outside={:?} (exact lexer row boundaries; no identity inferred)",
@@ -2674,8 +2683,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         );
         println!(
             "## [CHUNKED] REMAINING LEXER TABLE ROWS: in_table={:?} outside={:?} (17 unresolved occurrences; headers only, no ownership inferred)",
-            audit.remaining_lexer_table_rows,
-            audit.remaining_outside_lexer_tables,
+            audit.remaining_lexer_table_rows, audit.remaining_outside_lexer_tables,
         );
         for (line, start, end, cells) in &audit.remaining_lexer_row_cells {
             println!(
@@ -2692,8 +2700,12 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         for neighbor in &audit.remaining_row_neighbors {
             println!(
                 "## [CHUNKED] REMAINING LEXER ROW NEIGHBORS: line={} row_byte={} previous_row_byte={:?} next_row_byte={:?} empty_first={} empty_second={} (same lexer table; no ownership inferred)",
-                neighbor.line, neighbor.row_start, neighbor.previous_row_start,
-                neighbor.next_row_start, neighbor.empty_first, neighbor.empty_second,
+                neighbor.line,
+                neighbor.row_start,
+                neighbor.previous_row_start,
+                neighbor.next_row_start,
+                neighbor.empty_first,
+                neighbor.empty_second,
             );
         }
         for line in &audit.remaining_outside_lexer_tables {
@@ -2706,8 +2718,11 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         if std::env::var_os("AIFIX_LLM_STRUCTURE").is_some() {
             // Include the complete normalized-document lexer row and its immediate neighbors,
             // even when those neighbors have no unresolved facts of their own.
-            let targets: std::collections::BTreeSet<_> = audit.remaining_row_neighbors
-                .iter().map(|neighbor| neighbor.row_start).collect();
+            let targets: std::collections::BTreeSet<_> = audit
+                .remaining_row_neighbors
+                .iter()
+                .map(|neighbor| neighbor.row_start)
+                .collect();
             let mut rows = std::collections::BTreeMap::new();
             for block in &table_analysis.blocks {
                 let simplelexer::tablelexer::DocumentChunk::Table(table) = block else {
@@ -2721,12 +2736,24 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                     let end = (index + 2).min(table.rows.len());
                     for position in start..end {
                         let current = &table.rows[position];
-                        rows.entry(current.span.start).or_insert_with(|| llm_structure::RowEvidence {
-                            line: masked_source[..current.span.start].bytes().filter(|byte| *byte == b'\n').count() + 1,
-                            start: current.span.start,
-                            previous: position.checked_sub(1).map(|previous| table.rows[previous].span.start),
-                            next: table.rows.get(position + 1).map(|next| next.span.start),
-                            cells: current.cells.iter().map(|cell| cell.text.to_string()).collect(),
+                        rows.entry(current.span.start).or_insert_with(|| {
+                            llm_structure::RowEvidence {
+                                line: masked_source[..current.span.start]
+                                    .bytes()
+                                    .filter(|byte| *byte == b'\n')
+                                    .count()
+                                    + 1,
+                                start: current.span.start,
+                                previous: position
+                                    .checked_sub(1)
+                                    .map(|previous| table.rows[previous].span.start),
+                                next: table.rows.get(position + 1).map(|next| next.span.start),
+                                cells: current
+                                    .cells
+                                    .iter()
+                                    .map(|cell| cell.text.to_string())
+                                    .collect(),
+                            }
                         });
                     }
                 }
@@ -2745,7 +2772,10 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                         Ok(response) => response,
                         Err(err) => return WorkflowResult::LlmCallResult(err),
                     };
-                    println!("## [CHUNKED] LLM STRUCTURE ATTEMPT: {} completed (read-only)", attempt + 1);
+                    println!(
+                        "## [CHUNKED] LLM STRUCTURE ATTEMPT: {} completed (read-only)",
+                        attempt + 1
+                    );
                     responses.push(response);
                 }
                 let llm_structure::RankResult {
@@ -2761,20 +2791,24 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 }
                 println!(
                     "## [CHUNKED] LLM STRUCTURE SUMMARY: attempts=3 valid={} proposals={} (read-only; no identity inferred)",
-                    valid, ranked.len()
+                    valid,
+                    ranked.len()
                 );
-                let graph = llm_structure::source_graph(
-                    &rows, &ranked, valid, &coverage.unmatched_rows,
-                );
+                let graph =
+                    llm_structure::source_graph(&rows, &ranked, valid, &coverage.unmatched_rows);
                 let units = llm_structure::semantic_units(&graph);
                 println!(
                     "## [CHUNKED] SEMANTIC UNITS: count={} (source-anchored, majority-supported continuation links; proposed only)",
                     units.len(),
                 );
                 for unit in &units {
-                    let evidence: Vec<_> = unit.row_starts.iter()
+                    let evidence: Vec<_> = unit
+                        .row_starts
+                        .iter()
                         .filter_map(|start| graph.rows.iter().find(|row| row.start == *start))
-                        .map(|row| format!("line={} byte={} cells={:?}", row.line, row.start, row.cells))
+                        .map(|row| {
+                            format!("line={} byte={} cells={:?}", row.line, row.start, row.cells)
+                        })
                         .collect();
                     println!(
                         "## [CHUNKED] SEMANTIC UNIT: entry_byte={} rows={:?} relation_indices={:?} evidence={:?} (proposed; no ownership inferred)",
@@ -2797,7 +2831,9 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 let covered: usize = unit_counts.iter().map(|(_, count)| count).sum();
                 println!(
                     "## [CHUNKED] SEMANTIC UNIT FACT COVERAGE: covered={} outside_or_ambiguous={} total={} (unmatched source-row occurrences; no fact validation or identity inferred)",
-                    covered, outside, coverage.unmatched_rows.len(),
+                    covered,
+                    outside,
+                    coverage.unmatched_rows.len(),
                 );
                 for (entry, count) in unit_counts {
                     println!(
@@ -2809,7 +2845,8 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 let mut unverified = 0usize;
                 let mut outside = 0usize;
                 for (row_start, evidence_ok) in &coverage.unmatched_evidence {
-                    let matching_units = units.iter()
+                    let matching_units = units
+                        .iter()
                         .filter(|unit| unit.row_starts.contains(row_start))
                         .count();
                     if matching_units != 1 {
@@ -2822,10 +2859,15 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 }
                 println!(
                     "## [CHUNKED] SEMANTIC UNIT EVIDENCE: exact_in_row={} unverified_in_unit={} outside_or_ambiguous={} total={} (exact quote at source anchor, within lexer row; read-only, no identity inferred)",
-                    exact, unverified, outside, coverage.unmatched_evidence.len(),
+                    exact,
+                    unverified,
+                    outside,
+                    coverage.unmatched_evidence.len(),
                 );
                 let tiers = llm_structure::tiered_unit_evidence(
-                    &units, &hypothetical, &coverage.unmatched_evidence,
+                    &units,
+                    &hypothetical,
+                    &coverage.unmatched_evidence,
                 );
                 println!(
                     "## [CHUNKED] TIERED SEMANTIC UNIT EVIDENCE: lexical_exact={} lexical_unverified={} relational_exact={} relational_unverified={} outside_or_ambiguous={} total={} (exact quote within source lexer row only; no statement validation or message identity)",
@@ -2837,7 +2879,10 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                     coverage.unmatched_evidence.len(),
                 );
                 let remaining = llm_structure::remaining_unit_evidence(
-                    &graph, &units, &hypothetical, &coverage.unmatched_rows,
+                    &graph,
+                    &units,
+                    &hypothetical,
+                    &coverage.unmatched_rows,
                 );
                 println!(
                     "## [CHUNKED] SEMANTIC EVIDENCE DISPOSITION: lexical_exact={} relational_exact={} structural_headings={} reserved_boundaries={} unresolved={} total={} (source structure and quote position only; no semantic validation or message identity)",
@@ -2845,13 +2890,12 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                     tiers.relational_exact,
                     remaining.structural_headings,
                     remaining.reserved_boundaries,
-                    remaining.unresolved
-                        + tiers.lexical_unverified + tiers.relational_unverified,
+                    remaining.unresolved + tiers.lexical_unverified + tiers.relational_unverified,
                     coverage.unmatched_rows.len(),
                 );
-                for (line, row_start, reason) in llm_structure::outside_unit_evidence(
-                    &graph, &units, &coverage.unmatched_rows,
-                ) {
+                for (line, row_start, reason) in
+                    llm_structure::outside_unit_evidence(&graph, &units, &coverage.unmatched_rows)
+                {
                     println!(
                         "## [CHUNKED] SEMANTIC UNIT OUTSIDE: line={} row_byte={} reason={} (source structure only; no identity inferred)",
                         line, row_start, reason,
@@ -2859,21 +2903,32 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 }
                 println!(
                     "## [CHUNKED] SOURCE GRAPH: rows={} relations={} unresolved_assertions={} (read-only; no identity inferred)",
-                    graph.rows.len(), graph.relations.len(), graph.assertions.len(),
+                    graph.rows.len(),
+                    graph.relations.len(),
+                    graph.assertions.len(),
                 );
                 for assertion in &graph.assertions {
-                    let hypotheses: Vec<_> = assertion.relations.iter()
+                    let hypotheses: Vec<_> = assertion
+                        .relations
+                        .iter()
                         .map(|index| {
                             let relation = &graph.relations[*index];
                             format!(
                                 "{}:{}->{}({}/{})",
-                                relation.relation, relation.earlier_row, relation.later_row,
-                                relation.votes, relation.valid_attempts,
+                                relation.relation,
+                                relation.earlier_row,
+                                relation.later_row,
+                                relation.votes,
+                                relation.valid_attempts,
                             )
-                        }).collect();
+                        })
+                        .collect();
                     println!(
                         "## [CHUNKED] SOURCE GRAPH ASSERTION: line={} row_byte={} lexer_kind={} hypotheses={:?} (no ownership inferred)",
-                        assertion.source_line, assertion.row_start, assertion.lexer_kind, hypotheses,
+                        assertion.source_line,
+                        assertion.row_start,
+                        assertion.lexer_kind,
+                        hypotheses,
                     );
                 }
                 for (earlier, later, relation, votes) in ranked {
@@ -2890,7 +2945,10 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                     "Parameter inventory export requires AIFIX_IDENTITY_REPLAY=1".into(),
                 );
             }
-            let stem = input.file_stem().and_then(|s| s.to_str()).unwrap_or("document");
+            let stem = input
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("document");
             let destination = input.with_file_name(format!("{stem}_parameters-unverified.json"));
             if let Err(err) = export_parameter_inventory(&destination, &parameter_inventory) {
                 return WorkflowResult::Error(err);

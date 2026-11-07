@@ -156,11 +156,16 @@ impl<'a> LlmCall<'a> {
         for file in &files {
             let name = file.file_stem().and_then(|s| s.to_str()).unwrap_or("");
             if !name.is_empty() && name != "mod" && name != "lib" && name != "main" {
-                modules.entry(name.to_string()).or_default().push(file.to_string_lossy().replace('\\', "/"));
+                modules
+                    .entry(name.to_string())
+                    .or_default()
+                    .push(file.to_string_lossy().replace('\\', "/"));
             }
         }
 
-        let mut result = String::from("SOURCE NAVIGATION (file -> local dependencies; request detailed AST/source as needed):\n");
+        let mut result = String::from(
+            "SOURCE NAVIGATION (file -> local dependencies; request detailed AST/source as needed):\n",
+        );
         for file in &files {
             let relative = file.to_string_lossy().replace('\\', "/");
             let path = projdir.join(file);
@@ -168,30 +173,40 @@ impl<'a> LlmCall<'a> {
             if file.extension().is_some_and(|ext| ext == "rs")
                 && let Ok(source) = fs::read_to_string(&path)
             {
-                    // Inspect only Rust import paths; avoid transmitting signatures or bodies.
-                    // Handles nested use trees because every crate module path starts at
-                    // `crate::`, `super::` or `self::`.
-                    for statement in source.split(';') {
-                        let trimmed = statement.trim_start();
-                        if !trimmed.starts_with("use ") && !trimmed.contains("\nuse ") &&
-                            !trimmed.contains("\npub use ") && !trimmed.starts_with("pub use ") {
-                            continue;
-                        }
-                        for prefix in ["crate::", "super::", "self::"] {
-                            for fragment in statement.split(prefix).skip(1) {
-                                let module = fragment.split(|c: char| !c.is_ascii_alphanumeric() && c != '_').next().unwrap_or("");
-                                if let Some(targets) = modules.get(module) {
-                                    for target in targets {
-                                        if target != &relative {
-                                            dependencies.insert(target.clone());
-                                        }
+                // Inspect only Rust import paths; avoid transmitting signatures or bodies.
+                // Handles nested use trees because every crate module path starts at
+                // `crate::`, `super::` or `self::`.
+                for statement in source.split(';') {
+                    let trimmed = statement.trim_start();
+                    if !trimmed.starts_with("use ")
+                        && !trimmed.contains("\nuse ")
+                        && !trimmed.contains("\npub use ")
+                        && !trimmed.starts_with("pub use ")
+                    {
+                        continue;
+                    }
+                    for prefix in ["crate::", "super::", "self::"] {
+                        for fragment in statement.split(prefix).skip(1) {
+                            let module = fragment
+                                .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                                .next()
+                                .unwrap_or("");
+                            if let Some(targets) = modules.get(module) {
+                                for target in targets {
+                                    if target != &relative {
+                                        dependencies.insert(target.clone());
                                     }
                                 }
                             }
                         }
                     }
+                }
             }
-            let priority = if diagnostic.contains(&relative) { "* " } else { "  " };
+            let priority = if diagnostic.contains(&relative) {
+                "* "
+            } else {
+                "  "
+            };
             result.push_str(priority);
             result.push_str(&relative);
             if !dependencies.is_empty() {
@@ -207,7 +222,11 @@ impl<'a> LlmCall<'a> {
         let filelist = self.messages.borrow().filelist.clone();
         let structureinfo = Self::source_navigation(&filelist, diagnostic, &self.projdir);
         if self.dump {
-            println!("## [LLM] SOURCE NAVIGATION: {} files, {} bytes", filelist.len(), structureinfo.len());
+            println!(
+                "## [LLM] SOURCE NAVIGATION: {} files, {} bytes",
+                filelist.len(),
+                structureinfo.len()
+            );
         }
         self.messages.borrow_mut().structureinfo = structureinfo;
     }
@@ -517,29 +536,45 @@ impl<'a> LlmCall<'a> {
         let paths = self.transient_source_files.borrow();
         let mut output = String::new();
         for path in paths.iter().take(MAX_FILES) {
-            let Ok(source) = fs::read_to_string(path) else { continue };
+            let Ok(source) = fs::read_to_string(path) else {
+                continue;
+            };
             let lines: Vec<&str> = source.lines().collect();
             let relative = path.strip_prefix(&self.projdir).unwrap_or(path);
             let path_text = relative.to_string_lossy().replace('\\', "/");
             let mut target = None;
             for line in diagnostic.lines() {
-                if !line.contains(&path_text) && !line.contains(path.file_name().and_then(|n| n.to_str()).unwrap_or("")) {
+                if !line.contains(&path_text)
+                    && !line.contains(path.file_name().and_then(|n| n.to_str()).unwrap_or(""))
+                {
                     continue;
                 }
                 if let Some((_, tail)) = line.rsplit_once(".rs:") {
                     target = tail.split(':').next().and_then(|n| n.parse::<usize>().ok());
-                    if target.is_some() { break; }
+                    if target.is_some() {
+                        break;
+                    }
                 }
             }
             let center = target.unwrap_or(1).saturating_sub(1);
             let start = center.saturating_sub(MAX_LINES_PER_FILE / 2);
             let end = (start + MAX_LINES_PER_FILE).min(lines.len());
-            let header = format!("\n=== SOURCE EXCERPT: {} (lines {}..{}, total {}) ===\n", path_text, start + 1, end, lines.len());
-            if output.len() + header.len() > MAX_CHARS { break; }
+            let header = format!(
+                "\n=== SOURCE EXCERPT: {} (lines {}..{}, total {}) ===\n",
+                path_text,
+                start + 1,
+                end,
+                lines.len()
+            );
+            if output.len() + header.len() > MAX_CHARS {
+                break;
+            }
             output.push_str(&header);
             for (index, line) in lines.iter().enumerate().take(end).skip(start) {
                 let numbered = format!("{:>6}: {}\n", index + 1, line);
-                if output.len() + numbered.len() > MAX_CHARS { break; }
+                if output.len() + numbered.len() > MAX_CHARS {
+                    break;
+                }
                 output.push_str(&numbered);
             }
             output.push_str("Further source context can be loaded with load_file/load_file_part during the apply phase.\n");

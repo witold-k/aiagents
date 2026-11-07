@@ -52,14 +52,41 @@ impl CoverageAudit {
         other: usize,
     ) -> Self {
         let checks = vec![
-            CoverageCheck { name: "distinct_pairs_not_greater_than_candidates", passed: distinct_pairs <= candidate_facts },
-            CoverageCheck { name: "locator_total_matches_candidates", passed: locator_total == candidate_facts },
-            CoverageCheck { name: "locator_partition", passed: located.checked_add(missing) == Some(locator_total) },
-            CoverageCheck { name: "exact_within_located", passed: exact <= located },
-            CoverageCheck { name: "mismatch_within_located", passed: mismatch <= located },
-            CoverageCheck { name: "parameter_partition", passed: matched.checked_add(unmatched).and_then(|n| n.checked_add(other)) == Some(parameter_unresolved) },
-            CoverageCheck { name: "parameter_inventory_matches_coverage", passed: parameter_inventory == matched },
-            CoverageCheck { name: "unresolved_facts_within_candidates", passed: unresolved_facts <= candidate_facts },
+            CoverageCheck {
+                name: "distinct_pairs_not_greater_than_candidates",
+                passed: distinct_pairs <= candidate_facts,
+            },
+            CoverageCheck {
+                name: "locator_total_matches_candidates",
+                passed: locator_total == candidate_facts,
+            },
+            CoverageCheck {
+                name: "locator_partition",
+                passed: located.checked_add(missing) == Some(locator_total),
+            },
+            CoverageCheck {
+                name: "exact_within_located",
+                passed: exact <= located,
+            },
+            CoverageCheck {
+                name: "mismatch_within_located",
+                passed: mismatch <= located,
+            },
+            CoverageCheck {
+                name: "parameter_partition",
+                passed: matched
+                    .checked_add(unmatched)
+                    .and_then(|n| n.checked_add(other))
+                    == Some(parameter_unresolved),
+            },
+            CoverageCheck {
+                name: "parameter_inventory_matches_coverage",
+                passed: parameter_inventory == matched,
+            },
+            CoverageCheck {
+                name: "unresolved_facts_within_candidates",
+                passed: unresolved_facts <= candidate_facts,
+            },
         ];
         Self {
             schema_version: 1,
@@ -91,7 +118,6 @@ impl CoverageAudit {
     }
 }
 
-
 #[derive(Debug, Serialize)]
 pub(super) struct MissingLocatorDetail {
     candidate_id: String,
@@ -110,7 +136,6 @@ pub(super) struct MissingLocatorDetail {
     quote_at_source_byte_offset: Option<bool>,
 }
 
-
 /// Enumerate missing statement locators without inferring a replacement position.
 /// A statement can be a valid paraphrase even when it does not occur verbatim.
 pub(super) fn missing_locator_details(
@@ -126,17 +151,27 @@ pub(super) fn missing_locator_details(
                 continue;
             }
             let statement_hits = window.map(|source| {
-                if fact.statement.is_empty() { 0 } else { source.matches(&fact.statement).count() }
+                if fact.statement.is_empty() {
+                    0
+                } else {
+                    source.matches(&fact.statement).count()
+                }
             });
             let quote_hits = window.and_then(|source| {
                 fact.evidence_quote.as_ref().map(|quote| {
-                    if quote.is_empty() { 0 } else { source.matches(quote).count() }
+                    if quote.is_empty() {
+                        0
+                    } else {
+                        source.matches(quote).count()
+                    }
                 })
             });
             // A unique quote is a source anchor, not proof that the statement is true.
             let unique_quote_offset = window.and_then(|source| {
                 let quote = fact.evidence_quote.as_deref()?;
-                if quote.is_empty() { return None; }
+                if quote.is_empty() {
+                    return None;
+                }
                 let mut matches = source.match_indices(quote);
                 let first = matches.next()?.0;
                 matches.next().is_none().then_some(first)
@@ -181,7 +216,6 @@ pub(super) fn missing_locator_details(
     }
     result
 }
-
 
 #[derive(Debug, Serialize)]
 pub(super) struct EvidenceCoverageReport {
@@ -241,7 +275,9 @@ pub(super) fn evidence_coverage_report(
             let anchor = verified.or_else(|| {
                 let mut hits = window.match_indices(quote);
                 let start = hits.next()?.0;
-                hits.next().is_none().then_some((start, start + quote.len()))
+                hits.next()
+                    .is_none()
+                    .then_some((start, start + quote.len()))
             });
             if let Some(span) = anchor {
                 anchors.entry(index).or_default().push(span);
@@ -270,7 +306,8 @@ pub(super) fn evidence_coverage_report(
     };
     // Bounded, priority-ranked inventory across every source window.
     // Prefer technical evidence, preserving source order for equal priorities.
-    let mut retained: BTreeMap<(u8, std::cmp::Reverse<usize>), UncoveredSourceLine> = BTreeMap::new();
+    let mut retained: BTreeMap<(u8, std::cmp::Reverse<usize>), UncoveredSourceLine> =
+        BTreeMap::new();
     let mut sequence = 0usize;
     for (window_index, window) in windows.iter().enumerate() {
         let spans = anchors.get(&window_index).map(Vec::as_slice).unwrap_or(&[]);
@@ -283,21 +320,29 @@ pub(super) fn evidence_coverage_report(
             } else {
                 report.source_lines_considered += 1;
                 let end = offset + raw_line.len();
-                if spans.iter().any(|&(start, stop)| start < end && stop > offset) {
+                if spans
+                    .iter()
+                    .any(|&(start, stop)| start < end && stop > offset)
+                {
                     report.source_lines_with_evidence += 1;
                 } else {
                     report.source_lines_without_evidence += 1;
                     let key = (technical_priority(line), std::cmp::Reverse(sequence));
                     sequence += 1;
                     if retained.len() < MAX_EXAMPLES
-                        || retained.first_key_value().is_some_and(|(lowest, _)| key > *lowest)
+                        || retained
+                            .first_key_value()
+                            .is_some_and(|(lowest, _)| key > *lowest)
                     {
-                        retained.insert(key, UncoveredSourceLine {
-                            window_index,
-                            line_number: line_index + 1,
-                            byte_offset_in_window: offset,
-                            text: line.chars().take(MAX_LINE_CHARS).collect(),
-                        });
+                        retained.insert(
+                            key,
+                            UncoveredSourceLine {
+                                window_index,
+                                line_number: line_index + 1,
+                                byte_offset_in_window: offset,
+                                text: line.chars().take(MAX_LINE_CHARS).collect(),
+                            },
+                        );
                         if retained.len() > MAX_EXAMPLES {
                             retained.pop_first();
                         }
@@ -307,13 +352,15 @@ pub(super) fn evidence_coverage_report(
             offset += raw_line.len();
         }
     }
-    report.uncovered_lines_omitted = report.source_lines_without_evidence
+    report.uncovered_lines_omitted = report
+        .source_lines_without_evidence
         .saturating_sub(retained.len());
     report.uncovered_lines = retained.into_values().collect();
-    report.uncovered_lines.sort_by_key(|line| (line.window_index, line.line_number));
+    report
+        .uncovered_lines
+        .sort_by_key(|line| (line.window_index, line.line_number));
     report
 }
-
 
 /// Global, source-line-based coverage. Overlapping windows are merged before
 /// counting, so an anchor in any window covers the corresponding source line.
@@ -329,18 +376,29 @@ pub(super) fn evidence_coverage_report_global(
     let mut report = evidence_coverage_report(candidates, windows);
     let mut anchored = Vec::new();
     for candidate in candidates {
-        let Some(index) = super::message_identity::source_window_index(&candidate.id) else { continue };
-        let Some((&window, &base)) = windows.get(index).zip(starts.get(index)) else { continue };
+        let Some(index) = super::message_identity::source_window_index(&candidate.id) else {
+            continue;
+        };
+        let Some((&window, &base)) = windows.get(index).zip(starts.get(index)) else {
+            continue;
+        };
         for fact in &candidate.facts {
-            let Some(quote) = fact.evidence_quote.as_deref().filter(|q| !q.is_empty()) else { continue };
-            let span = fact.source_byte_offset.and_then(|start| {
-                let end = start.checked_add(quote.len())?;
-                (window.get(start..end) == Some(quote)).then_some((start, end))
-            }).or_else(|| {
-                let mut hits = window.match_indices(quote);
-                let start = hits.next()?.0;
-                hits.next().is_none().then_some((start, start + quote.len()))
-            });
+            let Some(quote) = fact.evidence_quote.as_deref().filter(|q| !q.is_empty()) else {
+                continue;
+            };
+            let span = fact
+                .source_byte_offset
+                .and_then(|start| {
+                    let end = start.checked_add(quote.len())?;
+                    (window.get(start..end) == Some(quote)).then_some((start, end))
+                })
+                .or_else(|| {
+                    let mut hits = window.match_indices(quote);
+                    let start = hits.next()?.0;
+                    hits.next()
+                        .is_none()
+                        .then_some((start, start + quote.len()))
+                });
             if let Some((a, b)) = span
                 && let (Some(a), Some(b)) = (base.checked_add(a), base.checked_add(b))
                 && source.get(a..b) == Some(quote)
@@ -352,19 +410,23 @@ pub(super) fn evidence_coverage_report_global(
     // One representative per physical line, regardless of window overlap.
     let mut lines: BTreeMap<usize, (usize, usize, usize, String)> = BTreeMap::new();
     for (index, window) in windows.iter().enumerate() {
-        let Some(&base) = starts.get(index) else { continue };
+        let Some(&base) = starts.get(index) else {
+            continue;
+        };
         let mut offset = 0usize;
         for (number, raw) in window.split_inclusive('\n').enumerate() {
-            let Some(absolute) = base.checked_add(offset) else { break };
+            let Some(absolute) = base.checked_add(offset) else {
+                break;
+            };
             let end = absolute.saturating_add(raw.len());
             // A partial line is not a trustworthy source-line representative.
             if source.get(absolute..end) == Some(raw)
                 && (absolute == 0 || source.as_bytes().get(absolute - 1) == Some(&b'\n'))
                 && (end == source.len() || raw.ends_with('\n'))
             {
-                lines.entry(absolute).or_insert_with(|| (
-                    index, number + 1, offset, raw.trim().to_owned()
-                ));
+                lines
+                    .entry(absolute)
+                    .or_insert_with(|| (index, number + 1, offset, raw.trim().to_owned()));
             }
             offset += raw.len();
         }
@@ -373,14 +435,20 @@ pub(super) fn evidence_coverage_report_global(
     report.source_lines_with_evidence = 0;
     report.source_lines_without_evidence = 0;
     report.source_lines_skipped = 0;
-    let mut retained: BTreeMap<(u8, std::cmp::Reverse<usize>), UncoveredSourceLine> = BTreeMap::new();
-    for (sequence, (absolute, (window_index, line_number, offset, line))) in lines.into_iter().enumerate() {
+    let mut retained: BTreeMap<(u8, std::cmp::Reverse<usize>), UncoveredSourceLine> =
+        BTreeMap::new();
+    for (sequence, (absolute, (window_index, line_number, offset, line))) in
+        lines.into_iter().enumerate()
+    {
         if line.is_empty() || line.starts_with("![](data:") || line.len() > 2000 {
             report.source_lines_skipped += 1;
             continue;
         }
         report.source_lines_considered += 1;
-        let end = absolute + source[absolute..].find('\n').map_or(source.len() - absolute, |n| n + 1);
+        let end = absolute
+            + source[absolute..]
+                .find('\n')
+                .map_or(source.len() - absolute, |n| n + 1);
         if anchored.iter().any(|&(a, b)| a < end && b > absolute) {
             report.source_lines_with_evidence += 1;
             continue;
@@ -388,22 +456,34 @@ pub(super) fn evidence_coverage_report_global(
         report.source_lines_without_evidence += 1;
         let key = (technical_priority(&line), std::cmp::Reverse(sequence));
         if retained.len() < MAX_EXAMPLES
-            || retained.first_key_value().is_some_and(|(lowest, _)| key > *lowest)
+            || retained
+                .first_key_value()
+                .is_some_and(|(lowest, _)| key > *lowest)
         {
-            retained.insert(key, UncoveredSourceLine {
-                window_index, line_number, byte_offset_in_window: offset,
-                text: line.chars().take(MAX_LINE_CHARS).collect(),
-            });
-            if retained.len() > MAX_EXAMPLES { retained.pop_first(); }
+            retained.insert(
+                key,
+                UncoveredSourceLine {
+                    window_index,
+                    line_number,
+                    byte_offset_in_window: offset,
+                    text: line.chars().take(MAX_LINE_CHARS).collect(),
+                },
+            );
+            if retained.len() > MAX_EXAMPLES {
+                retained.pop_first();
+            }
         }
     }
-    report.uncovered_lines_omitted = report.source_lines_without_evidence.saturating_sub(retained.len());
+    report.uncovered_lines_omitted = report
+        .source_lines_without_evidence
+        .saturating_sub(retained.len());
     report.uncovered_lines = retained.into_values().collect();
-    report.uncovered_lines.sort_by_key(|line| (line.window_index, line.line_number));
+    report
+        .uncovered_lines
+        .sort_by_key(|line| (line.window_index, line.line_number));
     report.caveats.push("Global coverage counts distinct complete source lines represented by windows; partial boundary lines are excluded.");
     report
 }
-
 
 /// Deterministic review queue, not a semantic verdict.
 #[derive(Debug, Serialize)]
@@ -445,32 +525,72 @@ struct SourceReviewTask {
 
 fn technical_priority(line: &str) -> u8 {
     let t = line.trim();
-    if t.is_empty() || t.starts_with('#') || t.starts_with("---")
-        || t.starts_with("Copyright") || t.starts_with("©")
-        || t.starts_with("Table of Contents") || t.starts_with("www.")
-        || t.starts_with("http://") || t.starts_with("https://")
-    { return 0; }
+    if t.is_empty()
+        || t.starts_with('#')
+        || t.starts_with("---")
+        || t.starts_with("Copyright")
+        || t.starts_with("©")
+        || t.starts_with("Table of Contents")
+        || t.starts_with("www.")
+        || t.starts_with("http://")
+        || t.starts_with("https://")
+    {
+        return 0;
+    }
     let lower = t.to_ascii_lowercase();
     // Short protocol assignments carry information even without prose verbs.
     // Do not mistake a table caption or column heading for a message fact.
-    if lower.starts_with("table ") || lower.starts_with("figure ")
-        || lower.starts_with("appendix ") || lower.starts_with("revision ")
-    { return 0; }
+    if lower.starts_with("table ")
+        || lower.starts_with("figure ")
+        || lower.starts_with("appendix ")
+        || lower.starts_with("revision ")
+    {
+        return 0;
+    }
     if t.split_whitespace().count() <= 4
         && t.split_whitespace().any(|token| {
             let token = token.trim_matches(|c: char| c == '|' || c == '`' || c == ',' || c == ';');
-            let Some((name, value)) = token.split_once('=') else { return false };
-            !name.is_empty() && !value.is_empty()
+            let Some((name, value)) = token.split_once('=') else {
+                return false;
+            };
+            !name.is_empty()
+                && !value.is_empty()
                 && name.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
                 && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
         })
-    { return 2; }
-    let technical = [" must ", " shall ", " should ", " required", " optional",
-        " command", " parameter", " message", " interval", " value",
-        " seconds", " degrees", " db", " end=", " type:", " format",
-        " transceiver", " antenna", " modem", " supported", " report",
-        " if ", " when ", " 0 ", " 1 "];
-    if technical.iter().any(|word| lower.contains(word)) || (t.starts_with('|') && t.matches('|').count() >= 3) {
+    {
+        return 2;
+    }
+    let technical = [
+        " must ",
+        " shall ",
+        " should ",
+        " required",
+        " optional",
+        " command",
+        " parameter",
+        " message",
+        " interval",
+        " value",
+        " seconds",
+        " degrees",
+        " db",
+        " end=",
+        " type:",
+        " format",
+        " transceiver",
+        " antenna",
+        " modem",
+        " supported",
+        " report",
+        " if ",
+        " when ",
+        " 0 ",
+        " 1 ",
+    ];
+    if technical.iter().any(|word| lower.contains(word))
+        || (t.starts_with('|') && t.matches('|').count() >= 3)
+    {
         2
     } else if t.len() >= 35 && t.split_whitespace().count() >= 6 {
         1
@@ -482,7 +602,11 @@ fn technical_priority(line: &str) -> u8 {
 // The review queue is a diagnostic view, not a second document parser.
 // Only exclude unmistakable navigation and document-administration sections.
 fn review_section_is_navigation(heading: &str) -> bool {
-    let heading = heading.trim().trim_start_matches('#').trim().to_ascii_lowercase();
+    let heading = heading
+        .trim()
+        .trim_start_matches('#')
+        .trim()
+        .to_ascii_lowercase();
     heading.contains("table of contents")
         || heading.contains("revision history")
         || heading.contains("revision record")
@@ -493,20 +617,30 @@ fn review_section_is_navigation(heading: &str) -> bool {
 fn review_line_is_navigation(line: &str) -> bool {
     let text = line.trim();
     let lower = text.to_ascii_lowercase();
-    text.is_empty() || text.starts_with('#') || text.starts_with("---")
-        || text.starts_with("Copyright") || text.starts_with('©')
-        || text.starts_with("![](") || text.starts_with("![")
+    text.is_empty()
+        || text.starts_with('#')
+        || text.starts_with("---")
+        || text.starts_with("Copyright")
+        || text.starts_with('©')
+        || text.starts_with("![](")
+        || text.starts_with("![")
         || lower.starts_with("table of contents")
         || lower.starts_with("revision history")
         || lower.starts_with("revision record")
-        || lower.starts_with("www.") || lower.starts_with("http://")
+        || lower.starts_with("www.")
+        || lower.starts_with("http://")
         || lower.starts_with("https://")
-        || (text.starts_with('|') && text.trim_matches('|').trim().chars()
-            .all(|c| c == '-' || c == ':' || c == ' ' || c == '+'))
+        || (text.starts_with('|')
+            && text
+                .trim_matches('|')
+                .trim()
+                .chars()
+                .all(|c| c == '-' || c == ':' || c == ' ' || c == '+'))
 }
 
 fn overlap_score(a: &str, b: &str) -> usize {
-    let tokens: std::collections::BTreeSet<_> = a.split(|c: char| !c.is_alphanumeric())
+    let tokens: std::collections::BTreeSet<_> = a
+        .split(|c: char| !c.is_alphanumeric())
         .filter(|t| t.len() >= 3)
         .map(|t| t.to_ascii_lowercase())
         .collect();
@@ -514,7 +648,8 @@ fn overlap_score(a: &str, b: &str) -> usize {
         .filter(|t| t.len() >= 3)
         .map(|t| t.to_ascii_lowercase())
         .filter(|t| tokens.contains(t))
-        .collect::<std::collections::BTreeSet<_>>().len()
+        .collect::<std::collections::BTreeSet<_>>()
+        .len()
 }
 
 /// Build a prioritized, cross-window review queue. Lexical candidate ranking
@@ -538,15 +673,23 @@ pub(super) fn semantic_review_plan(
         let index = super::message_identity::source_window_index(&candidate.id);
         for (fact_index, fact) in candidate.facts.iter().enumerate() {
             if let Some(quote) = fact.evidence_quote.as_deref().filter(|q| !q.is_empty())
-                && let Some(source) = index.and_then(|i| windows.get(i)).copied() {
-                let anchored = fact.source_byte_offset.and_then(|start| {
-                    let end = start.checked_add(quote.len())?;
-                    (source.get(start..end) == Some(quote)).then_some(())
-                }).is_some();
-                if anchored { evidence_quotes.push(quote); }
+                && let Some(source) = index.and_then(|i| windows.get(i)).copied()
+            {
+                let anchored = fact
+                    .source_byte_offset
+                    .and_then(|start| {
+                        let end = start.checked_add(quote.len())?;
+                        (source.get(start..end) == Some(quote)).then_some(())
+                    })
+                    .is_some();
+                if anchored {
+                    evidence_quotes.push(quote);
+                }
             }
             fact_reviews_total += 1;
-            if fact_reviews.len() >= MAX_FACTS { continue; }
+            if fact_reviews.len() >= MAX_FACTS {
+                continue;
+            }
             let source = index.and_then(|i| windows.get(i)).copied();
             let quote = fact.evidence_quote.as_deref().filter(|q| !q.is_empty());
             let verified = source.zip(quote).and_then(|(source, quote)| {
@@ -559,12 +702,18 @@ pub(super) fn semantic_review_plan(
                     let quote = quote?;
                     let mut hits = source.match_indices(quote);
                     let start = hits.next()?.0;
-                    hits.next().is_none().then_some((start, start + quote.len()))
+                    hits.next()
+                        .is_none()
+                        .then_some((start, start + quote.len()))
                 })?;
                 let mut left = start.saturating_sub(CONTEXT_RADIUS);
-                while !source.is_char_boundary(left) { left += 1; }
+                while !source.is_char_boundary(left) {
+                    left += 1;
+                }
                 let mut right = end.saturating_add(CONTEXT_RADIUS).min(source.len());
-                while !source.is_char_boundary(right) { right -= 1; }
+                while !source.is_char_boundary(right) {
+                    right -= 1;
+                }
                 source.get(left..right).map(str::to_owned)
             });
             fact_reviews.push(FactReviewTask {
@@ -592,65 +741,93 @@ pub(super) fn semantic_review_plan(
         let absolute = starts.get(window)?.checked_add(offset)?;
         // Reject stale/mismatched window offsets rather than attributing a
         // review item to an unrelated line in the normalized document.
-        if !local.is_char_boundary(offset) || offset >= local.len()
-            || source.as_bytes().get(absolute..absolute.checked_add(local.len() - offset)?)
+        if !local.is_char_boundary(offset)
+            || offset >= local.len()
+            || source
+                .as_bytes()
+                .get(absolute..absolute.checked_add(local.len() - offset)?)
                 != Some(&local.as_bytes()[offset..])
         {
             return None;
         }
         Some(line_starts.partition_point(|&p| p <= absolute) - 1)
     };
-    let navigation_sections: std::collections::BTreeSet<usize> = tree.sections.iter()
+    let navigation_sections: std::collections::BTreeSet<usize> = tree
+        .sections
+        .iter()
         .enumerate()
         .filter_map(|(index, section)| {
             let heading = source.lines().nth(section.heading_line)?;
             review_section_is_navigation(heading).then_some(index)
-        }).collect();
+        })
+        .collect();
     let eligible = |line: &UncoveredSourceLine| -> bool {
         let Some(global_line) = location(line.window_index, line.byte_offset_in_window) else {
             return false;
         };
-        if review_line_is_navigation(&line.text) { return false; }
+        if review_line_is_navigation(&line.text) {
+            return false;
+        }
         let mut section = tree.section_at_line.get(global_line).copied().flatten();
         while let Some(index) = section {
-            if navigation_sections.contains(&index) { return false; }
+            if navigation_sections.contains(&index) {
+                return false;
+            }
             section = tree.sections[index].parent;
         }
-        !matches!(tree.block_at_line(global_line).map(|block| block.kind),
-            Some(super::source_tree::BlockKind::FencedCode))
+        !matches!(
+            tree.block_at_line(global_line).map(|block| block.kind),
+            Some(super::source_tree::BlockKind::FencedCode)
+        )
     };
     let table_metadata = |line: &UncoveredSourceLine| -> bool {
         let Some(global_line) = location(line.window_index, line.byte_offset_in_window) else {
             return true;
         };
         let Some(super::source_tree::BlockKind::Table(index)) =
-            tree.block_at_line(global_line).map(|block| block.kind) else {
+            tree.block_at_line(global_line).map(|block| block.kind)
+        else {
             return false;
         };
         let table = &tree.tables[index];
         // A header or alignment rule describes columns, not a protocol assertion.
         global_line <= table.start_line + 1
-            || line.text.trim().trim_matches('|').trim().chars()
+            || line
+                .text
+                .trim()
+                .trim_matches('|')
+                .trim()
+                .chars()
                 .all(|c| c == '-' || c == ':' || c == ' ' || c == '+')
     };
-    let mut ranked = coverage.uncovered_lines.iter().filter_map(|line| {
-        if !eligible(line) || table_metadata(line) { return None; }
-        let priority = technical_priority(&line.text);
-        if priority == 0 { return None; }
-        let cross_window = evidence_quotes.iter().any(|quote| {
-            quote.contains(&line.text) || line.text.contains(quote)
-        });
-        Some((line, priority, cross_window))
-    }).collect::<Vec<_>>();
+    let mut ranked = coverage
+        .uncovered_lines
+        .iter()
+        .filter_map(|line| {
+            if !eligible(line) || table_metadata(line) {
+                return None;
+            }
+            let priority = technical_priority(&line.text);
+            if priority == 0 {
+                return None;
+            }
+            let cross_window = evidence_quotes
+                .iter()
+                .any(|quote| quote.contains(&line.text) || line.text.contains(quote));
+            Some((line, priority, cross_window))
+        })
+        .collect::<Vec<_>>();
     let source_reviews_skipped_as_nontechnical =
         coverage.uncovered_lines.len().saturating_sub(ranked.len());
     let source_reviews_with_cross_window_evidence = ranked.iter().filter(|(_, _, c)| *c).count();
-    ranked.sort_by_key(|(line, priority, cross_window)| (
-        std::cmp::Reverse(*priority),
-        *cross_window,
-        line.window_index,
-        line.line_number,
-    ));
+    ranked.sort_by_key(|(line, priority, cross_window)| {
+        (
+            std::cmp::Reverse(*priority),
+            *cross_window,
+            line.window_index,
+            line.line_number,
+        )
+    });
     // Reserve the first pass for section diversity. Once every eligible
     // section has a representative, fill remaining slots by normal priority.
     // Both passes preserve the existing deterministic ranking.
@@ -673,33 +850,53 @@ pub(super) fn semantic_review_plan(
     let mut selected_source_lines = std::collections::BTreeSet::new();
     let mut source_reviews = Vec::new();
     for (line, priority, cross_window) in diverse {
-        if source_reviews.len() >= MAX_SOURCE { break; }
+        if source_reviews.len() >= MAX_SOURCE {
+            break;
+        }
         let key = (line.window_index, line.line_number);
-        if selected.contains(&key) { continue; }
-        let Some(global_line) = location(line.window_index, line.byte_offset_in_window) else { continue; };
-        if !selected_source_lines.insert(global_line) { continue; }
+        if selected.contains(&key) {
+            continue;
+        }
+        let Some(global_line) = location(line.window_index, line.byte_offset_in_window) else {
+            continue;
+        };
+        if !selected_source_lines.insert(global_line) {
+            continue;
+        }
         selected.insert(key);
         let mut excerpt = line.text.clone();
         let mut last_global = global_line;
         // Table rows are atomic; never join adjacent independent parameters.
-        let is_table = matches!(tree.block_at_line(global_line).map(|b| b.kind),
-            Some(super::source_tree::BlockKind::Table(_)));
+        let is_table = matches!(
+            tree.block_at_line(global_line).map(|b| b.kind),
+            Some(super::source_tree::BlockKind::Table(_))
+        );
         for _ in 0..(if is_table { 0 } else { 2 }) {
             let next_global = last_global + 1;
-            let Some((neighbor, _, _)) = coverage.uncovered_lines.iter()
-                .find_map(|neighbor| {
-                    let neighbor_global = location(neighbor.window_index, neighbor.byte_offset_in_window)?;
-                    if neighbor_global != next_global {
-                        return None;
-                    }
-                    let allowed = eligible(neighbor) && !table_metadata(neighbor)
-                        && tree.section_at_line.get(global_line) == tree.section_at_line.get(neighbor_global)
-                        && tree.blocks.iter().position(|block| block.start_line <= global_line && global_line < block.end_line)
-                            == tree.blocks.iter().position(|block| block.start_line <= neighbor_global && neighbor_global < block.end_line);
-                    allowed.then_some((neighbor, technical_priority(&neighbor.text), false))
-                }) else { break; };
+            let Some((neighbor, _, _)) = coverage.uncovered_lines.iter().find_map(|neighbor| {
+                let neighbor_global =
+                    location(neighbor.window_index, neighbor.byte_offset_in_window)?;
+                if neighbor_global != next_global {
+                    return None;
+                }
+                let allowed = eligible(neighbor)
+                    && !table_metadata(neighbor)
+                    && tree.section_at_line.get(global_line)
+                        == tree.section_at_line.get(neighbor_global)
+                    && tree.blocks.iter().position(|block| {
+                        block.start_line <= global_line && global_line < block.end_line
+                    }) == tree.blocks.iter().position(|block| {
+                        block.start_line <= neighbor_global && neighbor_global < block.end_line
+                    });
+                allowed.then_some((neighbor, technical_priority(&neighbor.text), false))
+            }) else {
+                break;
+            };
             if selected.contains(&(neighbor.window_index, neighbor.line_number))
-                || review_line_is_navigation(&neighbor.text) { break; }
+                || review_line_is_navigation(&neighbor.text)
+            {
+                break;
+            }
             match location(neighbor.window_index, neighbor.byte_offset_in_window) {
                 Some(global_neighbor) if !selected_source_lines.insert(global_neighbor) => break,
                 _ => {}
@@ -709,19 +906,31 @@ pub(super) fn semantic_review_plan(
             selected.insert((neighbor.window_index, neighbor.line_number));
             last_global = next_global;
         }
-        let mut matches = all_facts.iter().map(|fact| {
-            let score = overlap_score(&excerpt, &fact.statement)
-                .max(fact.evidence_quote.as_deref()
-                    .map(|q| overlap_score(&excerpt, q)).unwrap_or(0));
-            (score, fact.statement.as_str())
-        }).filter(|(score, _)| *score > 0).collect::<Vec<_>>();
+        let mut matches = all_facts
+            .iter()
+            .map(|fact| {
+                let score = overlap_score(&excerpt, &fact.statement).max(
+                    fact.evidence_quote
+                        .as_deref()
+                        .map(|q| overlap_score(&excerpt, q))
+                        .unwrap_or(0),
+                );
+                (score, fact.statement.as_str())
+            })
+            .filter(|(score, _)| *score > 0)
+            .collect::<Vec<_>>();
         matches.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(b.1)));
         let mut candidate_statements = Vec::new();
         for (_, statement) in matches {
-            if !candidate_statements.iter().any(|existing| existing == statement) {
+            if !candidate_statements
+                .iter()
+                .any(|existing| existing == statement)
+            {
                 candidate_statements.push(statement.to_owned());
             }
-            if candidate_statements.len() >= MAX_MATCHES { break; }
+            if candidate_statements.len() >= MAX_MATCHES {
+                break;
+            }
         }
         source_reviews.push(SourceReviewTask {
             window_index: line.window_index,
@@ -758,7 +967,6 @@ pub(super) fn semantic_review_plan(
     }
 }
 
-
 #[derive(Debug, serde::Serialize)]
 pub(super) struct SemanticVerificationReport {
     schema_version: u32,
@@ -780,49 +988,91 @@ struct SemanticVerdict {
 
 impl SemanticReviewPlan {
     pub(super) fn verifier_tasks(&self, limit: usize) -> Vec<(usize, usize, String, Vec<String>)> {
-        self.source_reviews.iter().take(limit).map(|task| (
-            task.window_index, task.line_number, task.source_excerpt.clone(),
-            task.candidate_statements.clone()
-        )).collect()
+        self.source_reviews
+            .iter()
+            .take(limit)
+            .map(|task| {
+                (
+                    task.window_index,
+                    task.line_number,
+                    task.source_excerpt.clone(),
+                    task.candidate_statements.clone(),
+                )
+            })
+            .collect()
     }
 }
 
 impl SemanticVerificationReport {
     pub(super) fn new() -> Self {
-        Self { schema_version: 1, attempted: 0, accepted: 0, rejected: 0, reviews: Vec::new() }
+        Self {
+            schema_version: 1,
+            attempted: 0,
+            accepted: 0,
+            rejected: 0,
+            reviews: Vec::new(),
+        }
     }
 
-    pub(super) fn record(&mut self, window_index: usize, line_number: usize,
-        excerpt: &str, candidate_count: usize, response: &str) {
+    pub(super) fn record(
+        &mut self,
+        window_index: usize,
+        line_number: usize,
+        excerpt: &str,
+        candidate_count: usize,
+        response: &str,
+    ) {
         self.attempted += 1;
         let cleaned = response.trim().trim_matches('`').trim();
         let cleaned = cleaned.strip_prefix("json").unwrap_or(cleaned).trim();
-        let valid = serde_json::from_str::<serde_json::Value>(cleaned).ok().and_then(|value| {
-            let verdict = value.get("verdict")?.as_str()?;
-            if !["covered", "partially_covered", "missing", "uncertain"].contains(&verdict) { return None; }
-            let rationale = value.get("rationale")?.as_str()?.trim();
-            if rationale.is_empty() || rationale.len() > 2000 { return None; }
-            let indices = value.get("matched_candidate_indices")?.as_array()?;
-            let mut matched = Vec::new();
-            for index in indices {
-                let index = usize::try_from(index.as_u64()?).ok()?;
-                if index >= candidate_count || matched.contains(&index) { return None; }
-                matched.push(index);
-            }
-            if verdict == "missing" && !matched.is_empty() { return None; }
-            if verdict == "covered" && matched.is_empty() { return None; }
-            Some((verdict.to_owned(), matched, rationale.to_owned()))
-        });
+        let valid = serde_json::from_str::<serde_json::Value>(cleaned)
+            .ok()
+            .and_then(|value| {
+                let verdict = value.get("verdict")?.as_str()?;
+                if !["covered", "partially_covered", "missing", "uncertain"].contains(&verdict) {
+                    return None;
+                }
+                let rationale = value.get("rationale")?.as_str()?.trim();
+                if rationale.is_empty() || rationale.len() > 2000 {
+                    return None;
+                }
+                let indices = value.get("matched_candidate_indices")?.as_array()?;
+                let mut matched = Vec::new();
+                for index in indices {
+                    let index = usize::try_from(index.as_u64()?).ok()?;
+                    if index >= candidate_count || matched.contains(&index) {
+                        return None;
+                    }
+                    matched.push(index);
+                }
+                if verdict == "missing" && !matched.is_empty() {
+                    return None;
+                }
+                if verdict == "covered" && matched.is_empty() {
+                    return None;
+                }
+                Some((verdict.to_owned(), matched, rationale.to_owned()))
+            });
         if let Some((verdict, matched_candidate_indices, rationale)) = valid {
             self.accepted += 1;
-            self.reviews.push(SemanticVerdict { window_index, line_number,
-                source_excerpt: excerpt.to_owned(), verdict, matched_candidate_indices, rationale });
+            self.reviews.push(SemanticVerdict {
+                window_index,
+                line_number,
+                source_excerpt: excerpt.to_owned(),
+                verdict,
+                matched_candidate_indices,
+                rationale,
+            });
         } else {
             self.rejected += 1;
-            self.reviews.push(SemanticVerdict { window_index, line_number,
-                source_excerpt: excerpt.to_owned(), verdict: "uncertain".to_owned(),
+            self.reviews.push(SemanticVerdict {
+                window_index,
+                line_number,
+                source_excerpt: excerpt.to_owned(),
+                verdict: "uncertain".to_owned(),
                 matched_candidate_indices: Vec::new(),
-                rationale: "Invalid LLM response; no coverage conclusion.".to_owned() });
+                rationale: "Invalid LLM response; no coverage conclusion.".to_owned(),
+            });
         }
     }
 }
@@ -830,242 +1080,5 @@ impl SemanticVerificationReport {
 pub(super) const SEMANTIC_VERIFIER_PROMPT: &str = r#"Compare an OpenAMIP source excerpt to extracted statements. Judge full technical equivalence including case-sensitive command letters (V differs from v), sender/receiver, conditions, units, ranges and values. Ignore mere lexical similarity. Headings and metadata are uncertain, not missing. Return ONLY JSON with verdict (covered|partially_covered|missing|uncertain), matched_candidate_indices (zero-based integer array), rationale (short string). Covered requires a matching candidate; missing requires an empty array. Never invent facts."#;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn missing_locator_reasons_preserve_source_evidence() {
-        use super::super::message_identity::{CandidateFact, MessageCandidate};
-        let candidate = MessageCandidate {
-            id: "window-0-candidate-0".into(),
-            proposed_name: "unknown".into(),
-            facts: [
-                ("alpha", Some("alpha"), false),
-                ("beta", Some("beta"), false),
-                ("paraphrase", Some("alpha"), false),
-                ("alpha", Some("alpha"), true),
-            ]
-            .into_iter()
-            .map(|(statement, quote, ambiguous)| CandidateFact {
-                statement: statement.into(),
-                segment_id: "S1".into(),
-                evidence_quote: quote.map(str::to_owned),
-                source_byte_offset: Some(0),
-                source_locator_ambiguous: ambiguous,
-                statement_byte_offset: None,
-            })
-            .collect(),
-        };
-        let details = missing_locator_details(&[candidate], &["alpha beta alpha"]);
-        let json = serde_json::to_value(&details).unwrap();
-        assert_eq!(json[0]["reason"], "repeated_statement_in_window");
-        assert_eq!(json[1]["reason"], "unique_statement_without_locator");
-        assert_eq!(json[2]["reason"], "statement_not_verbatim_in_window");
-        assert_eq!(json[3]["reason"], "ambiguous_source_locator");
-        assert_eq!(json[0]["exact_quote_occurrences_in_window"], 2);
-        assert_eq!(json[0]["source_byte_offset"], 0);
-    }
-
-    #[test]
-    fn coverage_window_ids_resolve_and_quotes_are_located() {
-        use super::super::message_identity::{CandidateFact, MessageCandidate};
-        let candidate = MessageCandidate {
-            id: "coverage-window-0-candidate-2".into(),
-            proposed_name: "messages/antenna.md".into(),
-            facts: vec![CandidateFact {
-                statement: "A paraphrased assertion".into(),
-                segment_id: "S1".into(),
-                evidence_quote: Some("exact evidence".into()),
-                source_byte_offset: Some(7),
-                source_locator_ambiguous: false,
-                statement_byte_offset: None,
-            }],
-        };
-        let details = missing_locator_details(&[candidate], &["prefix exact evidence suffix"]);
-        let json = serde_json::to_value(&details).unwrap();
-        assert_eq!(json[0]["source_window"], 0);
-        assert_eq!(json[0]["reason"], "statement_not_verbatim_in_window");
-        assert_eq!(json[0]["unique_quote_byte_offset_in_window"], 7);
-        assert_eq!(json[0]["quote_at_source_byte_offset"], true);
-    }
-
-    #[test]
-    fn evidence_coverage_distinguishes_anchored_and_uncovered_lines() {
-        use super::super::message_identity::{CandidateFact, MessageCandidate};
-        let source = "alpha fact\nbeta fact\n";
-        let candidate = MessageCandidate {
-            id: "coverage-window-0-candidate-0".into(),
-            proposed_name: "test".into(),
-            facts: vec![CandidateFact {
-                statement: "alpha paraphrased".into(),
-                segment_id: "S1".into(),
-                evidence_quote: Some("alpha fact".into()),
-                source_byte_offset: Some(0),
-                source_locator_ambiguous: false,
-                statement_byte_offset: None,
-            }],
-        };
-        let report = evidence_coverage_report(&[candidate], &[source]);
-        assert_eq!(report.source_lines_considered, 2);
-        assert_eq!(report.source_lines_with_evidence, 1);
-        assert_eq!(report.source_lines_without_evidence, 1);
-        assert_eq!(report.unanchored_facts, 0);
-        assert_eq!(report.uncovered_lines[0].text, "beta fact");
-        assert_eq!(report.uncovered_lines_omitted, 0);
-    }
-
-    #[test]
-    fn uncovered_inventory_limit_is_reported_explicitly() {
-        let source = "Antenna sends status code 18 when blocked\n".repeat(10_001);
-        let report = evidence_coverage_report(&[], &[&source]);
-        assert_eq!(report.source_lines_without_evidence, 10_001);
-        assert_eq!(report.uncovered_lines.len(), 10_000);
-        assert_eq!(report.uncovered_lines_omitted, 1);
-        let plan = semantic_review_plan(&[], &[&source], &[0], &source, &report);
-        assert_eq!(plan.source_reviews_total, 10_001);
-        assert_eq!(plan.source_reviews_inventory_omitted, 1);
-    }
-
-    #[test]
-    fn late_technical_lines_survive_bounded_inventory() {
-        let mut source = "Index\n".repeat(10_001);
-        source.push_str("The antenna must report statusCode=18 when blocked\n");
-        let report = evidence_coverage_report(&[], &[&source]);
-        assert_eq!(report.source_lines_without_evidence, 10_002);
-        assert_eq!(report.uncovered_lines.len(), 10_000);
-        assert_eq!(report.uncovered_lines_omitted, 2);
-        assert!(report.uncovered_lines.iter().any(|line|
-            line.text.contains("statusCode=18")));
-        assert!(report.uncovered_lines.windows(2).all(|pair|
-            pair[0].line_number < pair[1].line_number));
-        let plan = semantic_review_plan(&[], &[&source], &[0], &source, &report);
-        assert!(plan.source_reviews.iter().any(|task|
-            task.source_excerpt.contains("statusCode=18")));
-    }
-
-    #[test]
-    fn review_prioritizes_short_protocol_assignments_but_not_captions() {
-        assert_eq!(technical_priority("replyTo=getExtAntStatus"), 2);
-        assert_eq!(technical_priority("| statusCode=18 |"), 2);
-        assert_eq!(technical_priority("Table A-5. Transceiver"), 0);
-        assert_eq!(technical_priority("Figure 3. Antenna"), 0);
-        assert_eq!(technical_priority("Copyright 2026"), 0);
-    }
-
-    #[test]
-    fn review_selects_compact_assignment_without_prose() {
-        let source = "# Protocol\n\nreplyTo=getExtAntStatus\n";
-        let report = evidence_coverage_report(&[], &[source]);
-        let plan = semantic_review_plan(&[], &[source], &[0], source, &report);
-        assert!(plan.source_reviews.iter().any(|task|
-            task.source_excerpt.contains("replyTo=getExtAntStatus")));
-    }
-
-    #[test]
-    fn review_queue_represents_late_sections_before_filling_capacity() {
-        let mut source = String::from("# First section\n\n");
-        for i in 0..240 {
-            source.push_str(&format!("The antenna must report parameter value {i} when requested.\n\n"));
-        }
-        source.push_str("# Final section\n\nThe modem must report statusCode=18 when blocked.\n");
-        let report = evidence_coverage_report(&[], &[source.as_str()]);
-        let plan = semantic_review_plan(&[], &[source.as_str()], &[0], &source, &report);
-        assert_eq!(plan.source_reviews.len(), 200);
-        assert!(plan.source_reviews.iter().any(|task|
-            task.source_excerpt.contains("statusCode=18")));
-    }
-
-    #[test]
-    fn review_uses_normalized_offsets_and_skips_navigation_and_table_headers() {
-        let source = "# Table of Contents\n- Chapter 2 Protocol Specification. 3\n\n# Protocol\n| Type | Description |\n| --- | --- |\n| A | Antenna sends status code 18 when blocked |\n| B | Modem sends frequency in MHz |\n";
-        let windows = [source];
-        let report = evidence_coverage_report(&[], &windows);
-        let plan = semantic_review_plan(&[], &windows, &[0], source, &report);
-        let excerpts: Vec<_> = plan.source_reviews.iter().map(|r| r.source_excerpt.as_str()).collect();
-        assert!(excerpts.iter().any(|text| text.contains("Antenna sends status code 18")));
-        assert!(excerpts.iter().any(|text| text.contains("Modem sends frequency in MHz")));
-        assert!(!excerpts.iter().any(|text| text.contains("Chapter 2")));
-        assert!(!excerpts.iter().any(|text| text.contains("Description")));
-        assert!(excerpts.iter().all(|text| !text.contains("\\n| B |")));
-    }
-
-    #[test]
-    fn review_joins_prose_across_adjacent_windows() {
-        let source = "# Protocol\nThe antenna must report the status when blocked\nand include the remaining seconds in the message.\n";
-        let split = source.find("and include").unwrap();
-        let windows = [&source[..split], &source[split..]];
-        let report = evidence_coverage_report(&[], &windows);
-        let plan = semantic_review_plan(&[], &windows, &[0, split], source, &report);
-        assert!(plan.source_reviews.iter().any(|task|
-            task.source_excerpt.contains("when blocked\nand include")));
-        assert_eq!(plan.source_reviews.len(), 1);
-    }
-
-    #[test]
-    fn review_rejects_mismatched_window_positions() {
-        let source = "# Protocol\nThe antenna must report status when blocked.\n";
-        let window = "The antenna must report status when blocked.\n";
-        let report = evidence_coverage_report(&[], &[window]);
-        let plan = semantic_review_plan(&[], &[window], &[0], source, &report);
-        assert_eq!(plan.source_reviews.len(), 0);
-    }
-
-    #[test]
-    fn global_coverage_deduplicates_overlaps_and_unions_evidence() {
-        use super::super::message_identity::{CandidateFact, MessageCandidate};
-        let source = "Antenna must report statusCode=18\nModem must report frequency\n";
-        let candidate = MessageCandidate {
-            id: "window-1-candidate-0".into(),
-            proposed_name: "test".into(),
-            facts: vec![CandidateFact {
-                statement: "status".into(), segment_id: "S1".into(),
-                evidence_quote: Some("Antenna must report statusCode=18".into()),
-                source_byte_offset: Some(0), source_locator_ambiguous: false,
-                statement_byte_offset: None,
-            }],
-        };
-        let report = evidence_coverage_report_global(
-            &[candidate], &[source, source], &[0, 0], source,
-        );
-        assert_eq!(report.source_lines_considered, 2);
-        assert_eq!(report.source_lines_with_evidence, 1);
-        assert_eq!(report.source_lines_without_evidence, 1);
-        assert_eq!(report.uncovered_lines.len(), 1);
-        assert!(report.uncovered_lines[0].text.contains("frequency"));
-    }
-
-    #[test]
-    fn review_deduplicates_overlapping_windows() {
-        let source = "# Protocol\nAntenna sends status code 18 when blocked\n";
-        let windows = [source, source];
-        let report = evidence_coverage_report(&[], &windows);
-        let plan = semantic_review_plan(&[], &windows, &[0, 0], source, &report);
-        assert_eq!(plan.source_reviews.len(), 1);
-    }
-
-    fn example() -> CoverageAudit {
-        CoverageAudit::new(238, 235, 15, 10, 115, 238, 124, 114, 124, 0, 78, 95, 78, 13, 4)
-    }
-
-    #[test]
-    fn openamip_replay_counts_are_consistent() {
-        let audit = example();
-        assert!(audit.passed());
-        let json = serde_json::to_value(&audit).unwrap();
-        assert_eq!(json["statement_missing"], 114);
-        assert_eq!(json["parameter_unmatched"], 13);
-    }
-
-    #[test]
-    fn detects_inconsistent_parameter_partition() {
-        let audit = CoverageAudit::new(238, 235, 15, 10, 115, 238, 124, 114, 124, 0, 78, 95, 78, 12, 4);
-        assert!(!audit.passed());
-        assert!(audit.checks.iter().any(|c| c.name == "parameter_partition" && !c.passed));
-    }
-
-    #[test]
-    fn detects_inconsistent_locator_partition() {
-        let audit = CoverageAudit::new(238, 235, 15, 10, 115, 238, 124, 113, 124, 0, 78, 95, 78, 13, 4);
-        assert!(!audit.passed());
-    }
-}
+#[path = "../../tests/workflows/coverage_audit_test.rs"]
+mod tests;

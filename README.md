@@ -65,7 +65,17 @@ Reuse existing normalized `simplelexer` table cells, source positions, and propo
 - Treat verbatim source quotations as evidence of text presence, **not** semantic proof.
 - File operations use configured access restrictions, but invoked build tools may execute code. Use a container or VM for untrusted projects.
 - The project focuses on inspectable workflows and smaller locally hosted models rather than autonomous unsupervised changes.
-- Test files normally live under `tests/` mirroring `src/`.
+- Test files live under `tests/`, mirroring the source-module directory hierarchy. See **Test layout** below.
+
+## Test layout
+
+Keep Rust tests separate from production source files while preserving the `src/` → `tests/` module mapping:
+
+- `src/workflows/source_tree.rs` → `tests/workflows/source_tree_test.rs`
+- `src/workflows/message_identity.rs` → `tests/workflows/message_identity_test.rs` (plus focused `message_identity_*_tests.rs` modules)
+- `src/agenttools/list_dir.rs` → `tests/agenttools/list_dir_test.rs`
+
+Unit tests that need private module access are included under `#[cfg(test)]` using `#[path = "../../tests/..."]`; these paths refer only to test builds. Public API integration tests remain regular Cargo integration tests. Keep test-only compatibility helpers behind `#[cfg(test)]` where needed, and avoid exposing production APIs solely for tests. Run `cargo test` and `cargo fmt --check` when changing the layout.
 
 ## Dependencies
 
