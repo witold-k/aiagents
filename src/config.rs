@@ -338,6 +338,7 @@ impl Default for Config {
                 ".cc".into(),
                 ".cpp".into(),
                 ".cxx".into(),
+                ".go".into(),
                 ".h".into(),
                 ".hh".into(),
                 ".hpp".into(),
@@ -351,6 +352,9 @@ impl Default for Config {
                 ".rs".into(), // rust
                 ".sv".into(), // system verilog
                 ".tcl".into(),
+                ".toml".into(),
+                ".txt".into(),
+                ".xml".into(),
             ],
 
             scanfullfilter: vec![
