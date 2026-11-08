@@ -7,6 +7,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use crate::config::Config;
 use crate::generated_workflowsteps::WorkflowSteps;
 use crate::runtimetools::{llmcall::LlmCall, releasedoc::ReleaseDocContext};
 use crate::vc::git::Git;
@@ -258,15 +259,34 @@ pub fn assemble_release_document(
     document
 }
 
+/// Match scanner suffixes or exact basenames; excluded paths never reach Git diff extraction.
+pub fn release_doc_path_allowed(path: &Path, config: &Config) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    config.scanfullfilter.iter().any(|entry| entry == name)
+        || config
+            .scanendfilter
+            .iter()
+            .any(|suffix| !suffix.is_empty() && name.ends_with(suffix))
+}
+
 pub struct ReleaseDocWorkflow<'a> {
+    config: &'a Config,
     llm_call: LlmCall<'a>,
     projdir: &'a Path,
     task_args: Vec<String>,
 }
 
 impl<'a> ReleaseDocWorkflow<'a> {
-    pub fn new(llm_call: LlmCall<'a>, projdir: &'a Path, task_args: &[String]) -> Self {
+    pub fn new(
+        config: &'a Config,
+        llm_call: LlmCall<'a>,
+        projdir: &'a Path,
+        task_args: &[String],
+    ) -> Self {
         Self {
+            config,
             llm_call,
             projdir,
             task_args: task_args.to_vec(),
@@ -281,16 +301,17 @@ impl<'a> ReleaseDocWorkflow<'a> {
         let first = options.first.as_deref();
         let last = options.last.as_str();
 
+        let include = |path: &Path| release_doc_path_allowed(path, self.config);
         match first {
-            Some(first) => ReleaseDocContext::between(&git, first, last),
-            None if last == "HEAD" => ReleaseDocContext::since_latest_tag(&git),
+            Some(first) => ReleaseDocContext::between_filtered(&git, first, last, &include),
+            None if last == "HEAD" => ReleaseDocContext::since_latest_tag_filtered(&git, &include),
             None => {
                 let first = git.latest_tag()?.ok_or_else(|| {
                     crate::vc::git::GitError::InvalidOutput(
                         "Cannot use --last without --first when the repository has no tag".into(),
                     )
                 })?;
-                ReleaseDocContext::between(&git, &first, last)
+                ReleaseDocContext::between_filtered(&git, &first, last, &include)
             }
         }
     }
@@ -532,3 +553,7 @@ impl<'a> Workflow for ReleaseDocWorkflow<'a> {
         WorkflowResult::Ok
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/workflows/release_doc_filter_test.rs"]
+mod release_doc_filter_test;

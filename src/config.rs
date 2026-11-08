@@ -334,8 +334,11 @@ impl Default for Config {
             queue_length_save: 1,
 
             scanendfilter: vec![
+                ".bb".into(),
+                ".bbclass".into(),
                 ".c".into(),
                 ".cc".into(),
+                ".cmake".into(),
                 ".cpp".into(),
                 ".cxx".into(),
                 ".go".into(),
@@ -344,14 +347,18 @@ impl Default for Config {
                 ".hpp".into(),
                 ".hxx".into(),
                 ".in".into(),
+                ".ini".into(), // config
                 ".java".into(),
                 ".jl".into(), // julia
                 ".json".into(),
                 ".lua".into(),
+                ".md".into(),
                 ".py".into(), // python
+                ".rc".into(), // config
                 ".rs".into(), // rust
                 ".sv".into(), // system verilog
                 ".tcl".into(),
+                ".tex".into(),
                 ".toml".into(),
                 ".txt".into(),
                 ".xml".into(),
@@ -363,7 +370,6 @@ impl Default for Config {
                 "meson.build".into(),
                 "pom.xml".into(),
             ],
-
 
             writefilter: vec![
                 "{{projectdir}}".into(),

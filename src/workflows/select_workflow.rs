@@ -49,7 +49,7 @@ impl<'a> WorkflowSelector<'a> {
             bt: BLTWorkflow::new(config, llm_call.clone(), bs, src_path, target_path),
             gt: EndlessWorkflow::new(config, llm_call.clone(), src_path, target_path),
             dt: DocWorkflow::new(config, llm_call.clone(), bs, src_path, target_path),
-            rd: ReleaseDocWorkflow::new(llm_call.clone(), src_path, task_args),
+            rd: ReleaseDocWorkflow::new(config, llm_call.clone(), src_path, task_args),
             ct: ChunkedTransformWorkflow::new(llm_call.clone(), src_path, task_args),
             tt: EndlessWorkflow::new(config, llm_call.clone(), src_path, target_path),
             sb: SetupBuildWorkflow::new(config, llm_call.clone(), bs, src_path, target_path),

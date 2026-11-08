@@ -152,6 +152,16 @@ impl Git {
         from: &str,
         to: &str,
     ) -> Result<Vec<(PathBuf, String)>, GitError> {
+        self.changed_file_diffs_filtered(from, to, |_| true)
+    }
+
+    /// Filter paths before requesting their individual (possibly binary) diffs.
+    pub fn changed_file_diffs_filtered(
+        &self,
+        from: &str,
+        to: &str,
+        include: impl Fn(&Path) -> bool,
+    ) -> Result<Vec<(PathBuf, String)>, GitError> {
         let output = self.run_raw(["diff", "--name-only", "-z", "--no-renames", from, to])?;
         if !output.status.success() {
             return Err(GitError::CommandFailed {
@@ -166,6 +176,9 @@ impl Git {
             .filter(|path| !path.is_empty())
             .map(|path| {
                 let path = PathBuf::from(String::from_utf8_lossy(path).into_owned());
+                if !include(&path) {
+                    return Ok(None);
+                }
                 let diff = self.run_raw([
                     OsStr::new("diff"),
                     OsStr::new("--no-ext-diff"),
@@ -189,9 +202,13 @@ impl Git {
                         stderr: String::from_utf8_lossy(&diff.stderr).into_owned(),
                     });
                 }
-                Ok((path, String::from_utf8_lossy(&diff.stdout).into_owned()))
+                Ok(Some((
+                    path,
+                    String::from_utf8_lossy(&diff.stdout).into_owned(),
+                )))
             })
-            .collect()
+            .collect::<Result<Vec<_>, GitError>>()
+            .map(|changes| changes.into_iter().flatten().collect())
     }
 
     pub fn files(&self, reference: &str) -> Result<Vec<PathBuf>, GitError> {
