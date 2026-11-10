@@ -8,7 +8,7 @@ work after a pause.
 
 1. For `extract_message_tables`, turn existing source-backed table/semantic-unit evidence into a language-neutral protocol model, without guessing ownership or types.
 2. Evaluate that model against the OpenAMIP checkpoint and its semantic-review findings before expanding extraction heuristics.
-3. Run and evaluate the BLT repair workflow on real failures; improve reporting only where useful.
+3. Define an LLM-independent BLT module for build/lint/test execution and diagnostic preparation; then evaluate the repair workflow on real failures.
 4. Revisit release-documentation quality, or pick an exploratory experiment: indexing/search, TokenDB, SVD/embeddings, or interactive mode.
 
 ---
@@ -33,6 +33,22 @@ Next, in priority order:
 - [ ] Add regression tests for table continuations, assignment-vs-definition, contradictory evidence, and tableless documents; evaluate on more than one document.
 
 Keep document-administration filtering low priority unless it demonstrably affects model correctness. The present codegen-readiness report is a conservative inventory, not a schema validator; the protocol-model report contains hypotheses, not validated wire definitions.
+
+---
+
+# BLT: independent build/lint/test and diagnostics module
+
+Explore extracting BLT from the LLM repair workflow into a standalone, LLM-free Rust module (possibly a separate crate later). Keep execution, diagnostic preparation and result access independent of any agent or prompt implementation.
+
+- [ ] Define a small BLT API for build-system detection, build/lint/test execution, stage status, exit codes, and complete process output. Distinguish failed, successful, skipped and execution-error stages.
+- [ ] Capture complete output and prepare useful diagnostic locations/context without requiring a universal, language-specific `DiagnosticReport` schema. Preserve raw output and provenance; add language-specific extraction only where reliably useful.
+- [ ] Provide bounded reading/search of stage output and a way to compare failures between runs, without making the LLM responsible for facts BLT already knows.
+- [ ] Keep LLM-facing specialized diagnostic tools in an adapter in `aiagents`, not inside BLT; reuse the existing tool parser/execution infrastructure.
+- [ ] Refactor `BLTWorkflow` to orchestrate repair using BLT results rather than owning process execution and diagnostic preparation.
+- [ ] Add deterministic tests for output capture, stage skipping/failure, large logs, and repeated versus changed failures; benchmark the repair workflow on real Rust and C++ failures before expanding diagnostic parsing.
+- [ ] Decide whether to extract a standalone crate only after the module API and use cases stabilize.
+
+Design principle: BLT supplies verifiable facts and accessible evidence; the LLM interprets causes and proposes edits; BLT independently validates the outcome. Avoid premature diagnostic schemas and additional tool frameworks.
 
 ---
 
