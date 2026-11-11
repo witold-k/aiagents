@@ -6,6 +6,80 @@
 
 By default the file is `$XDG_CONFIG_HOME/aifix/config.json` when `XDG_CONFIG_HOME` is set and nonempty, otherwise `$HOME/.config/aifix/config.json`. Pass `-c` or `--config` to select another file. On first use, `aifix` writes a default configuration. The schema and default values are defined in [`src/config.rs`](../src/config.rs).
 
+## Layered configuration files
+
+The primary file remains `config.json` (or the file selected via `-c`).
+All **other regular `.json` files in the same directory** are loaded
+automatically as optional overlays, in ascending lexicographic filename order.
+No additional CLI switch is necessary, and existing installations with only
+`config.json` behave as before. Other extensions and directories are ignored. Symlinks to regular JSON
+files are supported, including files stored outside the config directory.
+
+Example directory:
+
+```text
+~/.config/aifix/
+  config.json          # primary config, required or auto-created
+  10-local-models.json # additional providers
+  20-task-routing.json # task-specific provider preferences
+  90-overrides.json    # overrides applied last
+```
+
+Overlay files may contain **only the fields to change**. This is a recursive
+JSON merge performed in memory: later scalar values win, nested objects are
+merged by key, and `providerlist` and `taskproviderlist` are merged by
+`name` and `task`, respectively. Existing entries can have individual
+fields overridden; new entries must provide all fields required by their
+respective schema. Other arrays (including `readfilter`, `writefilter`,
+`scanendfilter`, and `scanfullfilter`) **replace** their previous value,
+rather than append. This matters for file-access permissions.
+
+Example `10-local-models.json`:
+
+```json
+{
+  "providerlist": [
+    {
+      "name": "remote",
+      "active": true,
+      "comment": "",
+      "source": "",
+      "endpoint": "https://example.invalid/v1/chat/completions",
+      "model": "example-model",
+      "api_key": "",
+      "insecure": false,
+      "llmbin": "",
+      "llmmodeldir": "",
+      "llmparam": []
+    }
+  ]
+}
+```
+
+Example `90-overrides.json`:
+
+```json
+{
+  "provider": "remote",
+  "providerlist": [
+    {"name": "remote", "model": "another-model"}
+  ],
+  "http_retry": {"count": 2}
+}
+```
+
+The application validates the **fully merged** configuration, so the primary
+file may reference providers added in an overlay. Duplicate provider names or
+task identifiers within a single file are rejected; identifiers shared across
+different files represent intentional overrides. Parsing errors identify the
+offending overlay path. Missing optional overlay files are harmless, but a
+malformed existing `.json` file causes startup to fail.
+
+The config file on disk is not rewritten by merging. When the primary file is
+created on first run, sibling overlays are also applied immediately. Use a
+dedicated config directory: unrelated `.json` files alongside it will be
+considered overlays too.
+
 ## Top-level fields
 
 | Field | Type | Purpose |
@@ -87,7 +161,7 @@ Placeholder expansion is textual: it does not create directories, and the result
 
 ## Validation and maintenance
 
-The loader checks for duplicate provider names, missing provider references, nonfinite task temperatures, invalid queue limits, and an unknown selected provider. After loading, it expands filesystem filter placeholders.
+After merging all configuration files, the loader checks for duplicate provider names, missing provider references, nonfinite task temperatures, invalid queue limits, and an unknown selected provider. It then expands filesystem filter placeholders.
 
 When the application adds required configuration fields, existing JSON files may require updating. The optional `http_retry` field uses defaults when absent. Consult `Config::default()` in [`src/config.rs`](../src/config.rs) for authoritative current defaults.
 

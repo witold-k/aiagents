@@ -113,7 +113,7 @@ GENERAL OPTIONS
   -m, --message TEXT           Additional instructions (repeatable)
   -a, --args                   Pass all remaining arguments to selected task
   -s, --select PATH            Select file/directory (repeatable)
-  -c, --config FILE            Config file (default: ~/.config/aifix/config.json)
+  -c, --config FILE            Primary JSON config (default: ~/.config/aifix/config.json)\n                               Loads sibling *.json files in filename order
   -f, --pathfilter PATH        First path: read/write; further paths: read-only
                                Overrides configured filters; paths must exist
   -b, --builddir DIR           Build output directory override

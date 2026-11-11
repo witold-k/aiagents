@@ -397,20 +397,74 @@ impl Config {
         Ok(self)
     }
 
+    /// Load the main JSON config together with optional sibling JSON overlays.
+    ///
+    /// Sibling files are applied in lexicographic filename order. Each later value
+    /// overrides an earlier one. Provider/task lists merge by their identifier,
+    /// while other arrays are replaced as a whole.
     pub fn load(path: &Path) -> Result<Self, ConfigError> {
-        let data = fs::read_to_string(path).map_err(|source| ConfigError::Read {
-            path: path.to_path_buf(),
-            source,
+        let mut merged = Self::read_json(path)?;
+
+        let directory = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        let main_filename = path.file_name().ok_or_else(|| {
+            ConfigError::Invalid(format!("invalid configuration path: {}", path.display()))
         })?;
 
-        let config = serde_json::from_str::<Self>(&data).map_err(|source| ConfigError::Parse {
-            path: path.to_path_buf(),
+        let entries = fs::read_dir(directory).map_err(|source| ConfigError::Read {
+            path: directory.to_path_buf(),
+            source,
+        })?;
+        let mut overlays = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|source| ConfigError::Read {
+                path: directory.to_path_buf(),
+                source,
+            })?;
+            let candidate = entry.path();
+            if candidate.file_name() == Some(main_filename)
+                || candidate.extension().is_none_or(|ext| ext != "json")
+            {
+                continue;
+            }
+            // Path::is_file follows symlinks, allowing sidecars kept elsewhere.
+            if candidate.is_file() {
+                overlays.push(candidate);
+            }
+        }
+        overlays.sort();
+
+        for overlay in overlays {
+            let additional = Self::read_json(&overlay)?;
+            merge_config_json(&mut merged, additional, None)
+                .map_err(|reason| ConfigError::Invalid(format!("{}: {reason}", overlay.display())))?;
+        }
+
+        let config: Self = serde_json::from_value(merged).map_err(|source| ConfigError::Parse {
+            path: directory.to_path_buf(),
             source,
         })?;
 
         config.validate()?;
-
         config.with_expanded_filters().map_err(ConfigError::Invalid)
+    }
+
+    fn read_json(path: &Path) -> Result<serde_json::Value, ConfigError> {
+        let data = fs::read_to_string(path).map_err(|source| ConfigError::Read {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        let value: serde_json::Value =
+            serde_json::from_str(&data).map_err(|source| ConfigError::Parse {
+                path: path.to_path_buf(),
+                source,
+            })?;
+        check_list_duplicates(&value).map_err(|reason| {
+            ConfigError::Invalid(format!("{}: {reason}", path.display()))
+        })?;
+        Ok(value)
     }
 
     pub fn save(&self, path: &Path) -> Result<(), ConfigError> {
@@ -449,12 +503,8 @@ impl Config {
 
         if Self::ensure_exist(&path)? {
             println!("Created default config at {:?}", path);
-            Self::default()
-                .with_expanded_filters()
-                .map_err(ConfigError::Invalid)
-        } else {
-            Self::load(&path)
         }
+        Self::load(&path)
     }
 
     pub fn default_path() -> PathBuf {
@@ -533,6 +583,63 @@ impl Config {
 
         Ok(())
     }
+}
+
+/// Reject duplicate entries inside each individual file, rather than silently
+/// interpreting duplicates as overrides. Identifiers may repeat across files.
+fn check_list_duplicates(value: &serde_json::Value) -> Result<(), String> {
+    for (list, key) in [("providerlist", "name"), ("taskproviderlist", "task")] {
+        if let Some(entries) = value.get(list) {
+            let entries = entries.as_array().ok_or_else(|| format!("{list} must be an array"))?;
+            let mut names = std::collections::HashSet::new();
+            for entry in entries {
+                let name = entry.get(key).and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| format!("{list} entries must contain string '{key}'"))?;
+                if !names.insert(name) {
+                    return Err(format!("duplicate {} name '{name}'", if list == "providerlist" { "provider" } else { "task" }));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Merge JSON objects recursively. The named provider/task lists are merged
+/// by identity, including individual fields within existing entries.
+fn merge_config_json(
+    base: &mut serde_json::Value,
+    overlay: serde_json::Value,
+    field: Option<&str>,
+) -> Result<(), String> {
+    match (base, overlay) {
+        (serde_json::Value::Object(current), serde_json::Value::Object(extra)) => {
+            for (key, value) in extra {
+                if let Some(existing) = current.get_mut(&key) {
+                    merge_config_json(existing, value, Some(&key))?;
+                } else {
+                    current.insert(key, value);
+                }
+            }
+        }
+        (serde_json::Value::Array(current), serde_json::Value::Array(extra))
+            if matches!(field, Some("providerlist" | "taskproviderlist")) =>
+        {
+            let key = if field == Some("providerlist") { "name" } else { "task" };
+            for item in extra {
+                let name = item.get(key).and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| format!("{} entries must contain string '{key}'", field.unwrap_or_default()))?;
+                if let Some(existing) = current.iter_mut().find(|entry| {
+                    entry.get(key).and_then(serde_json::Value::as_str) == Some(name)
+                }) {
+                    merge_config_json(existing, item, None)?;
+                } else {
+                    current.push(item);
+                }
+            }
+        }
+        (current, extra) => *current = extra,
+    }
+    Ok(())
 }
 
 #[derive(Debug)]
