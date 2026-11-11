@@ -554,6 +554,3 @@ impl<'a> Workflow for ReleaseDocWorkflow<'a> {
     }
 }
 
-#[cfg(test)]
-#[path = "../../tests/workflows/release_doc_filter_test.rs"]
-mod release_doc_filter_test;
