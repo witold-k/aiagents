@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Witold Kaminski
 
-use super::release_doc_path_allowed;
-use crate::config::Config;
+use aiagents::workflows::release_doc::release_doc_path_allowed;
+use aiagents::config::Config;
 use std::path::Path;
 
 #[test]
