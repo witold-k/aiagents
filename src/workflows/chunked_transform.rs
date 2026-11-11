@@ -178,15 +178,16 @@ mod legacy_extraction_format {
 type ExtractedRecords = Vec<(String, Vec<(String, Option<String>)>)>;
 
 #[derive(Debug)]
-struct EvidenceSegment {
-    id: String,
-    text: String,
-    line_index: usize,
+pub struct EvidenceSegment {
+    pub id: String,
+    pub text: String,
+    pub line_index: usize,
     /// Byte offset within the source window passed to evidence_segments.
-    byte_offset: usize,
+    pub byte_offset: usize,
 }
 
-fn evidence_segments(source: &str) -> Vec<EvidenceSegment> {
+/// Split normalized source into stable, UTF-8-safe evidence locators.
+pub fn evidence_segments(source: &str) -> Vec<EvidenceSegment> {
     let mut segments = Vec::new();
     let mut line_start = 0;
     for (line_index, line) in source.split_inclusive('\n').enumerate() {
@@ -383,7 +384,7 @@ struct SegmentedWindow {
 // the uppercase type only when the source does not declare the lowercase type.
 // If both are declared, the uppercase path must use upper_<lowercase>.md.
 // Resolve this from explicit source declarations, never from protocol names.
-fn declared_message_identity(path: &str, source: &str) -> bool {
+pub fn declared_message_identity(path: &str, source: &str) -> bool {
     let slug = path
         .strip_prefix("messages/")
         .and_then(|s| s.strip_suffix(".md"))
@@ -3802,7 +3803,3 @@ mod internal_tests;
 #[cfg(test)]
 #[path = "../../tests/workflows/chunked_transform_segmented_evidence_test.rs"]
 mod segmented_evidence_tests;
-
-#[cfg(test)]
-#[path = "../../tests/workflows/chunked_transform_openamip_structure_test.rs"]
-mod openamip_structure_tests;
