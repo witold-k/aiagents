@@ -1,41 +1,38 @@
-#[cfg(test)]
-mod tests {
-    use aiagents::config::{AIProvider, Config};
-    use super::unique_config_dir;
+use aiagents::config::{AIProvider, Config};
 
-    #[test]
-    fn duplicate_provider_names_are_rejected() {
-        let mut config = Config::default();
-        config.providerlist.push(AIProvider {
-            name: config.providerlist[0].name.clone(),
-            ..AIProvider::default()
-        });
 
-        let dir = unique_config_dir("duplicate");
-        let path = dir.join("config.json");
-        config.save(&path).unwrap();
+#[test]
+fn duplicate_provider_names_are_rejected() {
+    let mut config = Config::default();
+    config.providerlist.push(AIProvider {
+        name: config.providerlist[0].name.clone(),
+        ..AIProvider::default()
+    });
 
-        let error = match Config::load(&path) {
-            Ok(_) => panic!("duplicate provider name was accepted"),
-            Err(error) => error,
-        };
-        assert!(format!("{error:?}").contains("duplicate provider name"));
+    let dir = unique_config_dir("duplicate");
+    let path = dir.join("config.json");
+    config.save(&path).unwrap();
 
-        std::fs::remove_dir_all(dir).unwrap();
-    }
+    let error = match Config::load(&path) {
+        Ok(_) => panic!("duplicate provider name was accepted"),
+        Err(error) => error,
+    };
+    assert!(format!("{error:?}").contains("duplicate provider name"));
 
-    #[test]
-    fn default_provider_names_are_unique() {
-        let config = Config::default();
-        let mut names = std::collections::HashSet::new();
+    std::fs::remove_dir_all(dir).unwrap();
+}
 
-        assert!(
-            config
-                .providerlist
-                .iter()
-                .all(|provider| names.insert(provider.name.as_str()))
-        );
-    }
+#[test]
+fn default_provider_names_are_unique() {
+    let config = Config::default();
+    let mut names = std::collections::HashSet::new();
+
+    assert!(
+        config
+            .providerlist
+            .iter()
+            .all(|provider| names.insert(provider.name.as_str()))
+    );
 }
 
 #[test]
