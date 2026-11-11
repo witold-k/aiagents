@@ -75,7 +75,9 @@ Keep Rust tests separate from production source files while preserving the `src/
 - `src/workflows/message_identity.rs` → `tests/workflows/message_identity_test.rs` (plus focused `message_identity_*_tests.rs` modules)
 - `src/agenttools/list_dir.rs` → `tests/agenttools/list_dir_test.rs`
 
-Unit tests that need private module access are included under `#[cfg(test)]` using `#[path = "../../tests/..."]`; these paths refer only to test builds. Public API integration tests remain regular Cargo integration tests. Keep test-only compatibility helpers behind `#[cfg(test)]` where needed, and avoid exposing production APIs solely for tests. Run `cargo test` and `cargo fmt --check` when changing the layout.
+**Target layout:** test code belongs exclusively under `tests/` and is registered by Cargo integration-test entry points (such as `tests/mod.rs`) and their normal `mod` declarations. Production modules under `src/` must not import tests via `#[path = "../../tests/..."]`, `include!`, or equivalent test-only source inclusion. The generated production `include!` declarations in `src/lib.rs` are outside this rule.
+
+**Migration in progress:** several existing tests still rely on private module access through `#[cfg(test)] #[path = ...]` declarations in production files. Those tests must be redesigned around supported public behavior, or their underlying functionality refactored behind a deliberate public API, **before** removing the old declarations. Do not silently drop coverage or expose internals solely to satisfy test imports. Once migrated, run `cargo test --all-targets` and `cargo fmt --check`, and verify no source-to-test inclusions remain.
 
 ## Dependencies
 
