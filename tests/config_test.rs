@@ -1,6 +1,5 @@
 use aiagents::config::{AIProvider, Config};
 
-
 #[test]
 fn duplicate_provider_names_are_rejected() {
     let mut config = Config::default();
@@ -102,27 +101,38 @@ fn merges_partial_overlays_in_sorted_filename_order() {
     // The main config is intentionally invalid alone: the provider comes
     // from a sidecar, so validation must happen after merging.
     initial.save(&main).unwrap();
-    write_overlay(&dir, "10-models.json", serde_json::json!({
-        "providerlist": [{
-            "name": "external", "active": true, "endpoint": "http://first",
-            "model": "first", "comment": "", "source": "", "api_key": "",
-            "insecure": false, "llmbin": "", "llmmodeldir": "",
-            "llmparam": []
-        }],
-        "taskproviderlist": [{"task": "extract", "provider": "external", "temperature": 0.3}],
-        "max_try_count": {"max_workflow_fail": 3}
-    }));
-    write_overlay(&dir, "20-overrides.json", serde_json::json!({
-        "providerlist": [{"name": "external", "endpoint": "http://second"}],
-        "taskproviderlist": [{"task": "extract", "temperature": 0.8}],
-        "max_try_count": {"max_tool_call_fail": 4},
-        "queue_length_max": 30,
-        "readfilter": ["{{projectdir}}"]
-    }));
+    write_overlay(
+        &dir,
+        "10-models.json",
+        serde_json::json!({
+            "providerlist": [{
+                "name": "external", "active": true, "endpoint": "http://first",
+                "model": "first", "comment": "", "source": "", "api_key": "",
+                "insecure": false, "llmbin": "", "llmmodeldir": "",
+                "llmparam": []
+            }],
+            "taskproviderlist": [{"task": "extract", "provider": "external", "temperature": 0.3}],
+            "max_try_count": {"max_workflow_fail": 3}
+        }),
+    );
+    write_overlay(
+        &dir,
+        "20-overrides.json",
+        serde_json::json!({
+            "providerlist": [{"name": "external", "endpoint": "http://second"}],
+            "taskproviderlist": [{"task": "extract", "temperature": 0.8}],
+            "max_try_count": {"max_tool_call_fail": 4},
+            "queue_length_max": 30,
+            "readfilter": ["{{projectdir}}"]
+        }),
+    );
     std::fs::write(dir.join("ignore.txt"), "{ not JSON }").unwrap();
     let loaded = Config::load(&main).unwrap();
     assert_eq!(loaded.provider, "external");
-    assert_eq!(loaded.get_provider("external").unwrap().endpoint, "http://second");
+    assert_eq!(
+        loaded.get_provider("external").unwrap().endpoint,
+        "http://second"
+    );
     assert_eq!(loaded.get_provider("external").unwrap().model, "first");
     assert_eq!(loaded.taskproviderlist.len(), 1);
     assert_eq!(loaded.taskproviderlist[0].temperature, 0.8);
@@ -150,7 +160,11 @@ fn creates_main_config_and_merges_existing_sidecar() {
     use aiagents::config::Config;
     let dir = unique_config_dir("first-run");
     let main = dir.join("config.json");
-    write_overlay(&dir, "extra.json", serde_json::json!({"queue_length_max": 99}));
+    write_overlay(
+        &dir,
+        "extra.json",
+        serde_json::json!({"queue_length_max": 99}),
+    );
     let loaded = Config::load_or_create(Some(main.to_string_lossy().into_owned())).unwrap();
     assert!(main.is_file());
     assert_eq!(loaded.queue_length_max, 99);
@@ -175,9 +189,13 @@ fn rejects_duplicate_provider_in_single_overlay() {
     let dir = unique_config_dir("duplicate-overlay");
     let main = dir.join("config.json");
     Config::default().save(&main).unwrap();
-    write_overlay(&dir, "duplicate.json", serde_json::json!({
-        "providerlist": [{"name":"duplicate"}, {"name":"duplicate"}]
-    }));
+    write_overlay(
+        &dir,
+        "duplicate.json",
+        serde_json::json!({
+            "providerlist": [{"name":"duplicate"}, {"name":"duplicate"}]
+        }),
+    );
     let error = Config::load(&main).err().expect("must reject duplicates");
     assert!(format!("{error:?}").contains("duplicate provider name"));
     std::fs::remove_dir_all(dir).unwrap();

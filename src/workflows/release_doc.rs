@@ -553,4 +553,3 @@ impl<'a> Workflow for ReleaseDocWorkflow<'a> {
         WorkflowResult::Ok
     }
 }
-

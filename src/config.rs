@@ -438,8 +438,9 @@ impl Config {
 
         for overlay in overlays {
             let additional = Self::read_json(&overlay)?;
-            merge_config_json(&mut merged, additional, None)
-                .map_err(|reason| ConfigError::Invalid(format!("{}: {reason}", overlay.display())))?;
+            merge_config_json(&mut merged, additional, None).map_err(|reason| {
+                ConfigError::Invalid(format!("{}: {reason}", overlay.display()))
+            })?;
         }
 
         let config: Self = serde_json::from_value(merged).map_err(|source| ConfigError::Parse {
@@ -461,9 +462,8 @@ impl Config {
                 path: path.to_path_buf(),
                 source,
             })?;
-        check_list_duplicates(&value).map_err(|reason| {
-            ConfigError::Invalid(format!("{}: {reason}", path.display()))
-        })?;
+        check_list_duplicates(&value)
+            .map_err(|reason| ConfigError::Invalid(format!("{}: {reason}", path.display())))?;
         Ok(value)
     }
 
@@ -590,13 +590,24 @@ impl Config {
 fn check_list_duplicates(value: &serde_json::Value) -> Result<(), String> {
     for (list, key) in [("providerlist", "name"), ("taskproviderlist", "task")] {
         if let Some(entries) = value.get(list) {
-            let entries = entries.as_array().ok_or_else(|| format!("{list} must be an array"))?;
+            let entries = entries
+                .as_array()
+                .ok_or_else(|| format!("{list} must be an array"))?;
             let mut names = std::collections::HashSet::new();
             for entry in entries {
-                let name = entry.get(key).and_then(serde_json::Value::as_str)
+                let name = entry
+                    .get(key)
+                    .and_then(serde_json::Value::as_str)
                     .ok_or_else(|| format!("{list} entries must contain string '{key}'"))?;
                 if !names.insert(name) {
-                    return Err(format!("duplicate {} name '{name}'", if list == "providerlist" { "provider" } else { "task" }));
+                    return Err(format!(
+                        "duplicate {} name '{name}'",
+                        if list == "providerlist" {
+                            "provider"
+                        } else {
+                            "task"
+                        }
+                    ));
                 }
             }
         }
@@ -624,13 +635,25 @@ fn merge_config_json(
         (serde_json::Value::Array(current), serde_json::Value::Array(extra))
             if matches!(field, Some("providerlist" | "taskproviderlist")) =>
         {
-            let key = if field == Some("providerlist") { "name" } else { "task" };
+            let key = if field == Some("providerlist") {
+                "name"
+            } else {
+                "task"
+            };
             for item in extra {
-                let name = item.get(key).and_then(serde_json::Value::as_str)
-                    .ok_or_else(|| format!("{} entries must contain string '{key}'", field.unwrap_or_default()))?;
-                if let Some(existing) = current.iter_mut().find(|entry| {
-                    entry.get(key).and_then(serde_json::Value::as_str) == Some(name)
-                }) {
+                let name = item
+                    .get(key)
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| {
+                        format!(
+                            "{} entries must contain string '{key}'",
+                            field.unwrap_or_default()
+                        )
+                    })?;
+                if let Some(existing) = current
+                    .iter_mut()
+                    .find(|entry| entry.get(key).and_then(serde_json::Value::as_str) == Some(name))
+                {
                     merge_config_json(existing, item, None)?;
                 } else {
                     current.push(item);
