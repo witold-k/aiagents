@@ -12,6 +12,7 @@ A local-first agent runtime for AI-assisted software engineering. Rust orchestra
 - [Architecture diagrams](docs/architecture_diagrams.md) — workflow diagrams separated by topic
 - [Runtime repair / BLT](docs/blt_execute.md) — build, lint, test and repair
 - [Chunked extraction](docs/chunked_transform.md) — protocol facts, provenance and limitations
+- [Extraction quality criteria](docs/extraction-quality-audit.md) — protocol-neutral acceptance tests and failure modes
 - [Runtime tests](runtests/README.md) — fixtures and local results
 - [TODO](TODO.md) — pending work
 - [Detailed status and historical results](docs/project_status_history.md) — experimental metrics and design history
