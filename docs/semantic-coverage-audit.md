@@ -43,7 +43,7 @@ Do not collapse these into one quality percentage.
 
 ## First replay procedure
 
-1. Use the same OpenAMIP input and completed checkpoint as the previous replay; keep model/configuration and source hash fixed.
+1. Use the same the reference protocol input and completed checkpoint as the previous replay; keep model/configuration and source hash fixed.
 2. Run `AIFIX_IDENTITY_REPLAY=1` and capture all `[CHUNKED]` diagnostics.
 3. Enable `AIFIX_LLM_STRUCTURE` only for a separate controlled comparison; it may perform LLM calls, so do not assume this mode is replay-only.
 4. Compare the exported `manifest.json`, `facts.json`, `quality.json`, and per-spec files against the captured diagnostics.
