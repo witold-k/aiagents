@@ -2494,7 +2494,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 &source_starts,
                 &masked_source,
             );
-            let staged_model = protocol_model::stage(&checkpoint.candidates, &source_windows);
+            let staged_model = protocol_model::stage(&checkpoint.candidates, &source_windows, &table_analysis);
             let model_output = format!("{output}.protocol-model.json");
             match serde_json::to_string_pretty(&staged_model) {
                 Ok(json) => {
