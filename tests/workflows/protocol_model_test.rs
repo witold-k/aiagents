@@ -383,7 +383,7 @@ fn ambiguous_reference_frequency_layout_is_a_hypothesis_not_a_field() {
                 cells: vec!["Frequency is in MHz.".into(),
                     "string Reference Used By: R, T,".into()] },
         ],
-        supporting_relations: vec![],
+        supporting_relations: vec![RelationEvidence { earlier_normalized_byte: 110836, later_normalized_byte: 110910, relation: "text_continuation".into(), votes: 2, valid_attempts: 3 }],
         status: "proposed_voted_continuation",
     };
     let hypotheses = table_repair_hypotheses(&[unit]);
@@ -391,7 +391,10 @@ fn ambiguous_reference_frequency_layout_is_a_hypothesis_not_a_field() {
     assert_eq!(hypotheses[0].candidate_name.as_deref(), Some("frequency"));
     assert_eq!(hypotheses[0].candidate_type.as_deref(), Some("int"));
     assert_eq!(hypotheses[0].candidate_unit.as_deref(), Some("MHz"));
-    assert_eq!(hypotheses[0].conflicting_name_tokens, vec!["r"]);
+    assert_eq!(hypotheses[0].leading_column_tokens, vec!["r"]);
+    assert_eq!(hypotheses[0].declaration_source_row, 110836);
+    assert_eq!(hypotheses[0].declaration_source_cell, "2 int frequency MHz");
+    assert_eq!(hypotheses[0].evidence_status, "exact_observed_cell_syntax");
     assert_eq!(hypotheses[0].row_normalized_bytes, vec![110836, 110910]);
     assert!(hypotheses[0].message_owner.is_none());
     assert_eq!(hypotheses[0].status, "ambiguous_column_layout_unverified");
@@ -405,4 +408,20 @@ fn table_repair_rejects_examples_and_incomplete_bare_declarations() {
     assert!(bare_column_declaration("string Reference Used By: R, T,").is_none());
     assert!(bare_column_declaration("2 int frequency MHz extra").is_none());
     assert!(bare_column_declaration("0 int frequency MHz").is_none());
+}
+
+#[test]
+fn table_repair_requires_voted_multiline_evidence() {
+    let row = TableRowEvidence {
+        normalized_byte_start: 10, normalized_byte_end: None,
+        cells: vec!["r Reference frequency".into(), "2 int frequency MHz".into()],
+    };
+    let unit = SemanticUnitEvidence {
+        entry_normalized_byte: 10,
+        row_normalized_bytes: vec![10],
+        rows: vec![row],
+        supporting_relations: vec![],
+        status: "proposed_voted_continuation",
+    };
+    assert!(table_repair_hypotheses(&[unit]).is_empty());
 }
