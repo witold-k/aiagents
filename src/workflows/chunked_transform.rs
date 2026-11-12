@@ -178,6 +178,24 @@ fn verified_fact_quote(response: &str, source: &str) -> Result<String, String> {
         .ok_or_else(|| "Fact quote is too short or absent from the attributed source window".into())
 }
 
+/// Verify a model-selected source segment, never a model-invented location.
+fn verified_navigated_fact_quote(response: &str, source: &str) -> Result<String, String> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Navigation {
+        segment_id: String,
+        evidence_quote: String,
+    }
+    let navigation: Navigation = serde_json::from_str(strip_code_fences(response.trim()).trim())
+        .map_err(|err| format!("Invalid navigation JSON: {err}"))?;
+    let segments = evidence_segments(source);
+    let segment = segments.iter()
+        .find(|segment| segment.id == navigation.segment_id)
+        .ok_or_else(|| "Navigation selected an unknown source segment".to_owned())?;
+    resolve_source_quote(&segment.text, &navigation.evidence_quote)
+        .ok_or_else(|| "Navigation quote is absent or too short in selected segment".to_owned())
+}
+
 // Legacy JSON response format retained only for compatibility tests.
 // Keep test-specific wire models out of the production module namespace.
 #[cfg(test)]
@@ -3824,6 +3842,34 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 }
             } else {
                 Err("Missing or unattributed original source window".to_owned())
+            };
+            // A failed review triggers one bounded navigation attempt over the
+            // attributed source window, never over unrelated document sections.
+            let result = if let Err(reason) = result {
+                if let Some(source) = source.filter(|source| !source.trim().is_empty()) {
+                    let menu = evidence_segments(source)
+                        .iter()
+                        .map(|segment| format!("{}: {}", segment.id, segment.text.trim()))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    let context = format!(
+                        "DESTINATION: {path}\nFACT: {}\nPREVIOUS ERROR: {reason}\n\nSOURCE SEGMENTS:\n{menu}",
+                        fact.statement
+                    );
+                    let prompt = r#"Previous fact verification failed. Navigate ONLY the supplied source segments. Return JSON {"segment_id":"S1","evidence_quote":"exact verbatim quote of at least 12 characters from selected segment"} or exactly UNSUPPORTED. Do not rewrite facts, invent quotes, or infer identity."#;
+                    println!("## [CHUNKED] FACT NAVIGATE: {path} fact {}: {reason}", index + 1);
+                    match self.llm_call.run_text_step_limited_with_temperature(
+                        prompt, &context, self.llm_call.max_tokens().min(512), 0.0,
+                    ) {
+                        Ok(answer) if answer.trim() == "UNSUPPORTED" => Err(reason),
+                        Ok(answer) => verified_navigated_fact_quote(&answer, source),
+                        Err(err) => return WorkflowResult::LlmCallResult(err),
+                    }
+                } else {
+                    Err(reason)
+                }
+            } else {
+                result
             };
             let current = &mut checkpoint.facts.get_mut(path).expect("fact path exists")[*index];
             match result {
