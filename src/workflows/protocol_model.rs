@@ -1,104 +1,3 @@
-// SPDX-License-Identifier: Apache-2.0
-// Copyright (c) 2026 Witold Kaminski
-
-//! Diagnostic, language-neutral protocol model staging.
-//! This is an inventory of hypotheses and source anchors, not a wire schema.
-
-use super::llm_structure::{SemanticUnit, SourceGraph};
-use super::message_identity::{MessageCandidate, source_window_index};
-use serde::Serialize;
-
-#[derive(Debug, Serialize)]
-pub(super) struct ProtocolModel {
-    schema_version: u32,
-    status: &'static str,
-    messages: Vec<MessageHypothesis>,
-    table_evidence: Vec<TableEvidence>,
-    semantic_units: Vec<SemanticUnitEvidence>,
-    assembled_parameters: Vec<AssembledParameter>,
-    unassembled_semantic_rows: Vec<UnassembledSemanticRow>,
-    caveats: Vec<&'static str>,
-}
-
-#[derive(Debug, Serialize)]
-struct TableEvidence {
-    normalized_byte_start: usize,
-    normalized_byte_end: usize,
-    rows: Vec<TableRowEvidence>,
-}
-
-#[derive(Debug, Serialize)]
-struct TableRowEvidence {
-    normalized_byte_start: usize,
-    normalized_byte_end: Option<usize>,
-    cells: Vec<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct SemanticUnitEvidence {
-    entry_normalized_byte: usize,
-    row_normalized_bytes: Vec<usize>,
-    rows: Vec<TableRowEvidence>,
-    supporting_relations: Vec<RelationEvidence>,
-    status: &'static str,
-}
-
-#[derive(Debug, Serialize)]
-struct RelationEvidence {
-    earlier_normalized_byte: usize,
-    later_normalized_byte: usize,
-    relation: String,
-    votes: usize,
-    valid_attempts: usize,
-}
-
-impl ProtocolModel {
-    /// Attach only existing, voted row relations; never infer field ownership.
-    pub(super) fn with_semantic_units(
-        mut self,
-        graph: &SourceGraph,
-        units: &[SemanticUnit],
-    ) -> Self {
-        self.semantic_units = units
-            .iter()
-            .filter_map(|unit| {
-                let rows: Option<Vec<_>> = unit
-                    .row_starts
-                    .iter()
-                    .map(|start| {
-                        graph
-                            .rows
-                            .iter()
-                            .find(|row| row.start == *start)
-                            .map(|row| TableRowEvidence {
-                                normalized_byte_start: row.start,
-                                normalized_byte_end: None,
-                                cells: row.cells.clone(),
-                            })
-                    })
-                    .collect();
-                let relations: Option<Vec<_>> = unit
-                    .supporting_relations
-                    .iter()
-                    .map(|index| {
-                        graph.relations.get(*index).map(|r| RelationEvidence {
-                            earlier_normalized_byte: r.earlier_row,
-                            later_normalized_byte: r.later_row,
-                            relation: r.relation.clone(),
-                            votes: r.votes,
-                            valid_attempts: r.valid_attempts,
-                        })
-                    })
-                    .collect();
-                Some(SemanticUnitEvidence {
-                    entry_normalized_byte: unit.entry_row,
-                    row_normalized_bytes: unit.row_starts.clone(),
-                    rows: rows?,
-                    supporting_relations: relations?,
-                    status: "proposed_voted_continuation",
-                })
-            })
-            .collect();
         self.unassembled_semantic_rows = self.semantic_units.iter()
             .flat_map(|unit| &unit.rows)
             .filter(|row| !row.cells.iter().any(|cell| declared_parameter(cell).is_some()))
@@ -116,6 +15,40 @@ impl ProtocolModel {
             .collect();
         self
     }
+}
+
+/// Project source rows and voted relations without promoting lexical or hypothetical
+/// units to verified parameters or message ownership.
+fn project_semantic_units(
+    graph: &SourceGraph,
+    units: &[SemanticUnit],
+    status: &'static str,
+) -> Vec<SemanticUnitEvidence> {
+    units.iter().filter_map(|unit| {
+        let rows: Option<Vec<_>> = unit.row_starts.iter().map(|start| {
+            graph.rows.iter().find(|row| row.start == *start).map(|row| TableRowEvidence {
+                normalized_byte_start: row.start,
+                normalized_byte_end: None,
+                cells: row.cells.clone(),
+            })
+        }).collect();
+        let relations: Option<Vec<_>> = unit.supporting_relations.iter().map(|index| {
+            graph.relations.get(*index).map(|r| RelationEvidence {
+                earlier_normalized_byte: r.earlier_row,
+                later_normalized_byte: r.later_row,
+                relation: r.relation.clone(),
+                votes: r.votes,
+                valid_attempts: r.valid_attempts,
+            })
+        }).collect();
+        Some(SemanticUnitEvidence {
+            entry_normalized_byte: unit.entry_row,
+            row_normalized_bytes: unit.row_starts.clone(),
+            rows: rows?,
+            supporting_relations: relations?,
+            status,
+        })
+    }).collect()
 }
 
 #[derive(Debug, Serialize)]
@@ -372,6 +305,7 @@ pub(super) fn stage(
         messages,
         table_evidence,
         semantic_units: Vec::new(),
+        hypothetical_semantic_units: Vec::new(),
         assembled_parameters: Vec::new(),
         unassembled_semantic_rows: Vec::new(),
         caveats: vec![
@@ -382,6 +316,7 @@ pub(super) fn stage(
             "An exact source quotation does not establish the semantic truth of a statement.",
             "Assembled parameter fields are unverified lexical observations, never validated definitions.",
             "Unassembled semantic rows include continuations and malformed or bare declarations; they are not automatically missing parameters.",
+            "Hypothetical semantic units lack a lexical entry anchor and are excluded from parameter assembly, verified coverage and message identity.",
             "This model is not suitable for automatic code generation.",
         ],
     }
