@@ -1,5 +1,7 @@
 # Detailed project status and historical notes
 
+**For the current state, use [current status](current_status.md).** This document intentionally retains historical observations, which may refer to older schemas or experimental behaviors.
+
 This page preserves the detailed project notes from the README before its task-oriented reorganization. Historical status claims and checkpoint versions are not necessarily current. See [project overview](../README.md) and [task index](tasks/README.md) for current navigation.
 
 > **Status:** This is an experimental hobby project under active development.
@@ -77,7 +79,7 @@ interpretation, limitations, and report layout.
 
 ## Architecture and diagrams
 
-The architecture diagrams are split into [five topic-focused views](architecture_diagrams.md):
+The architecture diagrams include [multiple topic-focused views](architecture_diagrams.md), including current source-graph and verification-gate views:
 runtime/repair, chunked extraction, identity and provenance, checkpoint replay,
 and verification boundaries. Detailed references:
 
