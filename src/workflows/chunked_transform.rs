@@ -298,9 +298,7 @@ fn scoped_source_context(source: &str, byte_offset: usize) -> String {
         }
     }
     if let Some(declaration) = message {
-        lines.push(format!("Active declaration (source-scoped hypothesis): {declaration}"));
-    } else {
-        lines.push("Active declaration: none established".to_owned());
+        lines.push(format!("Active declaration: {declaration}"));
     }
     // Table context is structural evidence only. Preserve exact cells and
     // row boundaries; never infer an owning message from a table header.
