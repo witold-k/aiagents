@@ -159,7 +159,10 @@ struct TableRepairHypothesis {
     candidate_type: Option<String>,
     candidate_unit: Option<String>,
     description_fragments: Vec<String>,
-    conflicting_name_tokens: Vec<String>,
+    leading_column_tokens: Vec<String>,
+    declaration_source_row: usize,
+    declaration_source_cell: String,
+    evidence_status: &'static str,
     status: &'static str,
     message_owner: Option<String>,
 }
@@ -183,6 +186,9 @@ fn bare_column_declaration(cell: &str) -> Option<(String, String, String)> {
 fn table_repair_hypotheses(units: &[SemanticUnitEvidence]) -> Vec<TableRepairHypothesis> {
     units.iter().filter_map(|unit| {
         let first = unit.rows.first()?;
+        if unit.rows.len() < 2 || unit.supporting_relations.is_empty() {
+            return None;
+        }
         let (name, ty, unit_hint) = bare_column_declaration(first.cells.get(1)?)?;
         // This is intentionally a layout ambiguity report: the leading
         // one-letter token may be a message identifier, not a field name.
@@ -197,7 +203,10 @@ fn table_repair_hypotheses(units: &[SemanticUnitEvidence]) -> Vec<TableRepairHyp
             candidate_type: Some(ty),
             candidate_unit: Some(unit_hint),
             description_fragments: unit.rows.iter().filter_map(|row| row.cells.first().cloned()).collect(),
-            conflicting_name_tokens: vec![leading.to_owned()],
+            leading_column_tokens: vec![leading.to_owned()],
+            declaration_source_row: first.normalized_byte_start,
+            declaration_source_cell: first.cells[1].clone(),
+            evidence_status: "exact_observed_cell_syntax",
             status: "ambiguous_column_layout_unverified",
             message_owner: None,
         })
@@ -473,7 +482,7 @@ pub(super) fn stage(
             "Unassembled semantic rows include continuations and malformed or bare declarations; they are not automatically missing parameters.",
             "Hypothetical semantic units lack a lexical entry anchor and are excluded from parameter assembly, verified coverage and message identity.",
             "Reconstructed table entries retain column fragments in row order; they do not resolve damaged cell boundaries, parameter syntax or message ownership.",
-            "Table repair hypotheses identify possible bare type/name/unit tokens without validating field identity or correcting the source.",
+            "Table repair hypotheses identify possible bare type/name/unit tokens without validating field identity or correcting the source; leading one-letter tokens are not assumed to be parameter names.",
             "This model is not suitable for automatic code generation.",
         ],
     }
