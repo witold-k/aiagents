@@ -16,6 +16,7 @@ pub(super) struct ProtocolModel {
     table_evidence: Vec<TableEvidence>,
     semantic_units: Vec<SemanticUnitEvidence>,
     hypothetical_semantic_units: Vec<SemanticUnitEvidence>,
+    reconstructed_table_entries: Vec<ReconstructedTableEntry>,
     assembled_parameters: Vec<AssembledParameter>,
     unassembled_semantic_rows: Vec<UnassembledSemanticRow>,
     caveats: Vec<&'static str>,
@@ -44,7 +45,7 @@ struct SemanticUnitEvidence {
     status: &'static str,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct RelationEvidence {
     earlier_normalized_byte: usize,
     later_normalized_byte: usize,
@@ -65,6 +66,7 @@ impl ProtocolModel {
         self.hypothetical_semantic_units =
             project_semantic_units(graph, hypothetical, "hypothetical_voted_boundary_without_lexical_anchor");
 
+        self.reconstructed_table_entries = reconstruct_table_entries(&self.semantic_units);
         self.unassembled_semantic_rows = self.semantic_units.iter()
             .flat_map(|unit| &unit.rows)
             .filter(|row| !row.cells.iter().any(|cell| declared_parameter(cell).is_some()))
@@ -116,6 +118,34 @@ fn project_semantic_units(
             status,
         })
     }).collect()
+}
+
+/// Read-only reconstruction of the observed cell sequence in a voted unit.
+/// The content is intentionally not parsed into parameter names, types or owners.
+#[derive(Debug, Serialize)]
+struct ReconstructedTableEntry {
+    entry_normalized_byte: usize,
+    row_normalized_bytes: Vec<usize>,
+    first_column_fragments: Vec<String>,
+    second_column_fragments: Vec<String>,
+    supporting_relations: Vec<RelationEvidence>,
+    status: &'static str,
+    message_owner: Option<String>,
+}
+
+fn reconstruct_table_entries(units: &[SemanticUnitEvidence]) -> Vec<ReconstructedTableEntry> {
+    units.iter().filter(|unit| unit.rows.len() > 1)
+        .map(|unit| ReconstructedTableEntry {
+            entry_normalized_byte: unit.entry_normalized_byte,
+            row_normalized_bytes: unit.row_normalized_bytes.clone(),
+            first_column_fragments: unit.rows.iter()
+                .map(|row| row.cells.first().cloned().unwrap_or_default()).collect(),
+            second_column_fragments: unit.rows.iter()
+                .map(|row| row.cells.get(1).cloned().unwrap_or_default()).collect(),
+            supporting_relations: unit.supporting_relations.clone(),
+            status: "voted_row_sequence_uninterpreted",
+            message_owner: None,
+        }).collect()
 }
 
 #[derive(Debug, Serialize)]
@@ -373,6 +403,7 @@ pub(super) fn stage(
         table_evidence,
         semantic_units: Vec::new(),
         hypothetical_semantic_units: Vec::new(),
+        reconstructed_table_entries: Vec::new(),
         assembled_parameters: Vec::new(),
         unassembled_semantic_rows: Vec::new(),
         caveats: vec![
@@ -384,6 +415,7 @@ pub(super) fn stage(
             "Assembled parameter fields are unverified lexical observations, never validated definitions.",
             "Unassembled semantic rows include continuations and malformed or bare declarations; they are not automatically missing parameters.",
             "Hypothetical semantic units lack a lexical entry anchor and are excluded from parameter assembly, verified coverage and message identity.",
+            "Reconstructed table entries retain column fragments in row order; they do not resolve damaged cell boundaries, parameter syntax or message ownership.",
             "This model is not suitable for automatic code generation.",
         ],
     }
