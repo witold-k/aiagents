@@ -481,3 +481,26 @@ fn fact_navigation_rejects_invented_segment_and_quote() {
         source,
     ).is_err());
 }
+
+#[test]
+fn cross_chunk_repair_preserves_source_coordinates() {
+    let source = "first line\nType: A includes the status identifier.\nlast line\n";
+    let parts = chunks(source, 40);
+    let target = parts.iter().position(|part| part.text.contains("Type: A includes the status identifier.")).unwrap();
+    let response = r#"{"segment_id":"S2","evidence_quote":"Type: A includes the status identifier."}"#;
+    let (quote, byte, start, end) = verified_cross_chunk_quote(response, target, &parts).unwrap();
+    assert_eq!(quote, "Type: A includes the status identifier.");
+    assert_eq!(&source[byte..byte + quote.len()], quote);
+    assert_eq!(start, 2);
+    assert_eq!(end, 2);
+}
+
+#[test]
+fn cross_chunk_repair_rejects_unlisted_chunk() {
+    let parts = chunks("Type: A includes the status identifier.\n", 80);
+    assert!(verified_cross_chunk_quote(
+        r#"{"segment_id":"S1","evidence_quote":"Type: A includes the status identifier."}"#,
+        99,
+        &parts
+    ).is_err());
+}
