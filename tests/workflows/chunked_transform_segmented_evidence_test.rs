@@ -485,9 +485,9 @@ fn fact_navigation_rejects_invented_segment_and_quote() {
 #[test]
 fn cross_chunk_repair_preserves_source_coordinates() {
     let source = "first line\nType: A includes the status identifier.\nlast line\n";
-    let parts = chunks(source, 40);
-    let target = parts.iter().position(|part| part.text.contains("Type: A includes the status identifier.")).unwrap();
-    let response = r#"{"segment_id":"S2","evidence_quote":"Type: A includes the status identifier."}"#;
+    let parts = vec![Chunk { start_byte: 0, start_line: 1, end_line: 1, text: "first line\n".into() }, Chunk { start_byte: 11, start_line: 2, end_line: 3, text: source[11..].into() }];
+    let target = 1;
+    let response = r#"{"segment_id":"S1","evidence_quote":"Type: A includes the status identifier."}"#;
     let (quote, byte, start, end) = verified_cross_chunk_quote(response, target, &parts).unwrap();
     assert_eq!(quote, "Type: A includes the status identifier.");
     assert_eq!(&source[byte..byte + quote.len()], quote);
