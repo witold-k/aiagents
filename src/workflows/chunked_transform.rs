@@ -2341,11 +2341,11 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                             );
                             let retry_prompt = if is_eof {
                                 format!(
-                                    "{coverage_prompt}\\n\\nPrevious JSON was truncated. Return a COMPLETE, COMPACT JSON object with a closed files array. Preserve every source-supported fact; if the output cannot fit, the caller will split the source window. Never invent facts or omit closing delimiters."
+                                    "{coverage_prompt}\n\nPrevious JSON was truncated. Return a COMPLETE, COMPACT JSON object with a closed files array. Preserve every source-supported fact; if the output cannot fit, the caller will split the source window. Never invent facts or omit closing delimiters."
                                 )
                             } else {
                                 format!(
-                                    "{coverage_prompt}\\n\\nPrevious JSON response was invalid: {first_error}. Return a single valid JSON object only."
+                                    "{coverage_prompt}\n\nPrevious JSON response was invalid: {first_error}. Return a single valid JSON object only."
                                 )
                             };
                             let retried = match self.llm_call.run_text_step_limited_with_temperature(
