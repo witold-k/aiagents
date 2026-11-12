@@ -16,6 +16,7 @@ pub(super) struct ProtocolModel {
     table_evidence: Vec<TableEvidence>,
     semantic_units: Vec<SemanticUnitEvidence>,
     assembled_parameters: Vec<AssembledParameter>,
+    unassembled_semantic_rows: Vec<UnassembledSemanticRow>,
     caveats: Vec<&'static str>,
 }
 
@@ -98,6 +99,16 @@ impl ProtocolModel {
                 })
             })
             .collect();
+        self.unassembled_semantic_rows = self.semantic_units.iter()
+            .flat_map(|unit| &unit.rows)
+            .filter(|row| !row.cells.iter().any(|cell| declared_parameter(cell).is_some()))
+            .map(|row| UnassembledSemanticRow {
+                normalized_byte_start: row.normalized_byte_start,
+                cells: row.cells.clone(),
+                reason: "no_explicit_angle_bracket_declaration",
+                message_owner: None,
+            })
+            .collect();
         self.assembled_parameters = self
             .semantic_units
             .iter()
@@ -105,6 +116,14 @@ impl ProtocolModel {
             .collect();
         self
     }
+}
+
+#[derive(Debug, Serialize)]
+struct UnassembledSemanticRow {
+    normalized_byte_start: usize,
+    cells: Vec<String>,
+    reason: &'static str,
+    message_owner: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -354,6 +373,7 @@ pub(super) fn stage(
         table_evidence,
         semantic_units: Vec::new(),
         assembled_parameters: Vec::new(),
+        unassembled_semantic_rows: Vec::new(),
         caveats: vec![
             "Candidates are not canonical messages; repeated names do not imply identity.",
             "Table evidence uses normalized-document byte offsets; original source mapping and message ownership are not asserted.",
@@ -361,6 +381,7 @@ pub(super) fn stage(
             "Lexical type labels are not validated types; ranges, cardinality, constraints, defaults and protocol behavior are not inferred.",
             "An exact source quotation does not establish the semantic truth of a statement.",
             "Assembled parameter fields are unverified lexical observations, never validated definitions.",
+            "Unassembled semantic rows include continuations and malformed or bare declarations; they are not automatically missing parameters.",
             "This model is not suitable for automatic code generation.",
         ],
     }
