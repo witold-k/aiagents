@@ -2807,7 +2807,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                     let model_output = format!("{output}.protocol-model.json");
                     match serde_json::to_string_pretty(&model) {
                         Ok(json) => {
-                            if let Err(err) = fs::write(&model_output, format!("{json}\\n")) {
+                            if let Err(err) = fs::write(&model_output, format!("{json}\n")) {
                                 eprintln!("## [CHUNKED] SEMANTIC MODEL: unable to write {model_output:?}: {err}");
                             }
                         }
