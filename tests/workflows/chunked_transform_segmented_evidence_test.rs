@@ -450,3 +450,34 @@ fn invalid_paths_are_rejected() {
         r#"{"files":[{"path":"../escape.md","facts":[{"statement":"x","segment_id":"S1"}]}]}"#;
     assert!(parse_segmented_window(response, "source").is_err());
 }
+
+#[test]
+fn fact_navigation_accepts_only_verbatim_quote_from_selected_segment() {
+    let source = "Type: A is a message.\nThe status response carries an identifier.\n";
+    let response = r#"{"segment_id":"S2","evidence_quote":"status response carries an identifier"}"#;
+    assert_eq!(
+        verified_navigated_fact_quote(response, source).unwrap(),
+        "status response carries an identifier"
+    );
+}
+
+#[test]
+fn fact_navigation_rejects_invented_segment_and_quote() {
+    let source = "Type: A is a message.\nThe status response carries an identifier.\n";
+    assert!(verified_navigated_fact_quote(
+        r#"{"segment_id":"S99","evidence_quote":"status response carries an identifier"}"#,
+        source,
+    ).is_err());
+    assert!(verified_navigated_fact_quote(
+        r#"{"segment_id":"S1","evidence_quote":"status response carries an identifier"}"#,
+        source,
+    ).is_err());
+    assert!(verified_navigated_fact_quote(
+        r#"{"segment_id":"S2","evidence_quote":"fabricated quote that does not occur"}"#,
+        source,
+    ).is_err());
+    assert!(verified_navigated_fact_quote(
+        r#"{"segment_id":"S2","evidence_quote":"status response carries an identifier","rewrite":"unsafe"}"#,
+        source,
+    ).is_err());
+}
