@@ -196,6 +196,25 @@ fn verified_navigated_fact_quote(response: &str, source: &str) -> Result<String,
         .ok_or_else(|| "Navigation quote is absent or too short in selected segment".to_owned())
 }
 
+/// Resolve an exact quote in a selected neighboring chunk and preserve its
+/// normalized-document coordinates. A navigation suggestion is not evidence.
+fn verified_cross_chunk_quote(
+    response: &str,
+    chunk_index: usize,
+    parts: &[Chunk],
+) -> Result<(String, usize, usize, usize), String> {
+    let chunk = parts.get(chunk_index).ok_or("Unknown navigation chunk")?;
+    let quote = verified_navigated_fact_quote(response, &chunk.text)?;
+    let local_byte = chunk.text.find(&quote).ok_or("Quote absent from chunk")?;
+    if chunk.text[local_byte + quote.len()..].contains(&quote) {
+        return Err("Ambiguous repeated quote in selected chunk".into());
+    }
+    let line = chunk.start_line
+        + chunk.text[..local_byte].bytes().filter(|byte| *byte == b'\n').count();
+    let end_line = line + quote.bytes().filter(|byte| *byte == b'\n').count();
+    Ok((quote, chunk.start_byte + local_byte, line, end_line))
+}
+
 // Legacy JSON response format retained only for compatibility tests.
 // Keep test-specific wire models out of the production module namespace.
 #[cfg(test)]
@@ -3875,7 +3894,8 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             // request to an adjacent source chunk. Do not reattribute a fact
             // automatically: cross-window evidence requires a separate,
             // source-coordinate-aware repair step.
-            if let Err(reason) = &result {
+            let mut repaired_location: Option<(usize, usize, usize, usize)> = None;
+            if let Err(reason) = result.clone() {
                 let neighbors: Vec<_> = [
                     fact.source_chunk.checked_sub(1),
                     fact.source_chunk.checked_add(1),
@@ -3924,11 +3944,36 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                             .and_then(|number| number.checked_sub(1))
                         {
                             if neighbors.iter().any(|(chunk_index, _)| *chunk_index == selected) {
-                                println!(
-                                    "## [CHUNKED] FACT NAVIGATION CANDIDATE: {path} fact {} -> chunk {} (read-only; pending reattribution)",
-                                    index + 1,
-                                    selected + 1
+                                let target = &parts[selected];
+                                let segments = evidence_segments(&target.text)
+                                    .iter()
+                                    .map(|segment| format!("{}: {}", segment.id, segment.text.trim()))
+                                    .collect::<Vec<_>>()
+                                    .join("\n");
+                                let repair_context = format!(
+                                    "FACT: {}\nPREVIOUS ERROR: {reason}\nSELECTED CHUNK: {}\n\nSOURCE SEGMENTS:\n{segments}",
+                                    fact.statement, selected + 1
                                 );
+                                let repair_prompt = r#"Find direct verbatim source evidence for FACT in the selected chunk. Return ONLY JSON {"segment_id":"S1","evidence_quote":"exact substring at least 12 characters"} or UNSUPPORTED. Do not rewrite the fact or infer message identity."#;
+                                println!("## [CHUNKED] FACT REPAIR ATTEMPT: {path} fact {} -> chunk {}", index + 1, selected + 1);
+                                let repair_answer = match self.llm_call.run_text_step_limited_with_temperature(
+                                    repair_prompt, &repair_context, self.llm_call.max_tokens().min(512), 0.0,
+                                ) {
+                                    Ok(answer) => answer,
+                                    Err(err) => return WorkflowResult::LlmCallResult(err),
+                                };
+                                if repair_answer.trim() != "UNSUPPORTED" {
+                                    match verified_cross_chunk_quote(&repair_answer, selected, &parts) {
+                                        Ok((quote, absolute_byte, start_line, end_line)) => {
+                                            repaired_location = Some((selected, absolute_byte, start_line, end_line));
+                                            result = Ok(quote);
+                                        }
+                                        Err(repair_error) => println!(
+                                            "## [CHUNKED] FACT REPAIR REJECTED: {path} fact {}: {repair_error}",
+                                            index + 1
+                                        ),
+                                    }
+                                }
                             }
                         }
                     }
@@ -3937,6 +3982,13 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             let current = &mut checkpoint.facts.get_mut(path).expect("fact path exists")[*index];
             match result {
                 Ok(quote) => {
+                    if let Some((chunk_index, absolute_byte, start_line, end_line)) = repaired_location {
+                        current.source_chunk = chunk_index;
+                        current.source_byte_offset = Some(absolute_byte - parts[chunk_index].start_byte);
+                        current.start_line = start_line;
+                        current.end_line = end_line;
+                        println!("## [CHUNKED] FACT REPAIRED: {path} fact {} -> chunk {} lines {}-{}", index + 1, chunk_index + 1, start_line, end_line);
+                    }
                     current.evidence_quote = Some(quote);
                     current.review = FactReview::Supported;
                 }
