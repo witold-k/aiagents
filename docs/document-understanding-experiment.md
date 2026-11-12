@@ -38,3 +38,9 @@ This diagnostic **does not replace** the existing 8,000-character chunks, eviden
 This mode deliberately retains the original 8,000-character chunk layout and existing evidence offsets. It changes the extraction fingerprint, so a checkpoint from the legacy mode cannot be resumed as if prompts were identical. The opt-in diagnostic `AIFIX_DOCUMENT_PLAN` remains separate; it does not yet activate adaptive window boundaries.
 
 **Limitations:** The prefix currently describes Markdown heading ancestry, not inferred semantic ownership or complete applicable constraints. The model context limit is not yet queried from the configured backend. A window may still cross a heading boundary, so the prefix describes the start of the window only; the model must respect source-internal changes. Do not treat this as completed semantic two-pass extraction.
+
+## GPU memory / prompt-size diagnostics
+
+Set `AIFIX_LLM_MEMORY_DIAG=1` for per-request logs immediately before primary extraction and coverage calls. The log reports stage, chunk number, prompt/context/prefix character counts, a rough **non-tokenizer** input-token estimate, requested output-token limit, and GPU used/free/total memory (MiB) from `nvidia-smi` when available. This diagnostic is opt-in and does **not** change server context size, prompts, model layers, or inference settings. It does not yet cover every retry, audit, or auxiliary LLM call. GPU figures are process-external snapshots, not exact per-request allocations, and cannot by themselves distinguish CUDA-graph allocation spikes from KV-cache pressure.
+
+For regression isolation, compare a fresh run with `AIFIX_LLM_MEMORY_DIAG=1` against a run additionally enabling `AIFIX_SCOPED_PREFIX=1`, keeping the server configuration identical. Capture both llama.cpp logs and the aiagents MEMORY DIAG lines.
