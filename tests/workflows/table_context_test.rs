@@ -33,3 +33,16 @@ fn context_does_not_infer_flattened_tables() {
     let analysis = DocumentAnalysis::parse(src);
     assert!(table_context(&analysis, 0, src.len()).is_empty());
 }
+
+#[test]
+fn context_reports_truncation_instead_of_silent_omission() {
+    let mut src = String::from("| Key | Value |\n| --- | --- |\n");
+    for i in 0..30 {
+        src.push_str(&format!("| key{i} | value{i} |\n"));
+    }
+    let analysis = DocumentAnalysis::parse(&src);
+    let context = table_context(&analysis, 0, src.len());
+    assert!(context.contains("TRUNCATED:"));
+    assert!(context.contains("key0"));
+    assert!(!context.contains("key29"));
+}
