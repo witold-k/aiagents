@@ -101,7 +101,7 @@ impl ProtocolModel {
         self.assembled_parameters = self
             .semantic_units
             .iter()
-            .filter_map(assemble_unit)
+            .flat_map(assemble_unit)
             .collect();
         self
     }
@@ -112,63 +112,74 @@ struct AssembledParameter {
     name: String,
     type_hint: Option<String>,
     range_hint: Option<String>,
+    unit_hint: Option<String>,
     evidence_row_starts: Vec<usize>,
     status: &'static str,
     message_owner: Option<String>,
 }
 
-/// Only exact lexical tokens from an already supported semantic unit.
-/// This is not semantic validation of types, ranges, or ownership.
-fn assemble_unit(unit: &SemanticUnitEvidence) -> Option<AssembledParameter> {
-    let entry = unit.rows.first()?;
-    let name = entry.cells.first()?.trim();
-    if name.is_empty()
-        || !name.starts_with(|c: char| c.is_ascii_alphabetic())
-        || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-        || matches!(
-            name.to_ascii_lowercase().as_str(),
-            "parameter" | "name" | "type" | "description"
-        )
-    {
-        return None;
+/// Extract only explicit angle-bracket declarations, never examples or prose.
+/// The raw payload is retained because units and bounds are not yet validated.
+fn declared_parameter(cell: &str) -> Option<(String, String, Option<String>, Option<String>)> {
+    for token in cell.split_whitespace() {
+        let token = token.trim_matches(|c: char| matches!(c, '|' | '`' | ',' | ';' | '*' | '(' | ')'));
+        let Some((name, value)) = token.split_once('=') else { continue };
+        if name.is_empty()
+            || !name.starts_with(|c: char| c.is_ascii_alphabetic())
+            || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        {
+            continue;
+        }
+        let Some(rest) = value.strip_prefix('<').or_else(|| value.strip_prefix("&lt;")) else {
+            continue;
+        };
+        let payload = if let Some(end) = rest.find('>') { &rest[..end] } else { rest };
+        let ty = payload.split_whitespace().next().unwrap_or("");
+        if ty.is_empty() || !ty.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            continue;
+        }
+        let tail = payload[ty.len()..].trim();
+        let (range, unit) = if let Some((lo, hi)) = tail.split_once(" to ") {
+            if !lo.is_empty() && !hi.is_empty()
+                && lo.chars().all(|c| c.is_ascii_digit())
+                && hi.chars().all(|c| c.is_ascii_digit())
+            {
+                (Some(tail.to_owned()), None)
+            } else {
+                (None, None)
+            }
+        } else if !tail.is_empty()
+            && tail.chars().all(|c| c.is_ascii_alphabetic() || c == '_')
+        {
+            (None, Some(tail.to_owned()))
+        } else {
+            (None, None)
+        };
+        return Some((name.to_owned(), ty.to_owned(), range, unit));
     }
-    let mut type_hint = None;
-    let mut range_hint = None;
+    None
+}
+
+/// A unit can contain several declarations. Do not collapse conflicting ones.
+fn assemble_unit(unit: &SemanticUnitEvidence) -> Vec<AssembledParameter> {
+    let mut result = Vec::new();
     for row in &unit.rows {
-        for cell in row.cells.iter().skip(1) {
-            let value = cell.trim();
-            if type_hint.is_none()
-                && matches!(
-                    value.to_ascii_lowercase().as_str(),
-                    "int" | "integer" | "float" | "string" | "bool" | "boolean"
-                )
-            {
-                type_hint = Some(value.to_owned());
-            }
-            // Preserve only an explicit, self-contained range expression.
-            if range_hint.is_none()
-                && let Some(rest) = value.strip_prefix("range ")
-            {
-                let mut parts = rest.split("..");
-                if let (Some(lo), Some(hi), None) = (parts.next(), parts.next(), parts.next())
-                    && !lo.is_empty()
-                    && !hi.is_empty()
-                    && lo.chars().all(|c| c.is_ascii_digit())
-                    && hi.chars().all(|c| c.is_ascii_digit())
-                {
-                    range_hint = Some(value.to_owned());
-                }
-            }
+        for cell in &row.cells {
+            let Some((name, ty, range, unit_hint)) = declared_parameter(cell) else {
+                continue;
+            };
+            result.push(AssembledParameter {
+                name,
+                type_hint: Some(ty),
+                range_hint: range,
+                unit_hint,
+                evidence_row_starts: vec![row.normalized_byte_start],
+                status: "unverified_lexical_assembly",
+                message_owner: None,
+            });
         }
     }
-    Some(AssembledParameter {
-        name: name.to_owned(),
-        type_hint,
-        range_hint,
-        evidence_row_starts: unit.row_normalized_bytes.clone(),
-        status: "unverified_lexical_assembly",
-        message_owner: None,
-    })
+    result
 }
 
 #[derive(Debug, Serialize)]
