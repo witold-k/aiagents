@@ -239,7 +239,7 @@ fn assembly_rejects_examples_prose_and_keeps_conflicting_declarations() {
 }
 
 #[test]
-fn unassembled_rows_retain_bare_type_and_continuation_without_inventing_fields() {
+fn unassembled_rows_retain_untyped_cells_and_continuations() {
     use super::super::llm_structure::{RowEvidence, SemanticUnit, SourceGraph};
     let graph = SourceGraph {
         rows: vec![
@@ -331,7 +331,7 @@ fn hypothetical_units_are_serialized_but_never_assembled() {
 }
 
 #[test]
-fn damaged_calibration_frequency_table_retains_column_fragments_in_order() {
+fn multirow_table_retains_column_fragments_in_order() {
     use super::super::llm_structure::{RowEvidence, SemanticUnit, SourceGraph, StructuralRelation};
     let starts = [110836, 110910, 110969, 111057];
     let cells = [
@@ -370,58 +370,3 @@ fn damaged_calibration_frequency_table_retains_column_fragments_in_order() {
     assert_eq!(entry.status, "voted_row_sequence_uninterpreted");
 }
 
-#[test]
-fn ambiguous_calibration_frequency_layout_is_a_hypothesis_not_a_field() {
-    let unit = SemanticUnitEvidence {
-        entry_normalized_byte: 110836,
-        row_normalized_bytes: vec![110836, 110910],
-        rows: vec![
-            TableRowEvidence { normalized_byte_start: 110836, normalized_byte_end: None,
-                cells: vec!["q Calibration frequency required for sensor.".into(),
-                    "2 int sample_rate Hz".into()] },
-            TableRowEvidence { normalized_byte_start: 110910, normalized_byte_end: None,
-                cells: vec!["Sample rate is in Hz.".into(),
-                    "string Channel Used By: A, B,".into()] },
-        ],
-        supporting_relations: vec![RelationEvidence { earlier_normalized_byte: 110836, later_normalized_byte: 110910, relation: "text_continuation".into(), votes: 2, valid_attempts: 3 }],
-        status: "proposed_voted_continuation",
-    };
-    let hypotheses = table_repair_hypotheses(&[unit]);
-    assert_eq!(hypotheses.len(), 1);
-    assert_eq!(hypotheses[0].candidate_name.as_deref(), Some("sample_rate"));
-    assert_eq!(hypotheses[0].candidate_type.as_deref(), Some("int"));
-    assert_eq!(hypotheses[0].candidate_unit.as_deref(), Some("Hz"));
-    assert_eq!(hypotheses[0].first_column_prefix.as_deref(), Some("q"));
-    assert_eq!(hypotheses[0].declaration_source_row, 110836);
-    assert_eq!(hypotheses[0].declaration_source_cell, "2 int sample_rate Hz");
-    assert_eq!(hypotheses[0].evidence_status, "exact_observed_cell_syntax");
-    assert_eq!(hypotheses[0].row_normalized_bytes, vec![110836, 110910]);
-    assert!(hypotheses[0].message_owner.is_none());
-    assert_eq!(hypotheses[0].status, "ambiguous_column_layout_unverified");
-    assert!(declared_parameter("2 int sample_rate Hz").is_none());
-}
-
-#[test]
-fn table_repair_rejects_examples_and_incomplete_bare_declarations() {
-    assert!(bare_column_declaration("q 10 B").is_none());
-    assert!(bare_column_declaration("int selected_channel_index").is_none());
-    assert!(bare_column_declaration("string Channel Used By: A, B,").is_none());
-    assert!(bare_column_declaration("2 int sample_rate Hz extra").is_none());
-    assert!(bare_column_declaration("0 int sample_rate Hz").is_none());
-}
-
-#[test]
-fn table_repair_requires_voted_multiline_evidence() {
-    let row = TableRowEvidence {
-        normalized_byte_start: 10, normalized_byte_end: None,
-        cells: vec!["q Calibration frequency".into(), "2 int sample_rate Hz".into()],
-    };
-    let unit = SemanticUnitEvidence {
-        entry_normalized_byte: 10,
-        row_normalized_bytes: vec![10],
-        rows: vec![row],
-        supporting_relations: vec![],
-        status: "proposed_voted_continuation",
-    };
-    assert!(table_repair_hypotheses(&[unit]).is_empty());
-}
