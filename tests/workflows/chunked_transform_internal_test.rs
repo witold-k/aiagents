@@ -563,17 +563,18 @@ fn preceding_context_is_source_derived_even_with_duplicate_windows() {
         end_line: 4,
         text: source.to_owned(),
     };
-    // This existing lookup chooses the first matching substring; do not
-    // accidentally claim it resolves repeated recovery windows uniquely.
-    let context = preceding_extraction_context(source, &part, "shared\n");
-    // The prompt instructions mention both "Type: G" and "Type: g" as a
-    // case-sensitivity example. Assert on the actual source-derived blocks,
-    // not on the entire prompt text.
-    assert!(context.contains("Active declaration: Type: G"));
-    assert!(
-        context.contains("=== PRECEDING SOURCE CONTEXT (read-only; not evidence) ===\nType: G\n")
-    );
-    assert!(!context.contains("Active declaration: Type: g"));
+    // Repeated recovery text has no unique source position. Do not attach
+    // the first occurrence's declaration to either occurrence.
+    let ambiguous = preceding_extraction_context(source, &part, "shared\n");
+    assert!(ambiguous.contains("=== CONTEXT LOCATION AMBIGUOUS ==="));
+    assert!(!ambiguous.contains("Active declaration:"));
+    assert!(!ambiguous.contains("=== PRECEDING SOURCE CONTEXT"));
+
+    // A unique recovery substring still receives its exact source context.
+    let unique = preceding_extraction_context(source, &part, "Type: g\nshared\n");
+    assert!(unique.contains("=== PRECEDING SOURCE CONTEXT (read-only; not evidence) ==="));
+    assert!(unique.contains("Type: G\nshared\n"));
+    assert!(!unique.contains("Active declaration: Type: g"));
 }
 
 #[test]
