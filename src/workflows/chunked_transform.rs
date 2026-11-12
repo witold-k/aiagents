@@ -1783,6 +1783,48 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         println!(
             "## [CHUNKED] SOURCE SIMPLELEXER: source_tables={source_table_count} (parsed before normalization; source byte spans)"
         );
+        // Experimental first pass: inspect the complete normalized document before
+        // extraction. Read-only until checkpoint and evidence mappings are migrated.
+        if std::env::var_os("AIFIX_DOCUMENT_PLAN").is_some() {
+            let structure = source_tree::SourceTree::parse(&masked_source);
+            let scope = structure.document_scope(&masked_source);
+            let context_tokens = std::env::var("AIFIX_DOCUMENT_CONTEXT_TOKENS")
+                .ok()
+                .and_then(|value| value.parse::<usize>().ok())
+                .unwrap_or(32_768);
+            let budget = crate::document_understanding::WindowBudget {
+                context_tokens,
+                output_tokens: 8_192,
+                reserved_tokens: 4_096,
+                prefix_tokens: 2_048,
+                chars_per_token: 2,
+            };
+            match scope.plan(&masked_source, budget) {
+                Ok(plan) => {
+                    println!(
+                        "## [CHUNKED] EXPERIMENTAL DOCUMENT PREPASS: sections={} windows={} budget_chars={} (estimated, not tokenizer-verified; extraction unchanged)",
+                        scope.nodes.len(),
+                        plan.len(),
+                        budget.source_char_budget(),
+                    );
+                    for (index, window) in plan.iter().enumerate() {
+                        println!(
+                            "## [CHUNKED] EXPERIMENTAL WINDOW: index={} bytes={}..{} scope={:?} prefix_chars={}",
+                            index + 1,
+                            window.start_byte,
+                            window.end_byte,
+                            window.active_node,
+                            window.prefix.chars().count(),
+                        );
+                    }
+                }
+                Err(error) => {
+                    return WorkflowResult::Error(format!(
+                        "Experimental document planning failed: {error}"
+                    ));
+                }
+            }
+        }
         let parts = chunks(&masked_source, CHUNK_CHARS);
         if parts.is_empty() {
             return WorkflowResult::Error("Input document is empty".into());
