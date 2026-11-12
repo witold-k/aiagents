@@ -35,9 +35,9 @@ fn exact_assignment_is_only_a_lexical_hint() {
 fn missing_or_ambiguous_quote_cannot_produce_parameter_hint() {
     for (offset, ambiguous) in [(None, false), (Some(0), true), (Some(1), false)] {
         let report = stage(
-            &[candidate("statusCode=18", offset, ambiguous)],
-            &["statusCode=18"],
-            &simplelexer::tablelexer::DocumentAnalysis::parse("statusCode=18"),
+            &[candidate("diagnosticCode=18", offset, ambiguous)],
+            &["diagnosticCode=18"],
+            &simplelexer::tablelexer::DocumentAnalysis::parse("diagnosticCode=18"),
         );
         assert!(report.messages[0].parameter_hints.is_empty());
         assert_eq!(
@@ -61,16 +61,16 @@ fn prose_and_table_caption_are_not_parameter_hints() {
 fn explicit_type_syntax_is_distinct_from_example_value() {
     for (quote, expected_kind, expected_type) in [
         (
-            "statusCode=<int 0 to 65535>",
+            "diagnosticCode=<int 0 to 65535>",
             "definition_syntax",
             Some("int"),
         ),
         (
-            "statusCode=&lt;int 0 to 65535>",
+            "diagnosticCode=&lt;int 0 to 65535>",
             "definition_syntax",
             Some("int"),
         ),
-        ("statusCode=20", "assignment_example_or_value", None),
+        ("diagnosticCode=20", "assignment_example_or_value", None),
     ] {
         let report = stage(
             &[candidate(quote, Some(0), false)],
@@ -78,7 +78,7 @@ fn explicit_type_syntax_is_distinct_from_example_value() {
             &simplelexer::tablelexer::DocumentAnalysis::parse(quote),
         );
         let hint = &report.messages[0].parameter_hints[0];
-        assert_eq!(hint.name, "statusCode");
+        assert_eq!(hint.name, "diagnosticCode");
         assert_eq!(hint.syntax_kind, expected_kind);
         assert_eq!(hint.value_type.as_deref(), expected_type);
         assert!(hint.constraints.is_empty());
@@ -89,16 +89,16 @@ fn explicit_type_syntax_is_distinct_from_example_value() {
 #[test]
 fn a_type_looking_string_without_an_exact_anchor_is_not_promoted() {
     let report = stage(
-        &[candidate("statusCode=<int 0 to 65535>", Some(1), false)],
-        &["statusCode=<int 0 to 65535>"],
-        &simplelexer::tablelexer::DocumentAnalysis::parse("statusCode=<int 0 to 65535>"),
+        &[candidate("diagnosticCode=<int 0 to 65535>", Some(1), false)],
+        &["diagnosticCode=<int 0 to 65535>"],
+        &simplelexer::tablelexer::DocumentAnalysis::parse("diagnosticCode=<int 0 to 65535>"),
     );
     assert!(report.messages[0].parameter_hints.is_empty());
 }
 
 #[test]
 fn normalized_table_evidence_is_observed_without_claiming_ownership() {
-    let source = "| Parameter | Meaning |\n| --- | --- |\n| statusCode | status |\n";
+    let source = "| Parameter | Meaning |\n| --- | --- |\n| diagnosticCode | status |\n";
     let analysis = simplelexer::tablelexer::DocumentAnalysis::parse(source);
     let report = stage(&[], &[], &analysis);
     assert!(report.messages.is_empty());
@@ -107,7 +107,7 @@ fn normalized_table_evidence_is_observed_without_claiming_ownership() {
         report.table_evidence[0]
             .rows
             .iter()
-            .any(|row| row.cells.iter().any(|cell| cell == "statusCode"))
+            .any(|row| row.cells.iter().any(|cell| cell == "diagnosticCode"))
     );
 }
 
@@ -121,7 +121,7 @@ fn semantic_units_keep_voted_relations_without_assigning_message_identity() {
                 start: 12,
                 previous: None,
                 next: Some(35),
-                cells: vec!["statusCode".into(), "integer".into()],
+                cells: vec!["diagnosticCode".into(), "integer".into()],
             },
             RowEvidence {
                 line: 3,
@@ -175,7 +175,7 @@ fn invalid_semantic_row_reference_does_not_create_a_unit() {
 }
 
 #[test]
-fn assembly_recognizes_openamip_declarations_in_second_cells() {
+fn assembly_recognizes_explicit_declarations_in_second_cells() {
     let unit = SemanticUnitEvidence {
         entry_normalized_byte: 12,
         row_normalized_bytes: vec![12, 35],
@@ -183,13 +183,13 @@ fn assembly_recognizes_openamip_declarations_in_second_cells() {
             TableRowEvidence {
                 normalized_byte_start: 12,
                 normalized_byte_end: None,
-                cells: vec!["Time to Blockage (blockTime)".into(), "blockTime=&lt;int sec>".into()],
+                cells: vec!["Timeout (timeoutSec)".into(), "timeoutSec=&lt;int sec>".into()],
             },
             TableRowEvidence {
                 normalized_byte_start: 35,
                 normalized_byte_end: None,
-                cells: vec!["Additional Antenna Status (statusCode)".into(),
-                    "statusCode=&lt;int 0 to 65535>".into()],
+                cells: vec!["Diagnostic code (diagnosticCode)".into(),
+                    "diagnosticCode=&lt;int 0 to 65535>".into()],
             },
         ],
         supporting_relations: vec![],
@@ -197,11 +197,11 @@ fn assembly_recognizes_openamip_declarations_in_second_cells() {
     };
     let assembled = assemble_unit(&unit);
     assert_eq!(assembled.len(), 2);
-    assert_eq!(assembled[0].name, "blockTime");
+    assert_eq!(assembled[0].name, "timeoutSec");
     assert_eq!(assembled[0].type_hint.as_deref(), Some("int"));
     assert_eq!(assembled[0].unit_hint.as_deref(), Some("sec"));
     assert_eq!(assembled[0].evidence_row_starts, vec![12]);
-    assert_eq!(assembled[1].name, "statusCode");
+    assert_eq!(assembled[1].name, "diagnosticCode");
     assert_eq!(assembled[1].range_hint.as_deref(), Some("0 to 65535"));
     assert_eq!(assembled[1].evidence_row_starts, vec![35]);
     assert!(assembled.iter().all(|a| a.message_owner.is_none()));
@@ -216,13 +216,13 @@ fn assembly_rejects_examples_prose_and_keeps_conflicting_declarations() {
             TableRowEvidence {
                 normalized_byte_start: 0,
                 normalized_byte_end: None,
-                cells: vec!["Parameter".into(), "statusCode=20".into(),
-                    "statusCode=&lt;int 0 to 65535>".into()],
+                cells: vec!["Parameter".into(), "diagnosticCode=20".into(),
+                    "diagnosticCode=&lt;int 0 to 65535>".into()],
             },
             TableRowEvidence {
                 normalized_byte_start: 10,
                 normalized_byte_end: None,
-                cells: vec!["statusCode".into(), "statusCode=<string>".into()],
+                cells: vec!["diagnosticCode".into(), "diagnosticCode=<string>".into()],
             },
         ],
         supporting_relations: vec![],
@@ -234,7 +234,7 @@ fn assembly_rejects_examples_prose_and_keeps_conflicting_declarations() {
     assert_eq!(assembled[1].type_hint.as_deref(), Some("string"));
     assert_eq!(assembled[0].evidence_row_starts, vec![0]);
     assert_eq!(assembled[1].evidence_row_starts, vec![10]);
-    assert!(declared_parameter("statusCode=20").is_none());
+    assert!(declared_parameter("diagnosticCode=20").is_none());
     assert!(declared_parameter("The parameter is integer").is_none());
 }
 
@@ -248,23 +248,23 @@ fn unassembled_rows_retain_bare_type_and_continuation_without_inventing_fields()
                 start: 110836,
                 previous: None,
                 next: Some(110910),
-                cells: vec!["r Reference frequency required for BUC and LNB.".into(),
-                    "2 int frequency MHz".into()],
+                cells: vec!["q Calibration frequency required for sensor.".into(),
+                    "2 int sample_rate Hz".into()],
             },
             RowEvidence {
                 line: 347,
                 start: 110910,
                 previous: Some(110836),
                 next: None,
-                cells: vec!["Frequency is in MHz.".into(),
-                    "string Reference Used By: R, T,".into()],
+                cells: vec!["Sample rate is in Hz.".into(),
+                    "string Channel Used By: A, B,".into()],
             },
             RowEvidence {
                 line: 368,
                 start: 114576,
                 previous: None,
                 next: None,
-                cells: vec!["Time to Blockage".into(), "blockTime=&lt;int sec>".into()],
+                cells: vec!["Time to Blockage".into(), "timeoutSec=&lt;int sec>".into()],
             },
         ],
         relations: vec![],
@@ -285,11 +285,11 @@ fn unassembled_rows_retain_bare_type_and_continuation_without_inventing_fields()
     let analysis = simplelexer::tablelexer::DocumentAnalysis::parse("");
     let report = stage(&[], &[], &analysis).with_semantic_units(&graph, &units, &[]);
     assert_eq!(report.assembled_parameters.len(), 1);
-    assert_eq!(report.assembled_parameters[0].name, "blockTime");
+    assert_eq!(report.assembled_parameters[0].name, "timeoutSec");
     assert_eq!(report.unassembled_semantic_rows.len(), 2);
     assert_eq!(report.unassembled_semantic_rows[0].normalized_byte_start, 110836);
     assert_eq!(report.unassembled_semantic_rows[1].normalized_byte_start, 110910);
-    assert_eq!(report.unassembled_semantic_rows[0].cells[1], "2 int frequency MHz");
+    assert_eq!(report.unassembled_semantic_rows[0].cells[1], "2 int sample_rate Hz");
     assert!(report.unassembled_semantic_rows.iter().all(|row| row.message_owner.is_none()));
 }
 
@@ -299,10 +299,10 @@ fn hypothetical_units_are_serialized_but_never_assembled() {
     let graph = SourceGraph {
         rows: vec![
             RowEvidence { line: 361, start: 114140, previous: None, next: Some(114234),
-                cells: vec!["The seventh parameter indicates to the modem the index of the".into(),
-                    "int active_RF_chain_index".into()] },
+                cells: vec!["The third parameter indicates the selected channel index".into(),
+                    "int selected_channel_index".into()] },
             RowEvidence { line: 362, start: 114234, previous: Some(114140), next: None,
-                cells: vec!["active RF chain".into(), "".into()] },
+                cells: vec!["selected channel".into(), "".into()] },
         ],
         relations: vec![StructuralRelation {
             earlier_row: 114140, later_row: 114234,
@@ -322,7 +322,7 @@ fn hypothetical_units_are_serialized_but_never_assembled() {
     assert_eq!(report.hypothetical_semantic_units.len(), 1);
     let unit = &report.hypothetical_semantic_units[0];
     assert_eq!(unit.status, "hypothetical_voted_boundary_without_lexical_anchor");
-    assert_eq!(unit.rows[0].cells[1], "int active_RF_chain_index");
+    assert_eq!(unit.rows[0].cells[1], "int selected_channel_index");
     assert_eq!(unit.supporting_relations[0].votes, 2);
     assert_eq!(unit.supporting_relations[0].valid_attempts, 3);
     let json = serde_json::to_value(&report).expect("serialize diagnostic model");
@@ -331,14 +331,14 @@ fn hypothetical_units_are_serialized_but_never_assembled() {
 }
 
 #[test]
-fn damaged_reference_frequency_table_retains_column_fragments_in_order() {
+fn damaged_calibration_frequency_table_retains_column_fragments_in_order() {
     use super::super::llm_structure::{RowEvidence, SemanticUnit, SourceGraph, StructuralRelation};
     let starts = [110836, 110910, 110969, 111057];
     let cells = [
-        ["r Reference frequency required for BUC and LNB.", "2 int frequency MHz"],
-        ["Frequency is in MHz.", "string Reference Used By: R, T,"],
-        ["Reference required to be present on Rx (R), Tx (T) or", "or B (for example,\"r 10 B\")"],
-        ["both (B)", ""],
+        ["q Calibration frequency required for sensor.", "2 int sample_rate Hz"],
+        ["Sample rate is in Hz.", "string Channel Used By: A, B,"],
+        ["Calibration required on input (A), output (B) or", "or both (for example,\"q 10 B\")"],
+        ["both (A/B)", ""],
     ];
     let rows = starts.iter().enumerate().map(|(i, start)| RowEvidence {
         line: 346 + i,
@@ -362,8 +362,8 @@ fn damaged_reference_frequency_table_retains_column_fragments_in_order() {
     assert_eq!(model.reconstructed_table_entries.len(), 1);
     let entry = &model.reconstructed_table_entries[0];
     assert_eq!(entry.row_normalized_bytes, starts);
-    assert_eq!(entry.first_column_fragments[3], "both (B)");
-    assert_eq!(entry.second_column_fragments[1], "string Reference Used By: R, T,");
+    assert_eq!(entry.first_column_fragments[3], "both (A/B)");
+    assert_eq!(entry.second_column_fragments[1], "string Channel Used By: A, B,");
     assert_eq!(entry.second_column_fragments[3], "");
     assert_eq!(entry.supporting_relations.len(), 3);
     assert!(entry.message_owner.is_none());
@@ -371,42 +371,42 @@ fn damaged_reference_frequency_table_retains_column_fragments_in_order() {
 }
 
 #[test]
-fn ambiguous_reference_frequency_layout_is_a_hypothesis_not_a_field() {
+fn ambiguous_calibration_frequency_layout_is_a_hypothesis_not_a_field() {
     let unit = SemanticUnitEvidence {
         entry_normalized_byte: 110836,
         row_normalized_bytes: vec![110836, 110910],
         rows: vec![
             TableRowEvidence { normalized_byte_start: 110836, normalized_byte_end: None,
-                cells: vec!["r Reference frequency required for BUC and LNB.".into(),
-                    "2 int frequency MHz".into()] },
+                cells: vec!["q Calibration frequency required for sensor.".into(),
+                    "2 int sample_rate Hz".into()] },
             TableRowEvidence { normalized_byte_start: 110910, normalized_byte_end: None,
-                cells: vec!["Frequency is in MHz.".into(),
-                    "string Reference Used By: R, T,".into()] },
+                cells: vec!["Sample rate is in Hz.".into(),
+                    "string Channel Used By: A, B,".into()] },
         ],
         supporting_relations: vec![RelationEvidence { earlier_normalized_byte: 110836, later_normalized_byte: 110910, relation: "text_continuation".into(), votes: 2, valid_attempts: 3 }],
         status: "proposed_voted_continuation",
     };
     let hypotheses = table_repair_hypotheses(&[unit]);
     assert_eq!(hypotheses.len(), 1);
-    assert_eq!(hypotheses[0].candidate_name.as_deref(), Some("frequency"));
+    assert_eq!(hypotheses[0].candidate_name.as_deref(), Some("sample_rate"));
     assert_eq!(hypotheses[0].candidate_type.as_deref(), Some("int"));
-    assert_eq!(hypotheses[0].candidate_unit.as_deref(), Some("MHz"));
-    assert_eq!(hypotheses[0].leading_column_tokens, vec!["r"]);
+    assert_eq!(hypotheses[0].candidate_unit.as_deref(), Some("Hz"));
+    assert_eq!(hypotheses[0].first_column_prefix.as_deref(), Some("q"));
     assert_eq!(hypotheses[0].declaration_source_row, 110836);
-    assert_eq!(hypotheses[0].declaration_source_cell, "2 int frequency MHz");
+    assert_eq!(hypotheses[0].declaration_source_cell, "2 int sample_rate Hz");
     assert_eq!(hypotheses[0].evidence_status, "exact_observed_cell_syntax");
     assert_eq!(hypotheses[0].row_normalized_bytes, vec![110836, 110910]);
     assert!(hypotheses[0].message_owner.is_none());
     assert_eq!(hypotheses[0].status, "ambiguous_column_layout_unverified");
-    assert!(declared_parameter("2 int frequency MHz").is_none());
+    assert!(declared_parameter("2 int sample_rate Hz").is_none());
 }
 
 #[test]
 fn table_repair_rejects_examples_and_incomplete_bare_declarations() {
-    assert!(bare_column_declaration("r 10 B").is_none());
-    assert!(bare_column_declaration("int active_RF_chain_index").is_none());
-    assert!(bare_column_declaration("string Reference Used By: R, T,").is_none());
-    assert!(bare_column_declaration("2 int frequency MHz extra").is_none());
+    assert!(bare_column_declaration("q 10 B").is_none());
+    assert!(bare_column_declaration("int selected_channel_index").is_none());
+    assert!(bare_column_declaration("string Channel Used By: A, B,").is_none());
+    assert!(bare_column_declaration("2 int sample_rate Hz extra").is_none());
     assert!(bare_column_declaration("0 int frequency MHz").is_none());
 }
 
@@ -414,7 +414,7 @@ fn table_repair_rejects_examples_and_incomplete_bare_declarations() {
 fn table_repair_requires_voted_multiline_evidence() {
     let row = TableRowEvidence {
         normalized_byte_start: 10, normalized_byte_end: None,
-        cells: vec!["r Reference frequency".into(), "2 int frequency MHz".into()],
+        cells: vec!["q Calibration frequency".into(), "2 int sample_rate Hz".into()],
     };
     let unit = SemanticUnitEvidence {
         entry_normalized_byte: 10,
