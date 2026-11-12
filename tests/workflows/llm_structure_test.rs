@@ -31,16 +31,16 @@ fn graph_for_projection() -> SourceGraph {
     let cells = [
         vec!["in degrees.", ""],
         vec![
-            "r Reference frequency required for BUC and LNB.",
-            "2 int frequency MHz",
+            "q Calibration frequency required for sensor.",
+            "2 int sample_rate Hz",
         ],
-        vec!["Frequency is in MHz.", "string Reference Used By: R, T,"],
-        vec!["both (B)", ""],
-        vec!["Time to Blockage (blockTime)", "blockTime=&lt;int sec>"],
-        vec!["This parameter should accompany status message 18", ""],
+        vec!["Sample rate is in Hz.", "string Channel Used By: A, B,"],
+        vec!["both (A/B)", ""],
+        vec!["Timeout (timeoutSec)", "timeoutSec=&lt;int sec>"],
+        vec!["This parameter should accompany response message 18", ""],
         vec![
-            "Additional Antenna Status (statusCode)",
-            "statusCode=&lt;int 0 to 65535>",
+            "Diagnostic code (diagnosticCode)",
+            "diagnosticCode=&lt;int 0 to 65535>",
         ],
         vec!["If there are additional status messages", ""],
     ];
@@ -117,25 +117,25 @@ fn semantic_projection_keeps_full_description_chain_and_stops_at_next_key() {
     let cells = [
         vec!["in degrees.", ""],
         vec![
-            "r Reference frequency required for BUC and LNB.",
-            "2 int frequency MHz",
+            "q Calibration frequency required for sensor.",
+            "2 int sample_rate Hz",
         ],
-        vec!["Frequency is in MHz.", "string Reference Used By: R, T,"],
+        vec!["Sample rate is in Hz.", "string Channel Used By: A, B,"],
         vec![
-            "Reference required to be present on Rx (R), Tx (T) or",
+            "Calibration required on input (A), output (B) or",
             "or B",
         ],
-        vec!["both (B)", ""],
-        vec!["Time to Blockage (blockTime)", "blockTime=&lt;int sec>"],
-        vec!["This parameter should accompany status message 18", ""],
+        vec!["both (A/B)", ""],
+        vec!["Timeout (timeoutSec)", "timeoutSec=&lt;int sec>"],
+        vec!["This parameter should accompany response message 18", ""],
         vec!["of an impending blockage.", ""],
         vec![
             "seconds remaining before the blockage is expected to occur.",
             "",
         ],
         vec![
-            "Additional Antenna Status (statusCode)",
-            "statusCode=&lt;int 0 to 65535>",
+            "Diagnostic code (diagnosticCode)",
+            "diagnosticCode=&lt;int 0 to 65535>",
         ],
         vec!["If there are additional status messages", ""],
         vec!["antenna, beyond that communicated", ""],
@@ -313,7 +313,7 @@ fn remaining_evidence_distinguishes_headings_and_reserved_boundaries() {
     let starts = [10, 20, 30, 40];
     let cells = [
         vec!["(Optional key value pairs)", ""],
-        vec!["Time to Blockage (blockTime)", "blockTime=<int sec>"],
+        vec!["Timeout (timeoutSec)", "timeoutSec=<int sec>"],
         vec!["q Reserved", ""],
         vec!["Other text", ""],
     ];
