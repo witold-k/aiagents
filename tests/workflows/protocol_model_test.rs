@@ -237,3 +237,58 @@ fn assembly_rejects_examples_prose_and_keeps_conflicting_declarations() {
     assert!(declared_parameter("statusCode=20").is_none());
     assert!(declared_parameter("The parameter is integer").is_none());
 }
+
+#[test]
+fn unassembled_rows_retain_bare_type_and_continuation_without_inventing_fields() {
+    use super::super::llm_structure::{RowEvidence, SemanticUnit, SourceGraph};
+    let graph = SourceGraph {
+        rows: vec![
+            RowEvidence {
+                line: 346,
+                start: 110836,
+                previous: None,
+                next: Some(110910),
+                cells: vec!["r Reference frequency required for BUC and LNB.".into(),
+                    "2 int frequency MHz".into()],
+            },
+            RowEvidence {
+                line: 347,
+                start: 110910,
+                previous: Some(110836),
+                next: None,
+                cells: vec!["Frequency is in MHz.".into(),
+                    "string Reference Used By: R, T,".into()],
+            },
+            RowEvidence {
+                line: 368,
+                start: 114576,
+                previous: None,
+                next: None,
+                cells: vec!["Time to Blockage".into(), "blockTime=&lt;int sec>".into()],
+            },
+        ],
+        relations: vec![],
+        assertions: vec![],
+    };
+    let units = vec![
+        SemanticUnit {
+            entry_row: 110836,
+            row_starts: vec![110836, 110910],
+            supporting_relations: vec![],
+        },
+        SemanticUnit {
+            entry_row: 114576,
+            row_starts: vec![114576],
+            supporting_relations: vec![],
+        },
+    ];
+    let analysis = simplelexer::tablelexer::DocumentAnalysis::parse("");
+    let report = stage(&[], &[], &analysis).with_semantic_units(&graph, &units);
+    assert_eq!(report.assembled_parameters.len(), 1);
+    assert_eq!(report.assembled_parameters[0].name, "blockTime");
+    assert_eq!(report.unassembled_semantic_rows.len(), 2);
+    assert_eq!(report.unassembled_semantic_rows[0].normalized_byte_start, 110836);
+    assert_eq!(report.unassembled_semantic_rows[1].normalized_byte_start, 110910);
+    assert_eq!(report.unassembled_semantic_rows[0].cells[1], "2 int frequency MHz");
+    assert!(report.unassembled_semantic_rows.iter().all(|row| row.message_owner.is_none()));
+}
