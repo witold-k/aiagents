@@ -1,5 +1,7 @@
 # Chunked extraction — current implementation
 
+[Current status and checkpoint metrics](current_status.md) · [Architecture diagrams](architecture_diagrams.md)
+
 > Experimental workflow. Source quotations and structural diagnostics do **not** establish semantic correctness or completeness.
 
 ## Purpose
@@ -23,7 +25,7 @@ The P4 source window target is currently `CHUNK_CHARS = 8_000` Unicode character
 
 The CLI option `-k` / `--tokens` (default: 30,000) configures the maximum LLM **output** tokens. P4 extraction, coverage, their retries, and structure inference now use the configured cap rather than a fixed 2,048-token constant. A small classification request remains capped at `min(configured_tokens, 512)`. This output budget is independent of the input window size.
 
-The first extraction pass supplies source-window text and limited preceding source context for recovery windows; it does **not** prepend a comprehensive deterministic document-state summary to every request. The later coverage pass additionally supplies an inventory of known message paths. The full-document identity context is used for deterministic identity processing, but is not automatically serialized into every extraction prompt. A reusable, source-grounded per-window context is a **proposed refactor**, not current behavior. Keep source-derived context distinct from unverified LLM hypotheses.
+The first extraction pass supplies source-window text, a bounded preceding-source tail and a deterministic source-tree summary of headings and explicit declarations. This summary describes the position before the window, **not** a comprehensive document-state model or a reliable identity for every segment inside the window. The later coverage pass additionally supplies an inventory of known message paths. The full-document identity context is used for deterministic identity processing, but is not automatically serialized into every extraction prompt. A complete boundary-aware context model remains a **proposed refactor**, not current behavior. Ambiguous recovery-window locations now suppress preceding context instead of guessing a first occurrence. Table metadata is capped and explicitly marks truncation. Keep source-derived context distinct from unverified LLM hypotheses.
 
 Changing chunk size or overlap can alter chunk numbering, source-window-relative offsets, and checkpoint compatibility. For before/after quality comparisons, prefer fresh runs rather than assuming old checkpoints remain comparable.
 
@@ -134,7 +136,7 @@ The runtime reports source-backed parameter assertions separately from message i
 
 A source-tree shadow model records sections, blocks, tables and transitions. The diagnostics distinguish exact lexical anchors, proposed relations, structural headings, and reserved boundaries. Even when all unresolved occurrences have a structural disposition, message ownership and field semantics may remain unknown.
 
-The recent OpenAMIP replay retained 25 candidates and 238 source-attributed facts, with 78 distinct source-backed parameter assertions. These are **one checkpoint's diagnostic figures**, not general benchmarks; earlier measurements in this document's history used different checkpoints and must not be compared as equivalent runs.
+The recent the reference protocol replay retained 25 candidates and 238 source-attributed facts, with 78 distinct source-backed parameter assertions. These are **one checkpoint's diagnostic figures**, not general benchmarks; earlier measurements in this document's history used different checkpoints and must not be compared as equivalent runs.
 
 ## JSON output and verification boundary
 
@@ -156,4 +158,26 @@ Publication is staged and does not silently overwrite an existing output directo
 - [Historical project notes](project_status_history.md)
 - [Historical P4 review](reviews/p4_identity_checkpoint_audit.md)
 
-Historical checkpoint schemas, Markdown-output stages and older OpenAMIP measurements are deliberately omitted from this current-behavior reference.
+Historical checkpoint schemas, Markdown-output stages and older the reference protocol measurements are deliberately omitted from this current-behavior reference.
+
+## Diagnostic protocol model — implemented boundaries (2026-11-12)
+
+`coverage-audit.json.protocol-model.json` is an **unverified diagnostic projection**, not a generator input. Its current collections include:
+
+| Field | Meaning | Not guaranteed |
+| --- | --- | --- |
+| `messages` | Candidate messages and lexical/source evidence | Canonical identity or owner |
+| `table_evidence` | Observed normalized table structure | Correct interpretation of damaged source tables |
+| `semantic_units` | Source-anchored voted row continuations | Verified semantic field boundaries |
+| `hypothetical_semantic_units` | Relation-backed continuations without a lexical entry anchor | Verified parameter definitions |
+| `reconstructed_table_entries` | First/second column fragments in source row order | Repaired column layout |
+| `assembled_parameters` | Explicit lexical declaration syntax with supported type/range/unit hints | Full field schema, optionality, conditions or message ownership |
+| `unassembled_semantic_rows` | Uninterpreted source rows with reasons | Absence of a real field in the document |
+
+The earlier `table_repair_hypotheses` output was **removed**: its bare-column pattern was tailored to a particular damaged table shape. Consumers must not depend on that experimental field. No equivalent automatic repair or schema promotion replaces it.
+
+### Interpreting locator diagnostics
+
+The latest supplied checkpoint has 238 facts, 124 exact statement locators and 114 missing exact statement locators. A missing **verbatim statement** may still have an exact source quotation: extracted statements can paraphrase or normalize source wording. Investigate `coverage-audit.json.missing-locators.json` and the evidence quote before calling a fact unsupported. Exact text presence is not semantic truth.
+
+The checkpoint was **resumed**, not freshly re-extracted with the latest branch. LLM-voted relations (3/3 valid attempts in that replay) are structural proposals, not independent verification. For a dated, denominator-aware snapshot, see [current status](current_status.md).

@@ -6,14 +6,17 @@ A local-first agent runtime for AI-assisted software engineering. Rust orchestra
 
 ## Start here
 
+- [Documentation map](docs/README.md) — guides, diagrams, task prompts and historical reports
 - [Quickstart](QUICKSTART.md) — installation and first run
 - [Configuration](docs/README_CONFIG.md) — settings and file-access rules
 - [Tasks](docs/tasks/README.md) — one README per task, including maturity and scope
 - [Architecture diagrams](docs/architecture_diagrams.md) — workflow diagrams separated by topic
 - [Runtime repair / BLT](docs/blt_execute.md) — build, lint, test and repair
 - [Chunked extraction](docs/chunked_transform.md) — protocol facts, provenance and limitations
+- [Extraction quality criteria](docs/extraction-quality-audit.md) — protocol-neutral acceptance tests and failure modes
 - [Runtime tests](runtests/README.md) — fixtures and local results
 - [TODO](TODO.md) — pending work
+- [Current status and metrics](docs/current_status.md) — dated checkpoint numbers, readiness and pipeline graphs
 - [Detailed status and historical results](docs/project_status_history.md) — experimental metrics and design history
 
 ## Example
@@ -53,11 +56,11 @@ To inspect a **completed** extraction checkpoint without another model call, che
 AIFIX_IDENTITY_REPLAY=1 aifix -t extract_message_tables -a document.md
 ```
 
-The replay is diagnostic only. Its identity resolver still depends on local source-window signals; generic document-wide definition ownership remains work in progress. In a recent OpenAMIP checkpoint replay, **25 candidates** and **238 source-attributed facts** were retained; **78 distinct source-backed parameter assertions** were inventoried. These are checkpoint-specific structural observations, not a semantic correctness score. The workflow now also emits global evidence-coverage, semantic-review, conservative codegen-readiness, and a **language-neutral diagnostic protocol model** (`coverage-audit.json.protocol-model.json`). The latter preserves candidate assertions and source anchors and detects literal `key=value` hints; it does not yet establish canonical messages or field schemas. The recent replay found **14 lexical parameter hints across 10 candidates**, compared with the separate table audit's **78 source-backed parameter assertions**. These counts have different meanings and must not be treated as equivalent coverage metrics. See [chunked extraction](docs/chunked_transform.md) and the [task guide](docs/tasks/extract_message_tables/README.md) for the boundaries of these reports. Historical measurements belong in [project status history](docs/project_status_history.md).
+The replay is diagnostic only. Its identity resolver still depends on local source-window signals; generic document-wide definition ownership remains work in progress. The [current status snapshot](docs/current_status.md) records the latest supplied checkpoint metrics with explicit denominators and limitations. The workflow also emits evidence-coverage, semantic-review, conservative codegen-readiness, and a **language-neutral diagnostic protocol model** (`coverage-audit.json.protocol-model.json`). That model retains lexical assemblies and voted table continuations separately from verified protocol definitions; it does not establish canonical message owners or a code-generation-ready schema. See [chunked extraction](docs/chunked_transform.md) and the [task guide](docs/tasks/extract_message_tables/README.md) for the boundaries of these reports. Historical measurements belong in [project status history](docs/project_status_history.md).
 
 ## Next extraction milestone
 
-Reuse existing normalized `simplelexer` table cells, source positions, and proposed semantic continuation links to distinguish parameter **definitions** from examples. Capture type, range, optionality and conditional rules only when individually supported by source evidence; preserve unresolved message ownership. Validate the resulting language-independent model against the technical review gaps before treating it as suitable input for a **separate** C++/Rust generator. This is a targeted model-quality step, not another round of document-administration filtering. See [TODO](TODO.md) for the prioritized checklist.
+First verify the current branch with a fresh build and test run. Then explain the missing exact statement locators without confusing normalized statements with source quotations. Complete deterministic scoped-context transitions and validate a source-grounded, language-independent schema against **multiple independent documents**. Code generation remains a separate, gated project. See [current status](docs/current_status.md) and [TODO](TODO.md).
 
 ## Design and safety
 

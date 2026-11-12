@@ -319,7 +319,7 @@ fn scoped_source_context(source: &str, byte_offset: usize) -> String {
     }
     let bounded: String = lines.join("\n").chars().take(MAX_CONTEXT_CHARS).collect();
     format!(
-        "=== DETERMINISTIC SOURCE CONTEXT (read-only; not evidence) ===\n{bounded}\n=== END DETERMINISTIC CONTEXT ===\nThis structure is a hint, not proof of message ownership. A new heading, table row or section can change scope. Cite evidence only from CURRENT SOURCE.\n\n"
+        "=== DETERMINISTIC SOURCE CONTEXT (read-only; not evidence) ===\n{bounded}\n=== END DETERMINISTIC CONTEXT ===\nThis structure is a hint, not proof of message ownership. It describes the position BEFORE the window, not all positions within it. A new heading, table row, message declaration or section INSIDE CURRENT SOURCE may change scope. Re-evaluate each source segment independently. Cite evidence only from CURRENT SOURCE.\n\n"
     )
 }
 
@@ -327,7 +327,20 @@ fn scoped_source_context(source: &str, byte_offset: usize) -> String {
 // previous model response. This makes resume and recovery splits deterministic.
 // It is a hint to the model, not evidence for a fact or a message identity.
 fn preceding_extraction_context(source: &str, part: &Chunk, window: &str) -> String {
-    let local_offset = part.text.find(window).unwrap_or(0);
+    // Recovery substrings may repeat. A guessed first occurrence would attach
+    // unrelated section/message context to an ambiguous recovery window.
+    let local_offset = if window == part.text {
+        Some(0)
+    } else {
+        let mut occurrences = part.text.match_indices(window);
+        match (occurrences.next(), occurrences.next()) {
+            (Some((offset, _)), None) => Some(offset),
+            _ => None,
+        }
+    };
+    let Some(local_offset) = local_offset else {
+        return "=== CONTEXT LOCATION AMBIGUOUS ===\nNo preceding context is supplied: recovery text has no unique source position. Cite only CURRENT SOURCE.\n\n".to_owned();
+    };
     let before = &source[..(part.start_byte + local_offset).min(source.len())];
     let tail_start = before
         .char_indices()
@@ -2494,7 +2507,8 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 &source_starts,
                 &masked_source,
             );
-            let staged_model = protocol_model::stage(&checkpoint.candidates, &source_windows);
+            let staged_model =
+                protocol_model::stage(&checkpoint.candidates, &source_windows, &table_analysis);
             let model_output = format!("{output}.protocol-model.json");
             match serde_json::to_string_pretty(&staged_model) {
                 Ok(json) => {
@@ -2589,7 +2603,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 let verdict_output = format!("{output}.semantic-verification.json");
                 match serde_json::to_string_pretty(&report) {
                     Ok(json) => {
-                        if let Err(err) = fs::write(&verdict_output, format!("{json}\\n")) {
+                        if let Err(err) = fs::write(&verdict_output, format!("{json}\n")) {
                             eprintln!(
                                 "## [CHUNKED] SEMANTIC VERIFY: unable to write {verdict_output:?}: {err}"
                             );
@@ -2827,6 +2841,30 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                         unit.entry_row, unit.row_starts, unit.supporting_relations,
                     );
                 }
+                // Enrich the diagnostic JSON only after the opt-in structure
+                // analysis has produced voted relations. This never changes facts.
+                if let Ok(output) = std::env::var("AIFIX_COVERAGE_AUDIT_JSON") {
+                    let model = protocol_model::stage(
+                        &checkpoint.candidates,
+                        &source_windows,
+                        &table_analysis,
+                    )
+                    .with_semantic_units(&graph, &units, &hypothetical);
+                    let model_output = format!("{output}.protocol-model.json");
+                    match serde_json::to_string_pretty(&model) {
+                        Ok(json) => {
+                            if let Err(err) = fs::write(&model_output, format!("{json}\n")) {
+                                eprintln!(
+                                    "## [CHUNKED] SEMANTIC MODEL: unable to write {model_output:?}: {err}"
+                                );
+                            }
+                        }
+                        Err(err) => {
+                            eprintln!("## [CHUNKED] SEMANTIC MODEL: serialization failed: {err}")
+                        }
+                    }
+                }
+
                 let (unit_counts, outside) =
                     llm_structure::unit_fact_coverage(&units, &coverage.unmatched_rows);
                 let covered: usize = unit_counts.iter().map(|(_, count)| count).sum();

@@ -10,6 +10,7 @@ pub(super) fn table_context(analysis: &DocumentAnalysis<'_>, start: usize, end: 
     let mut out = String::new();
     let mut table_count = 0usize;
     let mut row_count = 0usize;
+    let mut omitted = false;
     for block in &analysis.blocks {
         let DocumentChunk::Table(table) = block else {
             continue;
@@ -29,6 +30,7 @@ pub(super) fn table_context(analysis: &DocumentAnalysis<'_>, start: usize, end: 
             continue;
         }
         if table_count == 4 || row_count >= 24 {
+            omitted = true;
             break;
         }
         table_count += 1;
@@ -43,6 +45,7 @@ pub(super) fn table_context(analysis: &DocumentAnalysis<'_>, start: usize, end: 
         ));
         for row in rows {
             if row_count == 24 {
+                omitted = true;
                 break;
             }
             row_count += 1;
@@ -71,6 +74,9 @@ pub(super) fn table_context(analysis: &DocumentAnalysis<'_>, start: usize, end: 
                 grid.issues.len()
             ));
         }
+    }
+    if omitted {
+        out.push_str("TRUNCATED: further table rows or tables omitted; absence here does not imply absence in SOURCE.\n");
     }
     if out.is_empty() {
         return String::new();

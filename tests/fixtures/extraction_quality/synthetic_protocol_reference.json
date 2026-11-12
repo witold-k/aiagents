@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "source": "Synthetic protocol fixture (not a real standard)",
+  "scope": "Illustrative reference for testing parameter ordering, types, optionality and conditional rules.",
+  "messages": [
+    {
+      "id": "P",
+      "direction": "controller_to_device",
+      "source_section": "Definitions",
+      "source_excerpt": "Set sample interval and optional retry count.",
+      "parameters": [
+        {
+          "position": 1,
+          "name": "interval",
+          "type": "int",
+          "unit": "seconds",
+          "required": true
+        },
+        {
+          "position": 2,
+          "name": "retry_count",
+          "type": "int",
+          "required": false
+        }
+      ],
+      "constraints": [
+        {
+          "kind": "range",
+          "parameter": "interval",
+          "minimum": 0,
+          "maximum": 60
+        }
+      ]
+    },
+    {
+      "id": "q",
+      "direction": "device_to_controller",
+      "source_section": "Responses",
+      "source_excerpt": "Report readiness and optionally include diagnostic code.",
+      "parameters": [
+        {
+          "position": 1,
+          "name": "ready",
+          "type": "bool",
+          "required": true
+        },
+        {
+          "position": 2,
+          "name": "diagnostic_code",
+          "type": "int",
+          "required": false
+        }
+      ],
+      "constraints": [
+        {
+          "kind": "conditional",
+          "parameter": "diagnostic_code",
+          "when": "ready is false"
+        }
+      ]
+    }
+  ]
+}

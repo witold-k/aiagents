@@ -1,5 +1,7 @@
 # Architecture diagrams by topic
 
+[Current status and measured checkpoint](current_status.md) · [Detailed extraction](chunked_transform.md)
+
 These diagrams describe responsibilities, not a claim of semantic correctness.
 Labels distinguish **LLM** from **deterministic Rust** operations without relying on color.
 
@@ -96,3 +98,46 @@ flowchart TD
 ```
 
 The review, validation, and revision stages are **best-effort**. Failures retain already generated release notes and produce explicit review-status text; the diagram shows the successful path. Review inputs may omit diffs that do not fit the shared byte budget. See [release documentation](tasks/release_doc/README.md) for failure behavior and diagnostic traces.
+
+## 7. Source graph and diagnostic protocol model (implemented, not verified)
+
+```mermaid
+flowchart TD
+    S["Original source"] --> L["Rust/simplelexer: table cells + source spans"]
+    S --> N["Rust: normalize and preserve coordinate mapping"]
+    N --> X["LLM: proposed extracted facts"]
+    X --> I["Rust: identity candidates + source evidence"]
+    L --> G["Rust: source-row graph"]
+    G --> V["LLM: structural relation votes"]
+    V --> U["Rust: lexically anchored semantic units"]
+    V --> H["Rust: hypothetical units without lexical anchor"]
+    L --> R["Rust: observed column fragments"]
+    U --> R
+    U --> P["Rust: explicit declaration syntax only"]
+    I --> D["Diagnostic protocol model"]
+    H --> D
+    R --> D
+    P --> D
+    D --> Q["Unverified lexical assemblies and unresolved evidence"]
+    Q -.->|future: independent review| Z["Verified protocol schema"]
+```
+
+The diagnostic model does not infer missing table cells, canonical owners, or complete wire types. `reconstructed_table_entries` retain observed fragments in order; `assembled_parameters` are syntax-based, explicitly **unverified**. The former bare-column layout repair heuristic was removed because its assumptions were too document-shaped.
+
+## 8. Evidence quality and generation gate
+
+```mermaid
+flowchart LR
+    A["Exact source quote"] --> B["Source presence only"]
+    C["Voted continuation"] --> D["Structural hypothesis only"]
+    E["Explicit declaration"] --> F["Lexical type hint only"]
+    B --> G["Semantic review + ownership evidence"]
+    D --> G
+    F --> G
+    G --> H{"Complete and independently verified?"}
+    H -->|no| I["Unknown / competing evidence retained"]
+    H -->|yes, future| J["Versioned verified schema"]
+    J --> K["Separate code generator"]
+```
+
+This is a **readiness gate**, not a claim that independent verification or the generator already exists. See [current status](current_status.md) for measured counts and remaining gaps.

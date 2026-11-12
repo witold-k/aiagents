@@ -1,10 +1,10 @@
 # Semantic coverage audit
 
-Status: initial read-only inventory (2026-11-07). No extraction or identity behavior changed.
+Status: diagnostic inventory originally drafted 2026-11-07; updated 2026-11-12. See [current status](current_status.md) for the latest supplied checkpoint and the limits of replay evidence.
 
 ## Goal
 
-Measure how much source-backed information survives each stage of `extract_messages`, without treating an unresolved identity as an error or allowing LLM hypotheses to become verified facts.
+Measure how much source-backed information survives each stage of `extract_message_tables`, without treating an unresolved identity as an error or allowing LLM hypotheses to become verified facts.
 
 ## Current output contract (schema version 1)
 
@@ -27,7 +27,7 @@ The per-file `verification = supported_quotes` means all included facts have a s
 - `llm_structure::tiered_unit_evidence`: disjoint evidence counts across lexical, relational, and outside/ambiguous tiers.
 - `llm_structure::remaining_unit_evidence` and `outside_unit_evidence`: classify remaining evidence without assigning ownership.
 
-The LLM structure analysis is opt-in via `AIFIX_LLM_STRUCTURE`; it is not a normal published JSON representation.
+The LLM structure analysis is opt-in via `AIFIX_LLM_STRUCTURE`. Its proposed units can be projected into the **diagnostic** protocol-model JSON, but are not verified or published as canonical protocol fields.
 
 ## Audit dimensions
 
@@ -43,7 +43,7 @@ Do not collapse these into one quality percentage.
 
 ## First replay procedure
 
-1. Use the same OpenAMIP input and completed checkpoint as the previous replay; keep model/configuration and source hash fixed.
+1. Use the same the reference protocol input and completed checkpoint as the previous replay; keep model/configuration and source hash fixed.
 2. Run `AIFIX_IDENTITY_REPLAY=1` and capture all `[CHUNKED]` diagnostics.
 3. Enable `AIFIX_LLM_STRUCTURE` only for a separate controlled comparison; it may perform LLM calls, so do not assume this mode is replay-only.
 4. Compare the exported `manifest.json`, `facts.json`, `quality.json`, and per-spec files against the captured diagnostics.
@@ -61,3 +61,12 @@ Do not collapse these into one quality percentage.
 ## Next implementation candidate (after replay)
 
 If the replay demonstrates a measurable gap, add a small opt-in **read-only** JSON audit report alongside existing outputs, with counts and provenance sufficient to reproduce each classification. Do not alter schema version 1 or the existing published files until a compatibility decision is made.
+
+## Interpretation of the supplied 2026-11-12 replay
+
+- **124/238** extracted statements were found verbatim; **114/238** were not. This is a statement-locator measure, **not** source recall.
+- **78** source-backed parameter assertions and **13** unmatched parameter-like facts were inventoried independently of canonical message ownership.
+- **3** lexically anchored semantic units, **1** hypothetical unit and **2** syntax-based assembled parameters were exported as diagnostics, not as verified field definitions.
+- The latest diagnostic model no longer exports the removed, table-shape-specific `table_repair_hypotheses` collection.
+
+Do not compare these categories as if they shared a denominator. A future audit should classify missing statement locators by whether the **evidence quote** remains present, and should use independent manually checked source inventories to estimate semantic recall.

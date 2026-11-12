@@ -2,7 +2,7 @@
 
 **Historical review (2026-10-24)** against branch `refactor/generic-source-provenance`.
 Findings below are a snapshot of that revision, **not a verified open-issue list**
-for `analysis/openamip-unresolved-facts`. Several areas have changed since;
+for `analysis/reference-protocol-unresolved-facts`. Several areas have changed since;
 recheck each finding against current source and tests before acting on it.
 No local Rust tests were executed for the original review.
 
@@ -75,7 +75,7 @@ migration before renaming any existing checkpoint.
 
 `resolve_fact_type` in `message_identity.rs` checks only local
 explicit labels, twelve-line standalone heading ownership, and contiguous
-table blocks. It has no document-wide definition index. The OpenAMIP replay
+table blocks. It has no document-wide definition index. The the reference protocol replay
 reported 543 occurrences with `no_source_type`. **Recommendation:** add
 read-only diagnostics grouped by source section before widening ownership
 rules; require explicit definition boundaries and ambiguity reporting.
