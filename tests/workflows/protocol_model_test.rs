@@ -53,3 +53,29 @@ fn prose_and_table_caption_are_not_parameter_hints() {
     );
     assert!(report.messages[0].parameter_hints.is_empty());
 }
+
+#[test]
+fn explicit_type_syntax_is_distinct_from_example_value() {
+    for (quote, expected_kind, expected_type) in [
+        ("statusCode=<int 0 to 65535>", "definition_syntax", Some("int")),
+        ("statusCode=&lt;int 0 to 65535>", "definition_syntax", Some("int")),
+        ("statusCode=20", "assignment_example_or_value", None),
+    ] {
+        let report = stage(&[candidate(quote, Some(0), false)], &[quote]);
+        let hint = &report.messages[0].parameter_hints[0];
+        assert_eq!(hint.name, "statusCode");
+        assert_eq!(hint.syntax_kind, expected_kind);
+        assert_eq!(hint.value_type.as_deref(), expected_type);
+        assert!(hint.constraints.is_empty());
+        assert_eq!(hint.required, None);
+    }
+}
+
+#[test]
+fn a_type_looking_string_without_an_exact_anchor_is_not_promoted() {
+    let report = stage(
+        &[candidate("statusCode=<int 0 to 65535>", Some(1), false)],
+        &["statusCode=<int 0 to 65535>"],
+    );
+    assert!(report.messages[0].parameter_hints.is_empty());
+}
