@@ -6,6 +6,7 @@ A local-first agent runtime for AI-assisted software engineering. Rust orchestra
 
 ## Start here
 
+- [Documentation map](docs/README.md) — guides, diagrams, task prompts and historical reports
 - [Quickstart](QUICKSTART.md) — installation and first run
 - [Configuration](docs/README_CONFIG.md) — settings and file-access rules
 - [Tasks](docs/tasks/README.md) — one README per task, including maturity and scope
