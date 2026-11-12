@@ -118,11 +118,11 @@ impl SemanticDocumentTree {
         while start < source.len() {
             let (active_node, prefix) = self.prefix_at(start);
             let mut end = start;
-            let mut chars = 0;
-            for (offset, ch) in source[start..].char_indices() {
-                if chars >= limit { break; }
+            for (chars, (offset, ch)) in source[start..].char_indices().enumerate() {
+                if chars >= limit {
+                    break;
+                }
                 end = start + offset + ch.len_utf8();
-                chars += 1;
             }
             // Split at any semantic transition before the maximum end.
             for node in &self.nodes {
