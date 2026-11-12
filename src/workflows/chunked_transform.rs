@@ -3934,16 +3934,16 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                     };
                     if let Ok(selection) = serde_json::from_str::<serde_json::Value>(
                         strip_code_fences(answer.trim()).trim(),
-                    ) {
-                        if let Some(selected) = selection
+                    )
+                        && let Some(selected) = selection
                             .as_object()
                             .filter(|object| object.len() == 1)
                             .and_then(|object| object.get("chunk"))
                             .and_then(serde_json::Value::as_u64)
                             .and_then(|number| usize::try_from(number).ok())
                             .and_then(|number| number.checked_sub(1))
-                        {
-                            if neighbors.iter().any(|(chunk_index, _)| *chunk_index == selected) {
+                        && neighbors.iter().any(|(chunk_index, _)| *chunk_index == selected)
+                    {
                                 let target = &parts[selected];
                                 let segments = evidence_segments(&target.text)
                                     .iter()
@@ -3974,8 +3974,6 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                                         ),
                                     }
                                 }
-                            }
-                        }
                     }
                 }
             }
