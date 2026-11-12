@@ -20,6 +20,7 @@ pub mod generated_workspaces {
     include!(concat!(env!("OUT_DIR"), "/generated_workspaces.rs"));
 }
 
+pub mod document_understanding;
 pub mod agenttools;
 pub mod cli;
 pub mod config;
