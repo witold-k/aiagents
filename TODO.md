@@ -6,33 +6,39 @@ work after a pause.
 
 ## When returning to this project
 
-1. For `extract_message_tables`, turn existing source-backed table/semantic-unit evidence into a language-neutral protocol model, without guessing ownership or types.
-2. Evaluate that model against the the reference protocol checkpoint and its semantic-review findings before expanding extraction heuristics.
-3. Define an LLM-independent BLT module for build/lint/test execution and diagnostic preparation; then evaluate the repair workflow on real failures.
-4. Revisit release-documentation quality, or pick an exploratory experiment: indexing/search, TokenDB, SVD/embeddings, or interactive mode.
+1. Run `just rbuild` and the Rust test/format/lint checks on the current branch; record any failures.
+2. Triage 114 missing exact statement locators from the supplied checkpoint by cause, without treating paraphrases as missing source evidence.
+3. Complete deterministic scoped-context transitions and document-wide definition ownership, retaining unresolved cases.
+4. Evaluate semantic field definitions against multiple independent documents before designing a verified generator input.
+5. Continue standalone BLT design, release-document quality, or indexing experiments as time permits.
+
+See [current status](docs/current_status.md) for a dated checkpoint snapshot and [architecture](docs/architecture_diagrams.md) for trust boundaries.
 
 ---
 
 # Protocol extraction: current state and next steps
 
-`extract_message_tables` currently retains source-attributed candidates and facts without merging uncertain identities. The recent the reference protocol replay reported **25 candidates**, **238 facts**, **78 distinct source-backed parameter assertions**, and **39 distinct parameters across three sections**. These are observations from one checkpoint, not verified schema coverage.
+The supplied checkpoint replay reports **25 message candidates**, **238 source-attributed facts**, **124 exact statement locators**, **114 missing exact statement locators**, and **78 source-backed parameter assertions**. It is not a fresh run of the latest branch. These metrics are diagnostic, not semantic correctness or completeness scores.
 
-Completed diagnostic foundations:
-- [x] Preserve unresolved message identities and source evidence; inspect statement locations separately.
-- [x] Use normalized `simplelexer` tables and source-row spans as supplementary structure.
-- [x] Global source evidence coverage and bounded semantic-review queue, with optional LLM verification.
-- [x] Codegen-readiness prerequisite inventory (`coverage-audit.json.codegen-readiness.json`).
-- [x] Initial language-neutral **hypothesis** model (`coverage-audit.json.protocol-model.json`): assertions, quote anchors, lexical `key=value` hints. The recent replay found **14 lexical hints in 10 candidates**; these are not 14 verified parameter definitions.
+Implemented diagnostic foundations:
+- [x] Retain source-grounded facts, unresolved case-sensitive message identities and statement-locator diagnostics.
+- [x] Reuse `simplelexer` original/normalized table evidence and exact source positions.
+- [x] Preserve LLM-voted row-continuation units and separate hypothetical units without assigning owners.
+- [x] Recognize explicit lexical parameter declarations separately from example assignments.
+- [x] Export unverified lexical assemblies, uninterpreted reconstructed table entries and unassembled semantic rows.
+- [x] Export evidence-coverage, semantic-review and codegen-readiness diagnostics.
+- [x] Remove the protocol-shaped bare-column repair heuristic; keep the extractor generic.
 
 Next, in priority order:
-- [ ] **Reuse existing evidence:** join normalized table cells and proposed continuation/heading links with the diagnostic model, keeping exact source positions and hypothesis status. Do not add a second HTML parser or table reconstruction pipeline.
-- [ ] Distinguish *parameter definitions* (e.g. `statusCode=<int 0 to 65535>`) from *example assignments* (e.g. `statusCode=20`). Record separately supported name, type, range, optionality and conditions, each with provenance; never invent missing properties.
-- [ ] Resolve message/parameter ownership only with explicit source support; retain unresolved or competing hypotheses and case-sensitive identities.
-- [ ] Cross-check the resulting model against the 78 source-backed parameter assertions and the technical semantic-review gaps. Measure semantic/codegen readiness, **not** merely line coverage or lexical hint counts.
-- [ ] Define a stable, versioned, language-neutral **verified** protocol JSON contract for a **separate** C++/Rust generator, including explicit unknowns and validation; defer parser/serializer/state-machine generation until supported.
-- [ ] Add regression tests for table continuations, assignment-vs-definition, contradictory evidence, and tableless documents; evaluate on more than one document.
+- [ ] Verify the current branch build, formatting, tests and clippy; record actual outcomes.
+- [ ] Classify missing locators into paraphrase/normalization, repeated statement, unsupported quote and genuine missing evidence.
+- [ ] Complete deterministic scope changes **within** a source window and across window boundaries, using only explicit source declarations.
+- [ ] Separate source-verified names, types, units, ranges, optionality and conditions from competing or incomplete evidence.
+- [ ] Resolve message/parameter ownership only from explicit source support; preserve unknowns and contradictions.
+- [ ] Benchmark table, prose, conditional and damaged-conversion cases from multiple unrelated documents.
+- [ ] Define a stable versioned **verified** schema, distinct from the current diagnostic `protocol-model.json`; only then consider a separate C++/Rust generator.
 
-Keep document-administration filtering low priority unless it demonstrably affects model correctness. The present codegen-readiness report is a conservative inventory, not a schema validator; the protocol-model report contains hypotheses, not validated wire definitions.
+Keep document-administration filtering lower priority unless it demonstrably changes semantic quality. Do not convert a vote or an exact quotation into a verified definition.
 
 ---
 
