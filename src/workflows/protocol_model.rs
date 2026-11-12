@@ -15,6 +15,7 @@ pub(super) struct ProtocolModel {
     messages: Vec<MessageHypothesis>,
     table_evidence: Vec<TableEvidence>,
     semantic_units: Vec<SemanticUnitEvidence>,
+    assembled_parameters: Vec<AssembledParameter>,
     caveats: Vec<&'static str>,
 }
 
@@ -97,8 +98,67 @@ impl ProtocolModel {
                 })
             })
             .collect();
+        self.assembled_parameters = self.semantic_units.iter().filter_map(assemble_unit).collect();
         self
     }
+}
+
+#[derive(Debug, Serialize)]
+struct AssembledParameter {
+    name: String,
+    type_hint: Option<String>,
+    range_hint: Option<String>,
+    evidence_row_starts: Vec<usize>,
+    status: &'static str,
+    message_owner: Option<String>,
+}
+
+/// Only exact lexical tokens from an already supported semantic unit.
+/// This is not semantic validation of types, ranges, or ownership.
+fn assemble_unit(unit: &SemanticUnitEvidence) -> Option<AssembledParameter> {
+    let entry = unit.rows.first()?;
+    let name = entry.cells.first()?.trim();
+    if name.is_empty()
+        || !name.starts_with(|c: char| c.is_ascii_alphabetic())
+        || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        || matches!(name.to_ascii_lowercase().as_str(), "parameter" | "name" | "type" | "description")
+    {
+        return None;
+    }
+    let mut type_hint = None;
+    let mut range_hint = None;
+    for row in &unit.rows {
+        for cell in row.cells.iter().skip(1) {
+            let value = cell.trim();
+            if type_hint.is_none() && matches!(value.to_ascii_lowercase().as_str(),
+                "int" | "integer" | "float" | "string" | "bool" | "boolean")
+            {
+                type_hint = Some(value.to_owned());
+            }
+            // Preserve only an explicit, self-contained range expression.
+            if range_hint.is_none() {
+                if let Some(rest) = value.strip_prefix("range ") {
+                    let mut parts = rest.split("..");
+                    if let (Some(lo), Some(hi), None) = (parts.next(), parts.next(), parts.next()) {
+                        if !lo.is_empty() && !hi.is_empty()
+                            && lo.chars().all(|c| c.is_ascii_digit())
+                            && hi.chars().all(|c| c.is_ascii_digit())
+                        {
+                            range_hint = Some(value.to_owned());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Some(AssembledParameter {
+        name: name.to_owned(),
+        type_hint,
+        range_hint,
+        evidence_row_starts: unit.row_normalized_bytes.clone(),
+        status: "unverified_lexical_assembly",
+        message_owner: None,
+    })
 }
 
 #[derive(Debug, Serialize)]
@@ -268,12 +328,14 @@ pub(super) fn stage(
         messages,
         table_evidence,
         semantic_units: Vec::new(),
+        assembled_parameters: Vec::new(),
         caveats: vec![
             "Candidates are not canonical messages; repeated names do not imply identity.",
             "Table evidence uses normalized-document byte offsets; original source mapping and message ownership are not asserted.",
             "Parameter hints distinguish lexical definition syntax from assignments; neither establishes verified fields or message ownership.",
             "Lexical type labels are not validated types; ranges, cardinality, constraints, defaults and protocol behavior are not inferred.",
             "An exact source quotation does not establish the semantic truth of a statement.",
+            "Assembled parameter fields are unverified lexical observations, never validated definitions.",
             "This model is not suitable for automatic code generation.",
         ],
     }
