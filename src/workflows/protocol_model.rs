@@ -98,7 +98,11 @@ impl ProtocolModel {
                 })
             })
             .collect();
-        self.assembled_parameters = self.semantic_units.iter().filter_map(assemble_unit).collect();
+        self.assembled_parameters = self
+            .semantic_units
+            .iter()
+            .filter_map(assemble_unit)
+            .collect();
         self
     }
 }
@@ -121,7 +125,10 @@ fn assemble_unit(unit: &SemanticUnitEvidence) -> Option<AssembledParameter> {
     if name.is_empty()
         || !name.starts_with(|c: char| c.is_ascii_alphabetic())
         || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-        || matches!(name.to_ascii_lowercase().as_str(), "parameter" | "name" | "type" | "description")
+        || matches!(
+            name.to_ascii_lowercase().as_str(),
+            "parameter" | "name" | "type" | "description"
+        )
     {
         return None;
     }
@@ -130,8 +137,11 @@ fn assemble_unit(unit: &SemanticUnitEvidence) -> Option<AssembledParameter> {
     for row in &unit.rows {
         for cell in row.cells.iter().skip(1) {
             let value = cell.trim();
-            if type_hint.is_none() && matches!(value.to_ascii_lowercase().as_str(),
-                "int" | "integer" | "float" | "string" | "bool" | "boolean")
+            if type_hint.is_none()
+                && matches!(
+                    value.to_ascii_lowercase().as_str(),
+                    "int" | "integer" | "float" | "string" | "bool" | "boolean"
+                )
             {
                 type_hint = Some(value.to_owned());
             }

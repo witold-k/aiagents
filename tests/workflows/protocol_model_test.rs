@@ -180,10 +180,16 @@ fn assembly_keeps_explicit_type_and_range_as_unverified_hints() {
         entry_normalized_byte: 12,
         row_normalized_bytes: vec![12, 35],
         rows: vec![
-            TableRowEvidence { normalized_byte_start: 12, normalized_byte_end: None,
-                cells: vec!["statusCode".into(), "integer".into()] },
-            TableRowEvidence { normalized_byte_start: 35, normalized_byte_end: None,
-                cells: vec!["".into(), "range 0..65535".into()] },
+            TableRowEvidence {
+                normalized_byte_start: 12,
+                normalized_byte_end: None,
+                cells: vec!["statusCode".into(), "integer".into()],
+            },
+            TableRowEvidence {
+                normalized_byte_start: 35,
+                normalized_byte_end: None,
+                cells: vec!["".into(), "range 0..65535".into()],
+            },
         ],
         supporting_relations: vec![],
         status: "proposed_voted_continuation",
@@ -208,7 +214,8 @@ fn assembly_does_not_guess_from_prose_or_header() {
             entry_normalized_byte: 0,
             row_normalized_bytes: vec![0],
             rows: vec![TableRowEvidence {
-                normalized_byte_start: 0, normalized_byte_end: None,
+                normalized_byte_start: 0,
+                normalized_byte_end: None,
                 cells: vec![name.into(), description.into()],
             }],
             supporting_relations: vec![],
