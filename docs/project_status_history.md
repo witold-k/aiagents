@@ -137,7 +137,7 @@ filename is not evidence that the protocol type itself is lowercase. Where
 the source declares both cases, they must be distinguished through extraction,
 fact ownership, checkpoint merging, coverage, audit, and JSON output.
 
-The OpenAMIP 1.17 Revision F example establishes that `A` and `a` are
+The a historical protocol sample example establishes that `A` and `a` are
 **different messages**, despite both mentioning intervals:
 
 | Type | Sender | Meaning | Canonical path |
@@ -147,12 +147,12 @@ The OpenAMIP 1.17 Revision F example establishes that `A` and `a` are
 
 The Markdown paths above are *logical fact destinations*; published files
 use the corresponding `.json` extension. The `upper_` prefix is an output
-naming convention for uppercase protocol types, **not** an OpenAMIP message
+naming convention for uppercase protocol types, **not** an the reference protocol message
 name. Do not collapse `upper_a` and `a` during canonicalization.
 
-## OpenAMIP provenance replay — 27 October 2026
+## the reference protocol provenance replay — 27 October 2026
 
-The latest **read-only** replay of `OpenAMIP-Standard-Version-1-17-Revision-F.md`
+The latest **read-only** replay of `the historical protocol sample`
 (from an existing completed checkpoint) reported:
 
 | Diagnostic | Count |
@@ -272,7 +272,7 @@ extraction is needed to measure the effect of new provenance data. Never
 infer identity from a matching suggested name alone.
 
 **Do not chase nonexistent messages.** A letter mentioned in a document is
-not sufficient evidence that a usable message is defined. In OpenAMIP,
+not sufficient evidence that a usable message is defined. In the reference protocol,
 message-type declaration tables (sections 2.3 and 2.4) must be distinguished
 from reserved entries, antenna status codes (2.5), general protocol semantics
 (2.7), and example traffic (2.8). A reserved type or a type seen only in an
@@ -283,7 +283,7 @@ Future diagnostics should distinguish `defined_message`, `reserved_type`,
 are a proposed improvement, not currently implemented counters**. Do not
 interpret every unresolved fact as a missing message definition.
 
-A previous experimental definition inventory contained OpenAMIP-specific
+A previous experimental definition inventory contained protocol-specific
 section numbers and has been removed. No document-specific catalog is used
 to authorize P4 identities. A format-independent definition catalog and a
 separate projection version are still outstanding. The P4 projection version
@@ -297,19 +297,19 @@ canonical resolver now share one decision function, including the legacy
 segment-ID fallback. These counters do **not** prove that the proposed
 message exists. The changes after the last local build remain unverified.
 
-#### OpenAMIP validation status (24 October 2026)
+#### the reference protocol validation status (24 October 2026)
 
 The earlier P3 run reported **548 facts: 506 supported, 42 unresolved**.
 These are historical results, not validation of P4.
 
-A subsequent P4 OpenAMIP run reported **161 staged candidates**, **791
+A subsequent P4 the reference protocol run reported **161 staged candidates**, **791
 candidate facts**, and **695 distinct statement/quote pairs**. The v2
 consolidation accepted **296 candidate fact occurrences**, produced **260
 distinct typed message facts**, and left **495 candidate facts unresolved**.
 These are diagnostic counts from that run, not a completeness score or a
 claim of semantic correctness. The run still produced an **unverified draft**.
 
-A later P4 OpenAMIP run retained **200 candidates**, **902 candidate fact
+A later P4 the reference protocol run retained **200 candidates**, **902 candidate fact
 occurrences**, and **766 distinct statement/evidence pairs**. Before the
 long-table resolver, **198** occurrences were assigned to a source-declared
 type, producing **157** distinct message facts; **704** occurrences remained
@@ -329,7 +329,7 @@ another local run.
 
 **Before merging P3/P4:** run `just gbuild` successfully, test precise
 source ownership and case-sensitive table examples, resume a checkpoint
-without duplicating candidates, rerun OpenAMIP, inspect generated message
+without duplicating candidates, rerun the reference protocol, inspect generated message
 files and `facts.json`, and verify unresolved counts and semantic fact
 ownership against the source. Keep unverified drafts distinct from verified
 specifications. Do not merge solely on the strength of compilation or
@@ -488,7 +488,7 @@ These safeguards do **not** make the resolver format-independent: explicit
 `Type:` labels, single-character identities and message path conventions are
 still heuristic assumptions. A generic, document-derived definition model,
 semantic fact verification and a fully generic definition model remain
-follow-up work. OpenAMIP is a regression fixture, not a source of hard-coded
+follow-up work. the reference protocol is a regression fixture, not a source of hard-coded
 protocol rules.
 
 Checkpoint migration: a legacy checkpoint with `fact_audit_version = 7` and no
