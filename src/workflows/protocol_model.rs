@@ -28,7 +28,7 @@ struct TableEvidence {
 #[derive(Debug, Serialize)]
 struct TableRowEvidence {
     normalized_byte_start: usize,
-    normalized_byte_end: usize,
+    normalized_byte_end: Option<usize>,
     cells: Vec<String>,
 }
 
@@ -57,7 +57,7 @@ impl ProtocolModel {
             let rows: Option<Vec<_>> = unit.row_starts.iter().map(|start| {
                 graph.rows.iter().find(|row| row.start == *start).map(|row| TableRowEvidence {
                     normalized_byte_start: row.start,
-                    normalized_byte_end: row.start,
+                    normalized_byte_end: None,
                     cells: row.cells.clone(),
                 })
             }).collect();
@@ -172,7 +172,7 @@ pub(super) fn stage(
             normalized_byte_end: table.span.end,
             rows: table.rows.iter().map(|row| TableRowEvidence {
                 normalized_byte_start: row.span.start,
-                normalized_byte_end: row.span.end,
+                normalized_byte_end: Some(row.span.end),
                 cells: row.cells.iter().map(|cell| cell.text.to_string()).collect(),
             }).collect(),
         })
