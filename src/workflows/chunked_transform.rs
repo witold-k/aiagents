@@ -40,6 +40,29 @@ use crate::utils::stringutils::{resolve_source_quote, strip_code_fences};
 pub use crate::utils::stringutils::{mask_embedded_data_uris, mask_opaque_lines};
 use crate::workflows::workflow::{Workflow, WorkflowResult};
 
+/// Opt-in diagnostic only: does not change prompts or inference settings.
+fn log_llm_memory_budget(stage: &str, chunk: usize, prompt: &str, context: &str, prefix: &str, output_tokens: usize) {
+    if std::env::var_os("AIFIX_LLM_MEMORY_DIAG").is_none() {
+        return;
+    }
+    let prompt_chars = prompt.chars().count();
+    let context_chars = context.chars().count();
+    let prefix_chars = prefix.chars().count();
+    // This is not the model tokenizer; use it only for relative comparisons.
+    let estimated_input_tokens = (prompt_chars + context_chars).div_ceil(3);
+    let gpu = std::process::Command::new("nvidia-smi")
+        .args(["--query-gpu=memory.used,memory.free,memory.total", "--format=csv,noheader,nounits"])
+        .output()
+        .ok()
+        .filter(|result| result.status.success())
+        .and_then(|result| String::from_utf8(result.stdout).ok())
+        .and_then(|output| output.lines().next().map(str::to_owned))
+        .unwrap_or_else(|| "unavailable".to_owned());
+    println!(
+        "## [CHUNKED] MEMORY DIAG: stage={stage} chunk={chunk} prompt_chars={prompt_chars} context_chars={context_chars} prefix_chars={prefix_chars} estimated_input_tokens={estimated_input_tokens} output_token_limit={output_tokens} gpu_used_free_total_mib={gpu}"
+    );
+}
+
 const CHUNK_CHARS: usize = 8_000;
 pub const CHUNK_OVERLAP_CHARS: usize = 1_000;
 const MIN_RECOVERY_CHARS: usize = 700;
@@ -2011,6 +2034,14 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 } else {
                     window_context
                 };
+                log_llm_memory_budget(
+                    "extract",
+                    index + 1,
+                    &json_prompt,
+                    &window_context,
+                    &scoped_prefix,
+                    self.llm_call.max_tokens(),
+                );
                 let response = match self.llm_call.run_text_step_limited_with_temperature(
                     &json_prompt,
                     &window_context,
@@ -2258,6 +2289,14 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                             index + 1
                         ));
                     }
+                    log_llm_memory_budget(
+                        "coverage",
+                        index + 1,
+                        &coverage_prompt,
+                        &context,
+                        &scoped_prefix,
+                        self.llm_call.max_tokens(),
+                    );
                     let response = match self.llm_call.run_text_step_limited_with_temperature(
                         &coverage_prompt,
                         &context,
