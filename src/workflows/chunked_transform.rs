@@ -3864,7 +3864,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             };
             // A failed review triggers one bounded navigation attempt over the
             // attributed source window, never over unrelated document sections.
-            let result = if let Err(reason) = result {
+            let mut result = if let Err(reason) = result {
                 if let Some(source) = source.filter(|source| !source.trim().is_empty()) {
                     let menu = evidence_segments(source)
                         .iter()
