@@ -52,8 +52,8 @@ flowchart TD
     I --> J
     J --> K["Lexical assemblies and unresolved evidence"]
     K --> L["Independent semantic / identity verification — NOT COMPLETE"]
-    L -. "future, gated" .-> M["Verified language-neutral schema"]
-    M -. "future" .-> N["Separate C++ / Rust generator"]
+    L -.->|future, gated| M["Verified language-neutral schema"]
+    M -.->|future| N["Separate C++ / Rust generator"]
 ```
 
 A source quote proves text presence, a majority vote proposes a relation, and a lexical assembly recognizes syntax. **None of these alone proves a protocol field or its owning message.**
