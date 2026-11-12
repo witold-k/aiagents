@@ -298,7 +298,9 @@ fn scoped_source_context(source: &str, byte_offset: usize) -> String {
         }
     }
     if let Some(declaration) = message {
-        lines.push(format!("Active declaration: {declaration}"));
+        lines.push(format!("Active declaration (source-scoped hypothesis): {declaration}"));
+    } else {
+        lines.push("Active declaration: none established".to_owned());
     }
     // Table context is structural evidence only. Preserve exact cells and
     // row boundaries; never infer an owning message from a table header.
@@ -319,7 +321,7 @@ fn scoped_source_context(source: &str, byte_offset: usize) -> String {
     }
     let bounded: String = lines.join("\n").chars().take(MAX_CONTEXT_CHARS).collect();
     format!(
-        "=== DETERMINISTIC SOURCE CONTEXT (read-only; not evidence) ===\n{bounded}\n=== END DETERMINISTIC CONTEXT ===\nThis structure is a hint, not proof of message ownership. A new heading, table row or section can change scope. Cite evidence only from CURRENT SOURCE.\n\n"
+        "=== DETERMINISTIC SOURCE CONTEXT (read-only; not evidence) ===\n{bounded}\n=== END DETERMINISTIC CONTEXT ===\nThis structure is a hint, not proof of message ownership. It describes the position BEFORE the window, not all positions within it. A new heading, table row, message declaration or section INSIDE CURRENT SOURCE may change scope. Re-evaluate each source segment independently. Cite evidence only from CURRENT SOURCE.\n\n"
     )
 }
 
@@ -327,7 +329,20 @@ fn scoped_source_context(source: &str, byte_offset: usize) -> String {
 // previous model response. This makes resume and recovery splits deterministic.
 // It is a hint to the model, not evidence for a fact or a message identity.
 fn preceding_extraction_context(source: &str, part: &Chunk, window: &str) -> String {
-    let local_offset = part.text.find(window).unwrap_or(0);
+    // Recovery substrings may repeat. A guessed first occurrence would attach
+    // unrelated section/message context to an ambiguous recovery window.
+    let local_offset = if window == part.text {
+        Some(0)
+    } else {
+        let mut occurrences = part.text.match_indices(window);
+        match (occurrences.next(), occurrences.next()) {
+            (Some((offset, _)), None) => Some(offset),
+            _ => None,
+        }
+    };
+    let Some(local_offset) = local_offset else {
+        return "=== CONTEXT LOCATION AMBIGUOUS ===\nNo preceding context is supplied: recovery text has no unique source position. Cite only CURRENT SOURCE.\n\n".to_owned();
+    };
     let before = &source[..(part.start_byte + local_offset).min(source.len())];
     let tail_start = before
         .char_indices()
