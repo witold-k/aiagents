@@ -12,7 +12,22 @@ pub(super) struct ProtocolModel {
     schema_version: u32,
     status: &'static str,
     messages: Vec<MessageHypothesis>,
+    table_evidence: Vec<TableEvidence>,
     caveats: Vec<&'static str>,
+}
+
+#[derive(Debug, Serialize)]
+struct TableEvidence {
+    normalized_byte_start: usize,
+    normalized_byte_end: usize,
+    rows: Vec<TableRowEvidence>,
+}
+
+#[derive(Debug, Serialize)]
+struct TableRowEvidence {
+    normalized_byte_start: usize,
+    normalized_byte_end: usize,
+    cells: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -89,7 +104,27 @@ fn assignment_syntax(quote: &str, key: &str) -> (&'static str, Option<String>, V
     ("unclassified", None, Vec::new())
 }
 
-pub(super) fn stage(candidates: &[MessageCandidate], windows: &[&str]) -> ProtocolModel {
+pub(super) fn stage(
+    candidates: &[MessageCandidate],
+    windows: &[&str],
+    normalized_analysis: &simplelexer::tablelexer::DocumentAnalysis,
+) -> ProtocolModel {
+    // Copy existing lexer observations. Normalized offsets are not original
+    // source offsets and must never be used to claim fact ownership.
+    let table_evidence = normalized_analysis.blocks.iter().filter_map(|block| {
+        let simplelexer::tablelexer::DocumentChunk::Table(table) = block else {
+            return None;
+        };
+        Some(TableEvidence {
+            normalized_byte_start: table.span.start,
+            normalized_byte_end: table.span.end,
+            rows: table.rows.iter().map(|row| TableRowEvidence {
+                normalized_byte_start: row.span.start,
+                normalized_byte_end: row.span.end,
+                cells: row.cells.iter().map(|cell| cell.text.to_string()).collect(),
+            }).collect(),
+        })
+    }).collect();
     let messages = candidates
         .iter()
         .map(|candidate| {
@@ -150,8 +185,10 @@ pub(super) fn stage(candidates: &[MessageCandidate], windows: &[&str]) -> Protoc
         schema_version: 1,
         status: "diagnostic_hypotheses_only",
         messages,
+        table_evidence,
         caveats: vec![
             "Candidates are not canonical messages; repeated names do not imply identity.",
+            "Table evidence uses normalized-document byte offsets; original source mapping and message ownership are not asserted.",
             "Parameter hints distinguish lexical definition syntax from assignments; neither establishes verified fields or message ownership.",
             "Lexical type labels are not validated types; ranges, cardinality, constraints, defaults and protocol behavior are not inferred.",
             "An exact source quotation does not establish the semantic truth of a statement.",
