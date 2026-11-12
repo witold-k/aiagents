@@ -39,6 +39,7 @@ struct ParameterHint {
     name: String,
     origin_assertion: usize,
     status: &'static str,
+    syntax_kind: &'static str,
     value_type: Option<String>,
     required: Option<bool>,
     constraints: Vec<String>,
@@ -60,6 +61,32 @@ fn assignment_key(text: &str) -> Option<&str> {
         }
         Some(key)
     })
+}
+
+/// Classify the value syntax, not the semantic meaning of a parameter.
+//// Only an explicit angle-bracket type declaration is recognized.
+fn assignment_syntax(quote: &str, key: &str) -> (&'static str, Option<String>, Vec<String>) {
+    for token in quote.split_whitespace() {
+        let clean = token.trim_matches(|c: char| matches!(c, '|' | '`' | ',' | ';' | '*' | '(' | ')'));
+        let Some(value) = clean.strip_prefix(key).and_then(|s| s.strip_prefix('=')) else {
+            continue;
+        };
+        let rest = if let Some(rest) = value.strip_prefix('<') {
+            rest
+        } else if let Some(rest) = value.strip_prefix("&lt;") {
+            rest
+        } else {
+            return ("assignment_example_or_value", None, Vec::new());
+        };
+        // Type is lexical only. A range must not be guessed from free text.
+        let ty = rest.split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+            .next().filter(|s| !s.is_empty());
+        return match ty {
+            Some(ty) => ("definition_syntax", Some(ty.to_owned()), Vec::new()),
+            None => ("unclassified", None, Vec::new()),
+        };
+    }
+    ("unclassified", None, Vec::new())
 }
 
 pub(super) fn stage(candidates: &[MessageCandidate], windows: &[&str]) -> ProtocolModel {
@@ -96,13 +123,17 @@ pub(super) fn stage(candidates: &[MessageCandidate], windows: &[&str]) -> Protoc
                 if anchored
                     && let Some(key) = fact.evidence_quote.as_deref().and_then(assignment_key)
                 {
+                    let (syntax_kind, value_type, constraints) = assignment_syntax(
+                        fact.evidence_quote.as_deref().unwrap_or_default(), key
+                    );
                     parameter_hints.push(ParameterHint {
                         name: key.to_owned(),
                         origin_assertion: index,
                         status: "lexical_hypothesis",
-                        value_type: None,
+                        syntax_kind,
+                        value_type,
                         required: None,
-                        constraints: Vec::new(),
+                        constraints,
                     });
                 }
             }
@@ -121,8 +152,8 @@ pub(super) fn stage(candidates: &[MessageCandidate], windows: &[&str]) -> Protoc
         messages,
         caveats: vec![
             "Candidates are not canonical messages; repeated names do not imply identity.",
-            "Parameter hints are literal key=value syntax, not verified fields or message ownership.",
-            "Types, cardinality, constraints, defaults and protocol behavior are not inferred.",
+            "Parameter hints distinguish lexical definition syntax from assignments; neither establishes verified fields or message ownership.",
+            "Lexical type labels are not validated types; ranges, cardinality, constraints, defaults and protocol behavior are not inferred.",
             "An exact source quotation does not establish the semantic truth of a statement.",
             "This model is not suitable for automatic code generation.",
         ],
