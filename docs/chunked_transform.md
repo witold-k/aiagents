@@ -1,5 +1,7 @@
 # Chunked extraction — current implementation
 
+[Current status and checkpoint metrics](current_status.md) · [Architecture diagrams](architecture_diagrams.md)
+
 > Experimental workflow. Source quotations and structural diagnostics do **not** establish semantic correctness or completeness.
 
 ## Purpose
@@ -157,3 +159,25 @@ Publication is staged and does not silently overwrite an existing output directo
 - [Historical P4 review](reviews/p4_identity_checkpoint_audit.md)
 
 Historical checkpoint schemas, Markdown-output stages and older the reference protocol measurements are deliberately omitted from this current-behavior reference.
+
+## Diagnostic protocol model — implemented boundaries (2026-11-12)
+
+`coverage-audit.json.protocol-model.json` is an **unverified diagnostic projection**, not a generator input. Its current collections include:
+
+| Field | Meaning | Not guaranteed |
+| --- | --- | --- |
+| `messages` | Candidate messages and lexical/source evidence | Canonical identity or owner |
+| `table_evidence` | Observed normalized table structure | Correct interpretation of damaged source tables |
+| `semantic_units` | Source-anchored voted row continuations | Verified semantic field boundaries |
+| `hypothetical_semantic_units` | Relation-backed continuations without a lexical entry anchor | Verified parameter definitions |
+| `reconstructed_table_entries` | First/second column fragments in source row order | Repaired column layout |
+| `assembled_parameters` | Explicit lexical declaration syntax with supported type/range/unit hints | Full field schema, optionality, conditions or message ownership |
+| `unassembled_semantic_rows` | Uninterpreted source rows with reasons | Absence of a real field in the document |
+
+The earlier `table_repair_hypotheses` output was **removed**: its bare-column pattern was tailored to a particular damaged table shape. Consumers must not depend on that experimental field. No equivalent automatic repair or schema promotion replaces it.
+
+### Interpreting locator diagnostics
+
+The latest supplied checkpoint has 238 facts, 124 exact statement locators and 114 missing exact statement locators. A missing **verbatim statement** may still have an exact source quotation: extracted statements can paraphrase or normalize source wording. Investigate `coverage-audit.json.missing-locators.json` and the evidence quote before calling a fact unsupported. Exact text presence is not semantic truth.
+
+The checkpoint was **resumed**, not freshly re-extracted with the latest branch. LLM-voted relations (3/3 valid attempts in that replay) are structural proposals, not independent verification. For a dated, denominator-aware snapshot, see [current status](current_status.md).
