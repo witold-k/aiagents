@@ -64,7 +64,7 @@ fn assignment_key(text: &str) -> Option<&str> {
 }
 
 /// Classify the value syntax, not the semantic meaning of a parameter.
-//// Only an explicit angle-bracket type declaration is recognized.
+/// Only an explicit angle-bracket type declaration is recognized.
 fn assignment_syntax(quote: &str, key: &str) -> (&'static str, Option<String>, Vec<String>) {
     for token in quote.split_whitespace() {
         let clean = token.trim_matches(|c: char| matches!(c, '|' | '`' | ',' | ';' | '*' | '(' | ')'));
