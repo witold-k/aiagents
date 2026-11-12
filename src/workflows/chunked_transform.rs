@@ -2099,7 +2099,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                             );
                             let retry_prompt = if is_eof {
                                 format!(
-                                    "{json_prompt}\n\nPrevious JSON was truncated. Return a COMPLETE, COMPACT JSON object with a closed files array. Prefer fewer facts over incomplete JSON; do not invent or omit closing delimiters."
+                                    "{json_prompt}\n\nPrevious JSON was truncated. Return a COMPLETE, COMPACT JSON object with a closed files array. Preserve every source-supported fact; if the output cannot fit, the caller will split the source window. Never invent facts or omit closing delimiters."
                                 )
                             } else {
                                 format!(
@@ -2333,34 +2333,32 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                                 strip_code_fences(response.trim()).trim(),
                             )
                             .is_err_and(|err| err.is_eof());
-                            if is_eof {
-                                Err(first_error)
-                            } else {
-                                println!(
-                                    "## [CHUNKED] COVERAGE RETRY {}/{}",
-                                    index + 1,
-                                    parts.len()
-                                );
-                                let retry_prompt = format!(
-                                    "{coverage_prompt}\n\nPrevious JSON response was invalid: {first_error}. Return a single valid JSON object only."
-                                );
-                                let retried =
-                                    match self.llm_call.run_text_step_limited_with_temperature(
-                                        &retry_prompt,
-                                        &context,
-                                        self.llm_call.max_tokens(),
-                                        0.0,
-                                    ) {
-                                        Ok(text) => text,
-                                        Err(err) => return WorkflowResult::LlmCallResult(err),
-                                    };
-                                parse_segmented_window_recoverable(
-                                    &retried,
-                                    &window,
-                                    &masked_source,
+                            println!(
+                                "## [CHUNKED] COVERAGE RETRY {}/{}: eof={} ({first_error})",
+                                index + 1,
+                                parts.len(),
+                                is_eof
+                            );
+                            let retry_prompt = if is_eof {
+                                format!(
+                                    "{coverage_prompt}\\n\\nPrevious JSON was truncated. Return a COMPLETE, COMPACT JSON object with a closed files array. Preserve every source-supported fact; if the output cannot fit, the caller will split the source window. Never invent facts or omit closing delimiters."
                                 )
+                            } else {
+                                format!(
+                                    "{coverage_prompt}\\n\\nPrevious JSON response was invalid: {first_error}. Return a single valid JSON object only."
+                                )
+                            };
+                            let retried = match self.llm_call.run_text_step_limited_with_temperature(
+                                &retry_prompt,
+                                &context,
+                                self.llm_call.max_tokens(),
+                                0.0,
+                            ) {
+                                Ok(text) => text,
+                                Err(err) => return WorkflowResult::LlmCallResult(err),
+                            };
+                            parse_segmented_window_recoverable(&retried, &window, &masked_source)
                                 .map(|found| (found, retried))
-                            }
                         }
                     };
                     match parsed {
