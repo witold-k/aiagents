@@ -30,3 +30,11 @@ This is a **prototype, not yet wired into** `extract_message_tables`. Existing e
 Run `AIFIX_DOCUMENT_PLAN=1 aifix -t extract_message_tables -a document.md` to build and print a complete-document, deterministic section tree and an experimental window plan **before** the existing extraction. Set `AIFIX_DOCUMENT_CONTEXT_TOKENS` to change the provisional context size (default 32768). The plan uses a conservative character-per-token estimate, **not a model tokenizer**, and does not yet reserve the actual serialized prefix size. Treat it as instrumentation only.
 
 This diagnostic **does not replace** the existing 8,000-character chunks, evidence segmentation, recovery, checkpoint identity, or LLM prompts. The existing extraction proceeds as before. No additional LLM call is made by the prepass. Next, measure actual token usage, derive safe budgets from the configured model, and migrate source-window/checkpoint handling before activating the new planner.
+
+## Opt-in scoped prefix in real LLM requests
+
+`AIFIX_SCOPED_PREFIX=1 aifix -t extract_message_tables -a document.md` enables the deterministic section ancestry prefix for **extraction and coverage LLM requests**. The prefix is derived from source positions, never prior LLM responses. It is read-only context, not evidence. For recovery windows whose source occurrence is ambiguous, no scoped prefix is attached.
+
+This mode deliberately retains the original 8,000-character chunk layout and existing evidence offsets. It changes the extraction fingerprint, so a checkpoint from the legacy mode cannot be resumed as if prompts were identical. The opt-in diagnostic `AIFIX_DOCUMENT_PLAN` remains separate; it does not yet activate adaptive window boundaries.
+
+**Limitations:** The prefix currently describes Markdown heading ancestry, not inferred semantic ownership or complete applicable constraints. The model context limit is not yet queried from the configured backend. A window may still cross a heading boundary, so the prefix describes the start of the window only; the model must respect source-internal changes. Do not treat this as completed semantic two-pass extraction.
