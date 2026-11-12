@@ -1,3 +1,70 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Witold Kaminski
+
+//! Diagnostic, language-neutral protocol model staging.
+//! This is an inventory of hypotheses and source anchors, not a wire schema.
+
+use super::llm_structure::{SemanticUnit, SourceGraph};
+use super::message_identity::{MessageCandidate, source_window_index};
+use serde::Serialize;
+
+#[derive(Debug, Serialize)]
+pub(super) struct ProtocolModel {
+    schema_version: u32,
+    status: &'static str,
+    messages: Vec<MessageHypothesis>,
+    table_evidence: Vec<TableEvidence>,
+    semantic_units: Vec<SemanticUnitEvidence>,
+    hypothetical_semantic_units: Vec<SemanticUnitEvidence>,
+    assembled_parameters: Vec<AssembledParameter>,
+    unassembled_semantic_rows: Vec<UnassembledSemanticRow>,
+    caveats: Vec<&'static str>,
+}
+
+#[derive(Debug, Serialize)]
+struct TableEvidence {
+    normalized_byte_start: usize,
+    normalized_byte_end: usize,
+    rows: Vec<TableRowEvidence>,
+}
+
+#[derive(Debug, Serialize)]
+struct TableRowEvidence {
+    normalized_byte_start: usize,
+    normalized_byte_end: Option<usize>,
+    cells: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct SemanticUnitEvidence {
+    entry_normalized_byte: usize,
+    row_normalized_bytes: Vec<usize>,
+    rows: Vec<TableRowEvidence>,
+    supporting_relations: Vec<RelationEvidence>,
+    status: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+struct RelationEvidence {
+    earlier_normalized_byte: usize,
+    later_normalized_byte: usize,
+    relation: String,
+    votes: usize,
+    valid_attempts: usize,
+}
+
+impl ProtocolModel {
+    /// Attach only existing, voted row relations; never infer field ownership.
+    pub(super) fn with_semantic_units(
+        mut self,
+        graph: &SourceGraph,
+        units: &[SemanticUnit],
+        hypothetical: &[SemanticUnit],
+    ) -> Self {
+        self.semantic_units = project_semantic_units(graph, units, "proposed_voted_continuation");
+        self.hypothetical_semantic_units =
+            project_semantic_units(graph, hypothetical, "hypothetical_voted_boundary_without_lexical_anchor");
+
         self.unassembled_semantic_rows = self.semantic_units.iter()
             .flat_map(|unit| &unit.rows)
             .filter(|row| !row.cells.iter().any(|cell| declared_parameter(cell).is_some()))
