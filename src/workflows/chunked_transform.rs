@@ -1825,6 +1825,11 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 }
             }
         }
+        // Opt-in semantic scope prefix for the existing evidence-safe windows.
+        // Keep chunk boundaries unchanged until source-window and checkpoint
+        // coordinate migration is complete.
+        let scoped_tree = std::env::var_os("AIFIX_SCOPED_PREFIX")
+            .map(|_| source_tree::SourceTree::parse(&masked_source).document_scope(&masked_source));
         let parts = chunks(&masked_source, CHUNK_CHARS);
         if parts.is_empty() {
             return WorkflowResult::Error("Input document is empty".into());
@@ -1850,6 +1855,11 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 JSON_COVERAGE_PROMPT,
                 "segmented-evidence-v12-deferred-candidates",
                 "simplelexer-explicit-table-context-v1",
+                if scoped_tree.is_some() {
+                    "source-scoped-prefix-v1"
+                } else {
+                    "source-scoped-prefix-disabled-v1"
+                },
             ],
         );
         let mut checkpoint = match load_checkpoint(&checkpoint_file, &fingerprint, parts.len()) {
@@ -1943,7 +1953,22 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                         index + 1
                     ));
                 }
-                let preceding = preceding_extraction_context(&masked_source, part, &window);
+                let scoped_prefix = scoped_tree.as_ref().and_then(|tree| {
+                    let offset = if window == part.text {
+                        Some(part.start_byte)
+                    } else {
+                        let mut matches = part.text.match_indices(&window);
+                        match (matches.next(), matches.next()) {
+                            (Some((offset, _)), None) => Some(part.start_byte + offset),
+                            _ => None,
+                        }
+                    }?;
+                    Some(tree.prefix_at(offset).1)
+                }).unwrap_or_default();
+                let preceding = format!(
+                    "{scoped_prefix}{}",
+                    preceding_extraction_context(&masked_source, part, &window)
+                );
                 // Construct the source section directly. String replacement could
                 // accidentally alter header metadata when it repeats source text.
                 let window_context = if window == part.text {
@@ -2203,7 +2228,22 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                         checkpoint.unresolved_findings = true;
                         break;
                     }
-                    let preceding = preceding_extraction_context(&masked_source, part, &window);
+                    let scoped_prefix = scoped_tree.as_ref().and_then(|tree| {
+                        let offset = if window == part.text {
+                            Some(part.start_byte)
+                        } else {
+                            let mut matches = part.text.match_indices(&window);
+                            match (matches.next(), matches.next()) {
+                                (Some((offset, _)), None) => Some(part.start_byte + offset),
+                                _ => None,
+                            }
+                        }?;
+                        Some(tree.prefix_at(offset).1)
+                    }).unwrap_or_default();
+                    let preceding = format!(
+                        "{scoped_prefix}{}",
+                        preceding_extraction_context(&masked_source, part, &window)
+                    );
                     let context = format!(
                         "{preceding}SOURCE CHUNK {}/{} LINES {}-{}\n\n=== KNOWN MESSAGES ===\n{inventory}\n\n=== SOURCE ===\n{}",
                         index + 1,
