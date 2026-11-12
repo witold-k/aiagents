@@ -52,32 +52,51 @@ struct RelationEvidence {
 
 impl ProtocolModel {
     /// Attach only existing, voted row relations; never infer field ownership.
-    pub(super) fn with_semantic_units(mut self, graph: &SourceGraph, units: &[SemanticUnit]) -> Self {
-        self.semantic_units = units.iter().filter_map(|unit| {
-            let rows: Option<Vec<_>> = unit.row_starts.iter().map(|start| {
-                graph.rows.iter().find(|row| row.start == *start).map(|row| TableRowEvidence {
-                    normalized_byte_start: row.start,
-                    normalized_byte_end: None,
-                    cells: row.cells.clone(),
+    pub(super) fn with_semantic_units(
+        mut self,
+        graph: &SourceGraph,
+        units: &[SemanticUnit],
+    ) -> Self {
+        self.semantic_units = units
+            .iter()
+            .filter_map(|unit| {
+                let rows: Option<Vec<_>> = unit
+                    .row_starts
+                    .iter()
+                    .map(|start| {
+                        graph
+                            .rows
+                            .iter()
+                            .find(|row| row.start == *start)
+                            .map(|row| TableRowEvidence {
+                                normalized_byte_start: row.start,
+                                normalized_byte_end: None,
+                                cells: row.cells.clone(),
+                            })
+                    })
+                    .collect();
+                let relations: Option<Vec<_>> = unit
+                    .supporting_relations
+                    .iter()
+                    .map(|index| {
+                        graph.relations.get(*index).map(|r| RelationEvidence {
+                            earlier_normalized_byte: r.earlier_row,
+                            later_normalized_byte: r.later_row,
+                            relation: r.relation.clone(),
+                            votes: r.votes,
+                            valid_attempts: r.valid_attempts,
+                        })
+                    })
+                    .collect();
+                Some(SemanticUnitEvidence {
+                    entry_normalized_byte: unit.entry_row,
+                    row_normalized_bytes: unit.row_starts.clone(),
+                    rows: rows?,
+                    supporting_relations: relations?,
+                    status: "proposed_voted_continuation",
                 })
-            }).collect();
-            let relations: Option<Vec<_>> = unit.supporting_relations.iter().map(|index| {
-                graph.relations.get(*index).map(|r| RelationEvidence {
-                    earlier_normalized_byte: r.earlier_row,
-                    later_normalized_byte: r.later_row,
-                    relation: r.relation.clone(),
-                    votes: r.votes,
-                    valid_attempts: r.valid_attempts,
-                })
-            }).collect();
-            Some(SemanticUnitEvidence {
-                entry_normalized_byte: unit.entry_row,
-                row_normalized_bytes: unit.row_starts.clone(),
-                rows: rows?,
-                supporting_relations: relations?,
-                status: "proposed_voted_continuation",
             })
-        }).collect();
+            .collect();
         self
     }
 }
@@ -134,7 +153,8 @@ fn assignment_key(text: &str) -> Option<&str> {
 /// Only an explicit angle-bracket type declaration is recognized.
 fn assignment_syntax(quote: &str, key: &str) -> (&'static str, Option<String>, Vec<String>) {
     for token in quote.split_whitespace() {
-        let clean = token.trim_matches(|c: char| matches!(c, '|' | '`' | ',' | ';' | '*' | '(' | ')'));
+        let clean =
+            token.trim_matches(|c: char| matches!(c, '|' | '`' | ',' | ';' | '*' | '(' | ')'));
         let Some(value) = clean.strip_prefix(key).and_then(|s| s.strip_prefix('=')) else {
             continue;
         };
@@ -146,8 +166,10 @@ fn assignment_syntax(quote: &str, key: &str) -> (&'static str, Option<String>, V
             return ("assignment_example_or_value", None, Vec::new());
         };
         // Type is lexical only. A range must not be guessed from free text.
-        let ty = rest.split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
-            .next().filter(|s| !s.is_empty());
+        let ty = rest
+            .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+            .next()
+            .filter(|s| !s.is_empty());
         return match ty {
             Some(ty) => ("definition_syntax", Some(ty.to_owned()), Vec::new()),
             None => ("unclassified", None, Vec::new()),
@@ -163,20 +185,28 @@ pub(super) fn stage(
 ) -> ProtocolModel {
     // Copy existing lexer observations. Normalized offsets are not original
     // source offsets and must never be used to claim fact ownership.
-    let table_evidence = normalized_analysis.blocks.iter().filter_map(|block| {
-        let simplelexer::tablelexer::DocumentChunk::Table(table) = block else {
-            return None;
-        };
-        Some(TableEvidence {
-            normalized_byte_start: table.span.start,
-            normalized_byte_end: table.span.end,
-            rows: table.rows.iter().map(|row| TableRowEvidence {
-                normalized_byte_start: row.span.start,
-                normalized_byte_end: Some(row.span.end),
-                cells: row.cells.iter().map(|cell| cell.text.to_string()).collect(),
-            }).collect(),
+    let table_evidence = normalized_analysis
+        .blocks
+        .iter()
+        .filter_map(|block| {
+            let simplelexer::tablelexer::DocumentChunk::Table(table) = block else {
+                return None;
+            };
+            Some(TableEvidence {
+                normalized_byte_start: table.span.start,
+                normalized_byte_end: table.span.end,
+                rows: table
+                    .rows
+                    .iter()
+                    .map(|row| TableRowEvidence {
+                        normalized_byte_start: row.span.start,
+                        normalized_byte_end: Some(row.span.end),
+                        cells: row.cells.iter().map(|cell| cell.text.to_string()).collect(),
+                    })
+                    .collect(),
+            })
         })
-    }).collect();
+        .collect();
     let messages = candidates
         .iter()
         .map(|candidate| {
@@ -210,9 +240,8 @@ pub(super) fn stage(
                 if anchored
                     && let Some(key) = fact.evidence_quote.as_deref().and_then(assignment_key)
                 {
-                    let (syntax_kind, value_type, constraints) = assignment_syntax(
-                        fact.evidence_quote.as_deref().unwrap_or_default(), key
-                    );
+                    let (syntax_kind, value_type, constraints) =
+                        assignment_syntax(fact.evidence_quote.as_deref().unwrap_or_default(), key);
                     parameter_hints.push(ParameterHint {
                         name: key.to_owned(),
                         origin_assertion: index,

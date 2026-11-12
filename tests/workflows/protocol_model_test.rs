@@ -60,11 +60,23 @@ fn prose_and_table_caption_are_not_parameter_hints() {
 #[test]
 fn explicit_type_syntax_is_distinct_from_example_value() {
     for (quote, expected_kind, expected_type) in [
-        ("statusCode=<int 0 to 65535>", "definition_syntax", Some("int")),
-        ("statusCode=&lt;int 0 to 65535>", "definition_syntax", Some("int")),
+        (
+            "statusCode=<int 0 to 65535>",
+            "definition_syntax",
+            Some("int"),
+        ),
+        (
+            "statusCode=&lt;int 0 to 65535>",
+            "definition_syntax",
+            Some("int"),
+        ),
         ("statusCode=20", "assignment_example_or_value", None),
     ] {
-        let report = stage(&[candidate(quote, Some(0), false)], &[quote], &simplelexer::tablelexer::DocumentAnalysis::parse(quote));
+        let report = stage(
+            &[candidate(quote, Some(0), false)],
+            &[quote],
+            &simplelexer::tablelexer::DocumentAnalysis::parse(quote),
+        );
         let hint = &report.messages[0].parameter_hints[0];
         assert_eq!(hint.name, "statusCode");
         assert_eq!(hint.syntax_kind, expected_kind);
@@ -91,27 +103,47 @@ fn normalized_table_evidence_is_observed_without_claiming_ownership() {
     let report = stage(&[], &[], &analysis);
     assert!(report.messages.is_empty());
     assert_eq!(report.table_evidence.len(), 1);
-    assert!(report.table_evidence[0].rows.iter().any(|row|
-        row.cells.iter().any(|cell| cell == "statusCode")
-    ));
+    assert!(
+        report.table_evidence[0]
+            .rows
+            .iter()
+            .any(|row| row.cells.iter().any(|cell| cell == "statusCode"))
+    );
 }
 
 #[test]
 fn semantic_units_keep_voted_relations_without_assigning_message_identity() {
-    use super::super::llm_structure::{RowEvidence, SourceGraph, StructuralRelation, SemanticUnit};
+    use super::super::llm_structure::{RowEvidence, SemanticUnit, SourceGraph, StructuralRelation};
     let graph = SourceGraph {
         rows: vec![
-            RowEvidence { line: 2, start: 12, previous: None, next: Some(35), cells: vec!["statusCode".into(), "integer".into()] },
-            RowEvidence { line: 3, start: 35, previous: Some(12), next: None, cells: vec!["".into(), "range 0..65535".into()] },
+            RowEvidence {
+                line: 2,
+                start: 12,
+                previous: None,
+                next: Some(35),
+                cells: vec!["statusCode".into(), "integer".into()],
+            },
+            RowEvidence {
+                line: 3,
+                start: 35,
+                previous: Some(12),
+                next: None,
+                cells: vec!["".into(), "range 0..65535".into()],
+            },
         ],
         relations: vec![StructuralRelation {
-            earlier_row: 12, later_row: 35,
-            relation: "entry_description".into(), votes: 2, valid_attempts: 3,
+            earlier_row: 12,
+            later_row: 35,
+            relation: "entry_description".into(),
+            votes: 2,
+            valid_attempts: 3,
         }],
         assertions: vec![],
     };
     let units = vec![SemanticUnit {
-        entry_row: 12, row_starts: vec![12, 35], supporting_relations: vec![0],
+        entry_row: 12,
+        row_starts: vec![12, 35],
+        supporting_relations: vec![0],
     }];
     let analysis = simplelexer::tablelexer::DocumentAnalysis::parse("");
     let report = stage(&[], &[], &analysis).with_semantic_units(&graph, &units);
@@ -126,10 +158,16 @@ fn semantic_units_keep_voted_relations_without_assigning_message_identity() {
 
 #[test]
 fn invalid_semantic_row_reference_does_not_create_a_unit() {
-    use super::super::llm_structure::{SourceGraph, SemanticUnit};
-    let graph = SourceGraph { rows: vec![], relations: vec![], assertions: vec![] };
+    use super::super::llm_structure::{SemanticUnit, SourceGraph};
+    let graph = SourceGraph {
+        rows: vec![],
+        relations: vec![],
+        assertions: vec![],
+    };
     let units = vec![SemanticUnit {
-        entry_row: 10, row_starts: vec![10, 20], supporting_relations: vec![0],
+        entry_row: 10,
+        row_starts: vec![10, 20],
+        supporting_relations: vec![0],
     }];
     let analysis = simplelexer::tablelexer::DocumentAnalysis::parse("");
     let report = stage(&[], &[], &analysis).with_semantic_units(&graph, &units);

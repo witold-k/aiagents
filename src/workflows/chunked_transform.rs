@@ -2494,7 +2494,8 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 &source_starts,
                 &masked_source,
             );
-            let staged_model = protocol_model::stage(&checkpoint.candidates, &source_windows, &table_analysis);
+            let staged_model =
+                protocol_model::stage(&checkpoint.candidates, &source_windows, &table_analysis);
             let model_output = format!("{output}.protocol-model.json");
             match serde_json::to_string_pretty(&staged_model) {
                 Ok(json) => {
@@ -2802,16 +2803,23 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 // analysis has produced voted relations. This never changes facts.
                 if let Ok(output) = std::env::var("AIFIX_COVERAGE_AUDIT_JSON") {
                     let model = protocol_model::stage(
-                        &checkpoint.candidates, &source_windows, &table_analysis,
-                    ).with_semantic_units(&graph, &units);
+                        &checkpoint.candidates,
+                        &source_windows,
+                        &table_analysis,
+                    )
+                    .with_semantic_units(&graph, &units);
                     let model_output = format!("{output}.protocol-model.json");
                     match serde_json::to_string_pretty(&model) {
                         Ok(json) => {
                             if let Err(err) = fs::write(&model_output, format!("{json}\n")) {
-                                eprintln!("## [CHUNKED] SEMANTIC MODEL: unable to write {model_output:?}: {err}");
+                                eprintln!(
+                                    "## [CHUNKED] SEMANTIC MODEL: unable to write {model_output:?}: {err}"
+                                );
                             }
                         }
-                        Err(err) => eprintln!("## [CHUNKED] SEMANTIC MODEL: serialization failed: {err}"),
+                        Err(err) => {
+                            eprintln!("## [CHUNKED] SEMANTIC MODEL: serialization failed: {err}")
+                        }
                     }
                 }
 
