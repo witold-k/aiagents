@@ -41,7 +41,7 @@ pub use crate::utils::stringutils::{mask_embedded_data_uris, mask_opaque_lines};
 use crate::workflows::workflow::{Workflow, WorkflowResult};
 
 /// Opt-in diagnostic only: does not change prompts or inference settings.
-fn log_llm_memory_budget(stage: &str, chunk: usize, prompt: &str, context: &str, prefix: &str, output_tokens: usize) {
+fn log_llm_memory_budget(stage: &str, chunk: usize, prompt: &str, context: &str, prefix: &str, output_tokens: u32) {
     if std::env::var_os("AIFIX_LLM_MEMORY_DIAG").is_none() {
         return;
     }
