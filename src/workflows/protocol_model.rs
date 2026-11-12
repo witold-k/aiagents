@@ -4,6 +4,7 @@
 //! Diagnostic, language-neutral protocol model staging.
 //! This is an inventory of hypotheses and source anchors, not a wire schema.
 
+use super::llm_structure::{SemanticUnit, SourceGraph};
 use super::message_identity::{MessageCandidate, source_window_index};
 use serde::Serialize;
 
@@ -13,6 +14,7 @@ pub(super) struct ProtocolModel {
     status: &'static str,
     messages: Vec<MessageHypothesis>,
     table_evidence: Vec<TableEvidence>,
+    semantic_units: Vec<SemanticUnitEvidence>,
     caveats: Vec<&'static str>,
 }
 
@@ -28,6 +30,56 @@ struct TableRowEvidence {
     normalized_byte_start: usize,
     normalized_byte_end: usize,
     cells: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct SemanticUnitEvidence {
+    entry_normalized_byte: usize,
+    row_normalized_bytes: Vec<usize>,
+    rows: Vec<TableRowEvidence>,
+    supporting_relations: Vec<RelationEvidence>,
+    status: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+struct RelationEvidence {
+    earlier_normalized_byte: usize,
+    later_normalized_byte: usize,
+    relation: String,
+    votes: usize,
+    valid_attempts: usize,
+}
+
+impl ProtocolModel {
+    /// Attach only existing, voted row relations; never infer field ownership.
+    pub(super) fn with_semantic_units(mut self, graph: &SourceGraph, units: &[SemanticUnit]) -> Self {
+        self.semantic_units = units.iter().filter_map(|unit| {
+            let rows: Option<Vec<_>> = unit.row_starts.iter().map(|start| {
+                graph.rows.iter().find(|row| row.start == *start).map(|row| TableRowEvidence {
+                    normalized_byte_start: row.start,
+                    normalized_byte_end: row.start,
+                    cells: row.cells.clone(),
+                })
+            }).collect();
+            let relations: Option<Vec<_>> = unit.supporting_relations.iter().map(|index| {
+                graph.relations.get(*index).map(|r| RelationEvidence {
+                    earlier_normalized_byte: r.earlier_row,
+                    later_normalized_byte: r.later_row,
+                    relation: r.relation.clone(),
+                    votes: r.votes,
+                    valid_attempts: r.valid_attempts,
+                })
+            }).collect();
+            Some(SemanticUnitEvidence {
+                entry_normalized_byte: unit.entry_row,
+                row_normalized_bytes: unit.row_starts.clone(),
+                rows: rows?,
+                supporting_relations: relations?,
+                status: "proposed_voted_continuation",
+            })
+        }).collect();
+        self
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -186,6 +238,7 @@ pub(super) fn stage(
         status: "diagnostic_hypotheses_only",
         messages,
         table_evidence,
+        semantic_units: Vec::new(),
         caveats: vec![
             "Candidates are not canonical messages; repeated names do not imply identity.",
             "Table evidence uses normalized-document byte offsets; original source mapping and message ownership are not asserted.",
