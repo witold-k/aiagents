@@ -24,3 +24,9 @@ This is a **prototype, not yet wired into** `extract_message_tables`. Existing e
 - Preserve source byte spans, exact evidence quotations, and unknown ownership.
 - Never drop or duplicate source content at window boundaries.
 - Do not introduce protocol-specific heuristics into the general planner.
+
+## Opt-in prepass diagnostic
+
+Run `AIFIX_DOCUMENT_PLAN=1 aifix -t extract_message_tables -a document.md` to build and print a complete-document, deterministic section tree and an experimental window plan **before** the existing extraction. Set `AIFIX_DOCUMENT_CONTEXT_TOKENS` to change the provisional context size (default 32768). The plan uses a conservative character-per-token estimate, **not a model tokenizer**, and does not yet reserve the actual serialized prefix size. Treat it as instrumentation only.
+
+This diagnostic **does not replace** the existing 8,000-character chunks, evidence segmentation, recovery, checkpoint identity, or LLM prompts. The existing extraction proceeds as before. No additional LLM call is made by the prepass. Next, measure actual token usage, derive safe budgets from the configured model, and migrate source-window/checkpoint handling before activating the new planner.
