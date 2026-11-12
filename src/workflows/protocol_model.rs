@@ -130,7 +130,11 @@ fn declared_parameter(cell: &str) -> Option<(String, String, Option<String>, Opt
         {
             continue;
         }
-        let Some(rest) = value.strip_prefix('<').or_else(|| value.strip_prefix("&lt;")) else {
+        // Read the complete declaration from the original cell: its payload may
+        // contain spaces (e.g. "int 0 to 65535").
+        let Some(token_start) = cell.find(token) else { continue };
+        let full_value = &cell[token_start + token.len() - value.len()..];
+        let Some(rest) = full_value.strip_prefix('<').or_else(|| full_value.strip_prefix("&lt;")) else {
             continue;
         };
         let payload = if let Some(end) = rest.find('>') { &rest[..end] } else { rest };
