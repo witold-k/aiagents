@@ -329,3 +329,43 @@ fn hypothetical_units_are_serialized_but_never_assembled() {
     assert_eq!(json["hypothetical_semantic_units"][0]["entry_normalized_byte"], 114140);
     assert_eq!(json["hypothetical_semantic_units"][0]["supporting_relations"][0]["relation"], "text_continuation");
 }
+
+#[test]
+fn damaged_reference_frequency_table_retains_column_fragments_in_order() {
+    use super::super::llm_structure::{RowEvidence, SemanticUnit, SourceGraph, StructuralRelation};
+    let starts = [110836, 110910, 110969, 111057];
+    let cells = [
+        ["r Reference frequency required for BUC and LNB.", "2 int frequency MHz"],
+        ["Frequency is in MHz.", "string Reference Used By: R, T,"],
+        ["Reference required to be present on Rx (R), Tx (T) or", "or B (for example,\"r 10 B\")"],
+        ["both (B)", ""],
+    ];
+    let rows = starts.iter().enumerate().map(|(i, start)| RowEvidence {
+        line: 346 + i,
+        start: *start,
+        previous: i.checked_sub(1).map(|j| starts[j]),
+        next: starts.get(i + 1).copied(),
+        cells: cells[i].iter().map(|value| (*value).to_owned()).collect(),
+    }).collect();
+    let relations = (0..3).map(|i| StructuralRelation {
+        earlier_row: starts[i], later_row: starts[i+1],
+        relation: "text_continuation".into(), votes: 3, valid_attempts: 3,
+    }).collect();
+    let graph = SourceGraph { rows, relations, assertions: vec![] };
+    let units = vec![SemanticUnit {
+        entry_row: starts[0], row_starts: starts.to_vec(),
+        supporting_relations: vec![0, 1, 2],
+    }];
+    let analysis = simplelexer::tablelexer::DocumentAnalysis::parse("");
+    let model = stage(&[], &[], &analysis).with_semantic_units(&graph, &units, &[]);
+    assert!(model.assembled_parameters.is_empty());
+    assert_eq!(model.reconstructed_table_entries.len(), 1);
+    let entry = &model.reconstructed_table_entries[0];
+    assert_eq!(entry.row_normalized_bytes, starts);
+    assert_eq!(entry.first_column_fragments[3], "both (B)");
+    assert_eq!(entry.second_column_fragments[1], "string Reference Used By: R, T,");
+    assert_eq!(entry.second_column_fragments[3], "");
+    assert_eq!(entry.supporting_relations.len(), 3);
+    assert!(entry.message_owner.is_none());
+    assert_eq!(entry.status, "voted_row_sequence_uninterpreted");
+}
