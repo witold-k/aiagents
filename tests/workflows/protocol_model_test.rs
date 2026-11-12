@@ -183,13 +183,18 @@ fn assembly_recognizes_explicit_declarations_in_second_cells() {
             TableRowEvidence {
                 normalized_byte_start: 12,
                 normalized_byte_end: None,
-                cells: vec!["Timeout (timeoutSec)".into(), "timeoutSec=&lt;int sec>".into()],
+                cells: vec![
+                    "Timeout (timeoutSec)".into(),
+                    "timeoutSec=&lt;int sec>".into(),
+                ],
             },
             TableRowEvidence {
                 normalized_byte_start: 35,
                 normalized_byte_end: None,
-                cells: vec!["Diagnostic code (diagnosticCode)".into(),
-                    "diagnosticCode=&lt;int 0 to 65535>".into()],
+                cells: vec![
+                    "Diagnostic code (diagnosticCode)".into(),
+                    "diagnosticCode=&lt;int 0 to 65535>".into(),
+                ],
             },
         ],
         supporting_relations: vec![],
@@ -216,8 +221,11 @@ fn assembly_rejects_examples_prose_and_keeps_conflicting_declarations() {
             TableRowEvidence {
                 normalized_byte_start: 0,
                 normalized_byte_end: None,
-                cells: vec!["Parameter".into(), "diagnosticCode=20".into(),
-                    "diagnosticCode=&lt;int 0 to 65535>".into()],
+                cells: vec![
+                    "Parameter".into(),
+                    "diagnosticCode=20".into(),
+                    "diagnosticCode=&lt;int 0 to 65535>".into(),
+                ],
             },
             TableRowEvidence {
                 normalized_byte_start: 10,
@@ -248,23 +256,30 @@ fn unassembled_rows_retain_untyped_cells_and_continuations() {
                 start: 110836,
                 previous: None,
                 next: Some(110910),
-                cells: vec!["q Calibration frequency required for sensor.".into(),
-                    "2 int sample_rate Hz".into()],
+                cells: vec![
+                    "q Calibration frequency required for sensor.".into(),
+                    "2 int sample_rate Hz".into(),
+                ],
             },
             RowEvidence {
                 line: 347,
                 start: 110910,
                 previous: Some(110836),
                 next: None,
-                cells: vec!["Sample rate is in Hz.".into(),
-                    "string Channel Used By: A, B,".into()],
+                cells: vec![
+                    "Sample rate is in Hz.".into(),
+                    "string Channel Used By: A, B,".into(),
+                ],
             },
             RowEvidence {
                 line: 368,
                 start: 114576,
                 previous: None,
                 next: None,
-                cells: vec!["Timeout description".into(), "timeoutSec=&lt;int sec>".into()],
+                cells: vec![
+                    "Timeout description".into(),
+                    "timeoutSec=&lt;int sec>".into(),
+                ],
             },
         ],
         relations: vec![],
@@ -287,10 +302,24 @@ fn unassembled_rows_retain_untyped_cells_and_continuations() {
     assert_eq!(report.assembled_parameters.len(), 1);
     assert_eq!(report.assembled_parameters[0].name, "timeoutSec");
     assert_eq!(report.unassembled_semantic_rows.len(), 2);
-    assert_eq!(report.unassembled_semantic_rows[0].normalized_byte_start, 110836);
-    assert_eq!(report.unassembled_semantic_rows[1].normalized_byte_start, 110910);
-    assert_eq!(report.unassembled_semantic_rows[0].cells[1], "2 int sample_rate Hz");
-    assert!(report.unassembled_semantic_rows.iter().all(|row| row.message_owner.is_none()));
+    assert_eq!(
+        report.unassembled_semantic_rows[0].normalized_byte_start,
+        110836
+    );
+    assert_eq!(
+        report.unassembled_semantic_rows[1].normalized_byte_start,
+        110910
+    );
+    assert_eq!(
+        report.unassembled_semantic_rows[0].cells[1],
+        "2 int sample_rate Hz"
+    );
+    assert!(
+        report
+            .unassembled_semantic_rows
+            .iter()
+            .all(|row| row.message_owner.is_none())
+    );
 }
 
 #[test]
@@ -298,20 +327,36 @@ fn hypothetical_units_are_serialized_but_never_assembled() {
     use super::super::llm_structure::{RowEvidence, SemanticUnit, SourceGraph, StructuralRelation};
     let graph = SourceGraph {
         rows: vec![
-            RowEvidence { line: 361, start: 114140, previous: None, next: Some(114234),
-                cells: vec!["The third parameter indicates the selected channel index".into(),
-                    "int selected_channel_index".into()] },
-            RowEvidence { line: 362, start: 114234, previous: Some(114140), next: None,
-                cells: vec!["selected channel".into(), "".into()] },
+            RowEvidence {
+                line: 361,
+                start: 114140,
+                previous: None,
+                next: Some(114234),
+                cells: vec![
+                    "The third parameter indicates the selected channel index".into(),
+                    "int selected_channel_index".into(),
+                ],
+            },
+            RowEvidence {
+                line: 362,
+                start: 114234,
+                previous: Some(114140),
+                next: None,
+                cells: vec!["selected channel".into(), "".into()],
+            },
         ],
         relations: vec![StructuralRelation {
-            earlier_row: 114140, later_row: 114234,
-            relation: "text_continuation".into(), votes: 2, valid_attempts: 3,
+            earlier_row: 114140,
+            later_row: 114234,
+            relation: "text_continuation".into(),
+            votes: 2,
+            valid_attempts: 3,
         }],
         assertions: vec![],
     };
     let hypothetical = vec![SemanticUnit {
-        entry_row: 114140, row_starts: vec![114140, 114234],
+        entry_row: 114140,
+        row_starts: vec![114140, 114234],
         supporting_relations: vec![0],
     }];
     let analysis = simplelexer::tablelexer::DocumentAnalysis::parse("");
@@ -321,13 +366,22 @@ fn hypothetical_units_are_serialized_but_never_assembled() {
     assert!(report.unassembled_semantic_rows.is_empty());
     assert_eq!(report.hypothetical_semantic_units.len(), 1);
     let unit = &report.hypothetical_semantic_units[0];
-    assert_eq!(unit.status, "hypothetical_voted_boundary_without_lexical_anchor");
+    assert_eq!(
+        unit.status,
+        "hypothetical_voted_boundary_without_lexical_anchor"
+    );
     assert_eq!(unit.rows[0].cells[1], "int selected_channel_index");
     assert_eq!(unit.supporting_relations[0].votes, 2);
     assert_eq!(unit.supporting_relations[0].valid_attempts, 3);
     let json = serde_json::to_value(&report).expect("serialize diagnostic model");
-    assert_eq!(json["hypothetical_semantic_units"][0]["entry_normalized_byte"], 114140);
-    assert_eq!(json["hypothetical_semantic_units"][0]["supporting_relations"][0]["relation"], "text_continuation");
+    assert_eq!(
+        json["hypothetical_semantic_units"][0]["entry_normalized_byte"],
+        114140
+    );
+    assert_eq!(
+        json["hypothetical_semantic_units"][0]["supporting_relations"][0]["relation"],
+        "text_continuation"
+    );
 }
 
 #[test]
@@ -335,25 +389,45 @@ fn multirow_table_retains_column_fragments_in_order() {
     use super::super::llm_structure::{RowEvidence, SemanticUnit, SourceGraph, StructuralRelation};
     let starts = [110836, 110910, 110969, 111057];
     let cells = [
-        ["q Calibration frequency required for sensor.", "2 int sample_rate Hz"],
+        [
+            "q Calibration frequency required for sensor.",
+            "2 int sample_rate Hz",
+        ],
         ["Sample rate is in Hz.", "string Channel Used By: A, B,"],
-        ["Calibration required on input (A), output (B) or", "or both (for example,\"q 10 B\")"],
+        [
+            "Calibration required on input (A), output (B) or",
+            "or both (for example,\"q 10 B\")",
+        ],
         ["both (A/B)", ""],
     ];
-    let rows = starts.iter().enumerate().map(|(i, start)| RowEvidence {
-        line: 346 + i,
-        start: *start,
-        previous: i.checked_sub(1).map(|j| starts[j]),
-        next: starts.get(i + 1).copied(),
-        cells: cells[i].iter().map(|value| (*value).to_owned()).collect(),
-    }).collect();
-    let relations = (0..3).map(|i| StructuralRelation {
-        earlier_row: starts[i], later_row: starts[i+1],
-        relation: "text_continuation".into(), votes: 3, valid_attempts: 3,
-    }).collect();
-    let graph = SourceGraph { rows, relations, assertions: vec![] };
+    let rows = starts
+        .iter()
+        .enumerate()
+        .map(|(i, start)| RowEvidence {
+            line: 346 + i,
+            start: *start,
+            previous: i.checked_sub(1).map(|j| starts[j]),
+            next: starts.get(i + 1).copied(),
+            cells: cells[i].iter().map(|value| (*value).to_owned()).collect(),
+        })
+        .collect();
+    let relations = (0..3)
+        .map(|i| StructuralRelation {
+            earlier_row: starts[i],
+            later_row: starts[i + 1],
+            relation: "text_continuation".into(),
+            votes: 3,
+            valid_attempts: 3,
+        })
+        .collect();
+    let graph = SourceGraph {
+        rows,
+        relations,
+        assertions: vec![],
+    };
     let units = vec![SemanticUnit {
-        entry_row: starts[0], row_starts: starts.to_vec(),
+        entry_row: starts[0],
+        row_starts: starts.to_vec(),
         supporting_relations: vec![0, 1, 2],
     }];
     let analysis = simplelexer::tablelexer::DocumentAnalysis::parse("");
@@ -363,10 +437,12 @@ fn multirow_table_retains_column_fragments_in_order() {
     let entry = &model.reconstructed_table_entries[0];
     assert_eq!(entry.row_normalized_bytes, starts);
     assert_eq!(entry.first_column_fragments[3], "both (A/B)");
-    assert_eq!(entry.second_column_fragments[1], "string Channel Used By: A, B,");
+    assert_eq!(
+        entry.second_column_fragments[1],
+        "string Channel Used By: A, B,"
+    );
     assert_eq!(entry.second_column_fragments[3], "");
     assert_eq!(entry.supporting_relations.len(), 3);
     assert!(entry.message_owner.is_none());
     assert_eq!(entry.status, "voted_row_sequence_uninterpreted");
 }
-

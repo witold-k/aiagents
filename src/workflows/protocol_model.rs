@@ -63,13 +63,22 @@ impl ProtocolModel {
         hypothetical: &[SemanticUnit],
     ) -> Self {
         self.semantic_units = project_semantic_units(graph, units, "proposed_voted_continuation");
-        self.hypothetical_semantic_units =
-            project_semantic_units(graph, hypothetical, "hypothetical_voted_boundary_without_lexical_anchor");
+        self.hypothetical_semantic_units = project_semantic_units(
+            graph,
+            hypothetical,
+            "hypothetical_voted_boundary_without_lexical_anchor",
+        );
 
         self.reconstructed_table_entries = reconstruct_table_entries(&self.semantic_units);
-        self.unassembled_semantic_rows = self.semantic_units.iter()
+        self.unassembled_semantic_rows = self
+            .semantic_units
+            .iter()
             .flat_map(|unit| &unit.rows)
-            .filter(|row| !row.cells.iter().any(|cell| declared_parameter(cell).is_some()))
+            .filter(|row| {
+                !row.cells
+                    .iter()
+                    .any(|cell| declared_parameter(cell).is_some())
+            })
             .map(|row| UnassembledSemanticRow {
                 normalized_byte_start: row.normalized_byte_start,
                 cells: row.cells.clone(),
@@ -77,11 +86,7 @@ impl ProtocolModel {
                 message_owner: None,
             })
             .collect();
-        self.assembled_parameters = self
-            .semantic_units
-            .iter()
-            .flat_map(assemble_unit)
-            .collect();
+        self.assembled_parameters = self.semantic_units.iter().flat_map(assemble_unit).collect();
         self
     }
 }
@@ -93,31 +98,46 @@ fn project_semantic_units(
     units: &[SemanticUnit],
     status: &'static str,
 ) -> Vec<SemanticUnitEvidence> {
-    units.iter().filter_map(|unit| {
-        let rows: Option<Vec<_>> = unit.row_starts.iter().map(|start| {
-            graph.rows.iter().find(|row| row.start == *start).map(|row| TableRowEvidence {
-                normalized_byte_start: row.start,
-                normalized_byte_end: None,
-                cells: row.cells.clone(),
+    units
+        .iter()
+        .filter_map(|unit| {
+            let rows: Option<Vec<_>> = unit
+                .row_starts
+                .iter()
+                .map(|start| {
+                    graph
+                        .rows
+                        .iter()
+                        .find(|row| row.start == *start)
+                        .map(|row| TableRowEvidence {
+                            normalized_byte_start: row.start,
+                            normalized_byte_end: None,
+                            cells: row.cells.clone(),
+                        })
+                })
+                .collect();
+            let relations: Option<Vec<_>> = unit
+                .supporting_relations
+                .iter()
+                .map(|index| {
+                    graph.relations.get(*index).map(|r| RelationEvidence {
+                        earlier_normalized_byte: r.earlier_row,
+                        later_normalized_byte: r.later_row,
+                        relation: r.relation.clone(),
+                        votes: r.votes,
+                        valid_attempts: r.valid_attempts,
+                    })
+                })
+                .collect();
+            Some(SemanticUnitEvidence {
+                entry_normalized_byte: unit.entry_row,
+                row_normalized_bytes: unit.row_starts.clone(),
+                rows: rows?,
+                supporting_relations: relations?,
+                status,
             })
-        }).collect();
-        let relations: Option<Vec<_>> = unit.supporting_relations.iter().map(|index| {
-            graph.relations.get(*index).map(|r| RelationEvidence {
-                earlier_normalized_byte: r.earlier_row,
-                later_normalized_byte: r.later_row,
-                relation: r.relation.clone(),
-                votes: r.votes,
-                valid_attempts: r.valid_attempts,
-            })
-        }).collect();
-        Some(SemanticUnitEvidence {
-            entry_normalized_byte: unit.entry_row,
-            row_normalized_bytes: unit.row_starts.clone(),
-            rows: rows?,
-            supporting_relations: relations?,
-            status,
         })
-    }).collect()
+        .collect()
 }
 
 /// Read-only reconstruction of the observed cell sequence in a voted unit.
@@ -134,18 +154,27 @@ struct ReconstructedTableEntry {
 }
 
 fn reconstruct_table_entries(units: &[SemanticUnitEvidence]) -> Vec<ReconstructedTableEntry> {
-    units.iter().filter(|unit| unit.rows.len() > 1)
+    units
+        .iter()
+        .filter(|unit| unit.rows.len() > 1)
         .map(|unit| ReconstructedTableEntry {
             entry_normalized_byte: unit.entry_normalized_byte,
             row_normalized_bytes: unit.row_normalized_bytes.clone(),
-            first_column_fragments: unit.rows.iter()
-                .map(|row| row.cells.first().cloned().unwrap_or_default()).collect(),
-            second_column_fragments: unit.rows.iter()
-                .map(|row| row.cells.get(1).cloned().unwrap_or_default()).collect(),
+            first_column_fragments: unit
+                .rows
+                .iter()
+                .map(|row| row.cells.first().cloned().unwrap_or_default())
+                .collect(),
+            second_column_fragments: unit
+                .rows
+                .iter()
+                .map(|row| row.cells.get(1).cloned().unwrap_or_default())
+                .collect(),
             supporting_relations: unit.supporting_relations.clone(),
             status: "voted_row_sequence_uninterpreted",
             message_owner: None,
-        }).collect()
+        })
+        .collect()
 }
 
 #[derive(Debug, Serialize)]
@@ -171,8 +200,11 @@ struct AssembledParameter {
 /// The raw payload is retained because units and bounds are not yet validated.
 fn declared_parameter(cell: &str) -> Option<(String, String, Option<String>, Option<String>)> {
     for token in cell.split_whitespace() {
-        let token = token.trim_matches(|c: char| matches!(c, '|' | '`' | ',' | ';' | '*' | '(' | ')'));
-        let Some((name, value)) = token.split_once('=') else { continue };
+        let token =
+            token.trim_matches(|c: char| matches!(c, '|' | '`' | ',' | ';' | '*' | '(' | ')'));
+        let Some((name, value)) = token.split_once('=') else {
+            continue;
+        };
         if name.is_empty()
             || !name.starts_with(|c: char| c.is_ascii_alphabetic())
             || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
@@ -181,19 +213,29 @@ fn declared_parameter(cell: &str) -> Option<(String, String, Option<String>, Opt
         }
         // Read the complete declaration from the original cell: its payload may
         // contain spaces (e.g. "int 0 to 65535").
-        let Some(token_start) = cell.find(token) else { continue };
-        let full_value = &cell[token_start + token.len() - value.len()..];
-        let Some(rest) = full_value.strip_prefix('<').or_else(|| full_value.strip_prefix("&lt;")) else {
+        let Some(token_start) = cell.find(token) else {
             continue;
         };
-        let payload = if let Some(end) = rest.find('>') { &rest[..end] } else { rest };
+        let full_value = &cell[token_start + token.len() - value.len()..];
+        let Some(rest) = full_value
+            .strip_prefix('<')
+            .or_else(|| full_value.strip_prefix("&lt;"))
+        else {
+            continue;
+        };
+        let payload = if let Some(end) = rest.find('>') {
+            &rest[..end]
+        } else {
+            rest
+        };
         let ty = payload.split_whitespace().next().unwrap_or("");
         if ty.is_empty() || !ty.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
             continue;
         }
         let tail = payload[ty.len()..].trim();
         let (range, unit) = if let Some((lo, hi)) = tail.split_once(" to ") {
-            if !lo.is_empty() && !hi.is_empty()
+            if !lo.is_empty()
+                && !hi.is_empty()
                 && lo.chars().all(|c| c.is_ascii_digit())
                 && hi.chars().all(|c| c.is_ascii_digit())
             {
@@ -201,9 +243,7 @@ fn declared_parameter(cell: &str) -> Option<(String, String, Option<String>, Opt
             } else {
                 (None, None)
             }
-        } else if !tail.is_empty()
-            && tail.chars().all(|c| c.is_ascii_alphabetic() || c == '_')
-        {
+        } else if !tail.is_empty() && tail.chars().all(|c| c.is_ascii_alphabetic() || c == '_') {
             (None, Some(tail.to_owned()))
         } else {
             (None, None)

@@ -121,10 +121,7 @@ fn semantic_projection_keeps_full_description_chain_and_stops_at_next_key() {
             "2 int sample_rate Hz",
         ],
         vec!["Sample rate is in Hz.", "string Channel Used By: A, B,"],
-        vec![
-            "Calibration required on input (A), output (B) or",
-            "or B",
-        ],
+        vec!["Calibration required on input (A), output (B) or", "or B"],
         vec!["both (A/B)", ""],
         vec!["Timeout (timeoutSec)", "timeoutSec=&lt;int sec>"],
         vec!["This parameter should accompany response message 18", ""],
