@@ -173,3 +173,54 @@ fn invalid_semantic_row_reference_does_not_create_a_unit() {
     let report = stage(&[], &[], &analysis).with_semantic_units(&graph, &units);
     assert!(report.semantic_units.is_empty());
 }
+
+#[test]
+fn assembly_keeps_explicit_type_and_range_as_unverified_hints() {
+    let unit = SemanticUnitEvidence {
+        entry_normalized_byte: 12,
+        row_normalized_bytes: vec![12, 35],
+        rows: vec![
+            TableRowEvidence { normalized_byte_start: 12, normalized_byte_end: None,
+                cells: vec!["statusCode".into(), "integer".into()] },
+            TableRowEvidence { normalized_byte_start: 35, normalized_byte_end: None,
+                cells: vec!["".into(), "range 0..65535".into()] },
+        ],
+        supporting_relations: vec![],
+        status: "proposed_voted_continuation",
+    };
+    let assembled = assemble_unit(&unit).expect("explicit entry");
+    assert_eq!(assembled.name, "statusCode");
+    assert_eq!(assembled.type_hint.as_deref(), Some("integer"));
+    assert_eq!(assembled.range_hint.as_deref(), Some("range 0..65535"));
+    assert_eq!(assembled.evidence_row_starts, vec![12, 35]);
+    assert_eq!(assembled.message_owner, None);
+}
+
+#[test]
+fn assembly_does_not_guess_from_prose_or_header() {
+    for (name, description) in [
+        ("Parameter", "integer"),
+        ("", "range 0..65535"),
+        ("statusCode", "integer from 0 to 65535"),
+        ("statusCode", "range 0..65535 or higher"),
+    ] {
+        let unit = SemanticUnitEvidence {
+            entry_normalized_byte: 0,
+            row_normalized_bytes: vec![0],
+            rows: vec![TableRowEvidence {
+                normalized_byte_start: 0, normalized_byte_end: None,
+                cells: vec![name.into(), description.into()],
+            }],
+            supporting_relations: vec![],
+            status: "proposed_voted_continuation",
+        };
+        let result = assemble_unit(&unit);
+        if name.is_empty() || name == "Parameter" {
+            assert!(result.is_none());
+        } else {
+            let result = result.expect("valid lexical key");
+            assert_eq!(result.type_hint, None);
+            assert_eq!(result.range_hint, None);
+        }
+    }
+}
