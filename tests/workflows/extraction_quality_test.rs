@@ -83,7 +83,7 @@ fn unresolved_fact_is_reported_with_arbitrary_path() {
 fn reviewed_reference_fixture_has_contiguous_typed_parameters() {
     // Benchmark data, not runtime knowledge or protocol-specific logic.
     let fixture: serde_json::Value = serde_json::from_str(include_str!(
-        "../../tests/fixtures/extraction_quality/openamip_reference.json"
+        "../../tests/fixtures/extraction_quality/synthetic_protocol_reference.json"
     ))
     .expect("valid reference fixture");
     let messages = fixture["messages"].as_array().expect("messages array");
