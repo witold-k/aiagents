@@ -136,17 +136,17 @@ fn assemble_unit(unit: &SemanticUnitEvidence) -> Option<AssembledParameter> {
                 type_hint = Some(value.to_owned());
             }
             // Preserve only an explicit, self-contained range expression.
-            if range_hint.is_none() {
-                if let Some(rest) = value.strip_prefix("range ") {
-                    let mut parts = rest.split("..");
-                    if let (Some(lo), Some(hi), None) = (parts.next(), parts.next(), parts.next()) {
-                        if !lo.is_empty() && !hi.is_empty()
-                            && lo.chars().all(|c| c.is_ascii_digit())
-                            && hi.chars().all(|c| c.is_ascii_digit())
-                        {
-                            range_hint = Some(value.to_owned());
-                        }
-                    }
+            if range_hint.is_none()
+                && let Some(rest) = value.strip_prefix("range ")
+            {
+                let mut parts = rest.split("..");
+                if let (Some(lo), Some(hi), None) = (parts.next(), parts.next(), parts.next())
+                    && !lo.is_empty()
+                    && !hi.is_empty()
+                    && lo.chars().all(|c| c.is_ascii_digit())
+                    && hi.chars().all(|c| c.is_ascii_digit())
+                {
+                    range_hint = Some(value.to_owned());
                 }
             }
         }
