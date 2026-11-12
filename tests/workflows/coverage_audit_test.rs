@@ -251,7 +251,7 @@ fn example() -> CoverageAudit {
 }
 
 #[test]
-fn openamip_replay_counts_are_consistent() {
+fn representative_audit_counts_are_consistent() {
     let audit = example();
     assert!(audit.passed());
     let json = serde_json::to_value(&audit).unwrap();
