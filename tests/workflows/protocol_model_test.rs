@@ -264,7 +264,7 @@ fn unassembled_rows_retain_bare_type_and_continuation_without_inventing_fields()
                 start: 114576,
                 previous: None,
                 next: None,
-                cells: vec!["Time to Blockage".into(), "timeoutSec=&lt;int sec>".into()],
+                cells: vec!["Timeout description".into(), "timeoutSec=&lt;int sec>".into()],
             },
         ],
         relations: vec![],
@@ -407,7 +407,7 @@ fn table_repair_rejects_examples_and_incomplete_bare_declarations() {
     assert!(bare_column_declaration("int selected_channel_index").is_none());
     assert!(bare_column_declaration("string Channel Used By: A, B,").is_none());
     assert!(bare_column_declaration("2 int sample_rate Hz extra").is_none());
-    assert!(bare_column_declaration("0 int frequency MHz").is_none());
+    assert!(bare_column_declaration("0 int sample_rate Hz").is_none());
 }
 
 #[test]
