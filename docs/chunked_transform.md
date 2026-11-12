@@ -134,7 +134,7 @@ The runtime reports source-backed parameter assertions separately from message i
 
 A source-tree shadow model records sections, blocks, tables and transitions. The diagnostics distinguish exact lexical anchors, proposed relations, structural headings, and reserved boundaries. Even when all unresolved occurrences have a structural disposition, message ownership and field semantics may remain unknown.
 
-The recent OpenAMIP replay retained 25 candidates and 238 source-attributed facts, with 78 distinct source-backed parameter assertions. These are **one checkpoint's diagnostic figures**, not general benchmarks; earlier measurements in this document's history used different checkpoints and must not be compared as equivalent runs.
+The recent the reference protocol replay retained 25 candidates and 238 source-attributed facts, with 78 distinct source-backed parameter assertions. These are **one checkpoint's diagnostic figures**, not general benchmarks; earlier measurements in this document's history used different checkpoints and must not be compared as equivalent runs.
 
 ## JSON output and verification boundary
 
@@ -156,4 +156,4 @@ Publication is staged and does not silently overwrite an existing output directo
 - [Historical project notes](project_status_history.md)
 - [Historical P4 review](reviews/p4_identity_checkpoint_audit.md)
 
-Historical checkpoint schemas, Markdown-output stages and older OpenAMIP measurements are deliberately omitted from this current-behavior reference.
+Historical checkpoint schemas, Markdown-output stages and older the reference protocol measurements are deliberately omitted from this current-behavior reference.
