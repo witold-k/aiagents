@@ -2589,7 +2589,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 let verdict_output = format!("{output}.semantic-verification.json");
                 match serde_json::to_string_pretty(&report) {
                     Ok(json) => {
-                        if let Err(err) = fs::write(&verdict_output, format!("{json}\\n")) {
+                        if let Err(err) = fs::write(&verdict_output, format!("{json}\n")) {
                             eprintln!(
                                 "## [CHUNKED] SEMANTIC VERIFY: unable to write {verdict_output:?}: {err}"
                             );
@@ -2798,6 +2798,23 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 let graph =
                     llm_structure::source_graph(&rows, &ranked, valid, &coverage.unmatched_rows);
                 let units = llm_structure::semantic_units(&graph);
+                // Enrich the diagnostic JSON only after the opt-in structure
+                // analysis has produced voted relations. This never changes facts.
+                if let Ok(output) = std::env::var("AIFIX_COVERAGE_AUDIT_JSON") {
+                    let model = protocol_model::stage(
+                        &checkpoint.candidates, &source_windows, &table_analysis,
+                    ).with_semantic_units(&graph, &units);
+                    let model_output = format!("{output}.protocol-model.json");
+                    match serde_json::to_string_pretty(&model) {
+                        Ok(json) => {
+                            if let Err(err) = fs::write(&model_output, format!("{json}\\n")) {
+                                eprintln!("## [CHUNKED] SEMANTIC MODEL: unable to write {model_output:?}: {err}");
+                            }
+                        }
+                        Err(err) => eprintln!("## [CHUNKED] SEMANTIC MODEL: serialization failed: {err}"),
+                    }
+                }
+
                 println!(
                     "## [CHUNKED] SEMANTIC UNITS: count={} (source-anchored, majority-supported continuation links; proposed only)",
                     units.len(),
