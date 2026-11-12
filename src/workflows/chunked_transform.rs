@@ -3871,6 +3871,69 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             } else {
                 result
             };
+            // If local navigation fails, allow a single read-only navigation
+            // request to an adjacent source chunk. Do not reattribute a fact
+            // automatically: cross-window evidence requires a separate,
+            // source-coordinate-aware repair step.
+            if let Err(reason) = &result {
+                let neighbors: Vec<_> = [
+                    fact.source_chunk.checked_sub(1),
+                    fact.source_chunk.checked_add(1),
+                ]
+                .into_iter()
+                .flatten()
+                .filter_map(|chunk_index| {
+                    parts.get(chunk_index).map(|part| (chunk_index, part))
+                })
+                .collect();
+                if !neighbors.is_empty() {
+                    let menu = neighbors
+                        .iter()
+                        .map(|(chunk_index, part)| {
+                            let preview: String = part.text.chars().take(500).collect();
+                            format!(
+                                "CHUNK {} (lines {}-{}): {}",
+                                chunk_index + 1,
+                                part.start_line,
+                                part.end_line,
+                                preview
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    let context = format!(
+                        "FACT: {}\nLOCAL VERIFICATION FAILED: {reason}\n\nADJACENT CHUNKS:\n{menu}",
+                        fact.statement
+                    );
+                    let prompt = r#"Find the most likely adjacent source chunk for this unsupported fact. Return ONLY JSON {"chunk":1} using a listed 1-based chunk number, or UNSUPPORTED. This is navigation only; it cannot approve or rewrite the fact."#;
+                    let answer = match self.llm_call.run_text_step_limited_with_temperature(
+                        prompt, &context, self.llm_call.max_tokens().min(128), 0.0,
+                    ) {
+                        Ok(answer) => answer,
+                        Err(err) => return WorkflowResult::LlmCallResult(err),
+                    };
+                    if let Ok(selection) = serde_json::from_str::<serde_json::Value>(
+                        strip_code_fences(answer.trim()).trim(),
+                    ) {
+                        if let Some(selected) = selection
+                            .as_object()
+                            .filter(|object| object.len() == 1)
+                            .and_then(|object| object.get("chunk"))
+                            .and_then(serde_json::Value::as_u64)
+                            .and_then(|number| usize::try_from(number).ok())
+                            .and_then(|number| number.checked_sub(1))
+                        {
+                            if neighbors.iter().any(|(chunk_index, _)| *chunk_index == selected) {
+                                println!(
+                                    "## [CHUNKED] FACT NAVIGATION CANDIDATE: {path} fact {} -> chunk {} (read-only; pending reattribution)",
+                                    index + 1,
+                                    selected + 1
+                                );
+                            }
+                        }
+                    }
+                }
+            }
             let current = &mut checkpoint.facts.get_mut(path).expect("fact path exists")[*index];
             match result {
                 Ok(quote) => {
