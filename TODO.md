@@ -7,7 +7,7 @@ work after a pause.
 ## When returning to this project
 
 1. For `extract_message_tables`, turn existing source-backed table/semantic-unit evidence into a language-neutral protocol model, without guessing ownership or types.
-2. Evaluate that model against the OpenAMIP checkpoint and its semantic-review findings before expanding extraction heuristics.
+2. Evaluate that model against the the reference protocol checkpoint and its semantic-review findings before expanding extraction heuristics.
 3. Define an LLM-independent BLT module for build/lint/test execution and diagnostic preparation; then evaluate the repair workflow on real failures.
 4. Revisit release-documentation quality, or pick an exploratory experiment: indexing/search, TokenDB, SVD/embeddings, or interactive mode.
 
@@ -15,7 +15,7 @@ work after a pause.
 
 # Protocol extraction: current state and next steps
 
-`extract_message_tables` currently retains source-attributed candidates and facts without merging uncertain identities. The recent OpenAMIP replay reported **25 candidates**, **238 facts**, **78 distinct source-backed parameter assertions**, and **39 distinct parameters across three sections**. These are observations from one checkpoint, not verified schema coverage.
+`extract_message_tables` currently retains source-attributed candidates and facts without merging uncertain identities. The recent the reference protocol replay reported **25 candidates**, **238 facts**, **78 distinct source-backed parameter assertions**, and **39 distinct parameters across three sections**. These are observations from one checkpoint, not verified schema coverage.
 
 Completed diagnostic foundations:
 - [x] Preserve unresolved message identities and source evidence; inspect statement locations separately.
