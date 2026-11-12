@@ -369,3 +369,40 @@ fn damaged_reference_frequency_table_retains_column_fragments_in_order() {
     assert!(entry.message_owner.is_none());
     assert_eq!(entry.status, "voted_row_sequence_uninterpreted");
 }
+
+#[test]
+fn ambiguous_reference_frequency_layout_is_a_hypothesis_not_a_field() {
+    let unit = SemanticUnitEvidence {
+        entry_normalized_byte: 110836,
+        row_normalized_bytes: vec![110836, 110910],
+        rows: vec![
+            TableRowEvidence { normalized_byte_start: 110836, normalized_byte_end: None,
+                cells: vec!["r Reference frequency required for BUC and LNB.".into(),
+                    "2 int frequency MHz".into()] },
+            TableRowEvidence { normalized_byte_start: 110910, normalized_byte_end: None,
+                cells: vec!["Frequency is in MHz.".into(),
+                    "string Reference Used By: R, T,".into()] },
+        ],
+        supporting_relations: vec![],
+        status: "proposed_voted_continuation",
+    };
+    let hypotheses = table_repair_hypotheses(&[unit]);
+    assert_eq!(hypotheses.len(), 1);
+    assert_eq!(hypotheses[0].candidate_name.as_deref(), Some("frequency"));
+    assert_eq!(hypotheses[0].candidate_type.as_deref(), Some("int"));
+    assert_eq!(hypotheses[0].candidate_unit.as_deref(), Some("MHz"));
+    assert_eq!(hypotheses[0].conflicting_name_tokens, vec!["r"]);
+    assert_eq!(hypotheses[0].row_normalized_bytes, vec![110836, 110910]);
+    assert!(hypotheses[0].message_owner.is_none());
+    assert_eq!(hypotheses[0].status, "ambiguous_column_layout_unverified");
+    assert!(declared_parameter("2 int frequency MHz").is_none());
+}
+
+#[test]
+fn table_repair_rejects_examples_and_incomplete_bare_declarations() {
+    assert!(bare_column_declaration("r 10 B").is_none());
+    assert!(bare_column_declaration("int active_RF_chain_index").is_none());
+    assert!(bare_column_declaration("string Reference Used By: R, T,").is_none());
+    assert!(bare_column_declaration("2 int frequency MHz extra").is_none());
+    assert!(bare_column_declaration("0 int frequency MHz").is_none());
+}
