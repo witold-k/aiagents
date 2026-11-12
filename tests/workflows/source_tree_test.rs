@@ -159,14 +159,28 @@ fn deterministic_first_pass_builds_scoped_windows() {
     assert_eq!(scope.nodes[1].parent, Some(0));
     assert_eq!(scope.nodes[2].parent, Some(0));
     let budget = crate::document_understanding::WindowBudget {
-        context_tokens: 128, output_tokens: 8,
-        reserved_tokens: 8, prefix_tokens: 8, chars_per_token: 1,
+        context_tokens: 128,
+        output_tokens: 8,
+        reserved_tokens: 8,
+        prefix_tokens: 8,
+        chars_per_token: 1,
     };
     let windows = scope.plan(source, budget).expect("plan");
-    assert_eq!(windows.iter().map(|w| &source[w.start_byte..w.end_byte]).collect::<String>(), source);
+    assert_eq!(
+        windows
+            .iter()
+            .map(|w| &source[w.start_byte..w.end_byte])
+            .collect::<String>(),
+        source
+    );
     assert!(windows.iter().any(|w| w.prefix.contains("Alpha")));
     assert!(windows.iter().any(|w| w.prefix.contains("Beta")));
-    assert!(windows.iter().filter(|w| w.prefix.contains("Beta")).all(|w| !w.prefix.contains("Alpha")));
+    assert!(
+        windows
+            .iter()
+            .filter(|w| w.prefix.contains("Beta"))
+            .all(|w| !w.prefix.contains("Alpha"))
+    );
 }
 
 #[test]
@@ -174,9 +188,23 @@ fn deterministic_scope_handles_unicode_and_no_headings() {
     let source = "äöü\nno headings\n";
     let scope = SourceTree::parse(source).document_scope(source);
     assert!(scope.nodes.is_empty());
-    let windows = scope.plan(source, crate::document_understanding::WindowBudget {
-        context_tokens: 12, output_tokens: 2,
-        reserved_tokens: 2, prefix_tokens: 2, chars_per_token: 1,
-    }).unwrap();
-    assert_eq!(windows.iter().map(|w| &source[w.start_byte..w.end_byte]).collect::<String>(), source);
+    let windows = scope
+        .plan(
+            source,
+            crate::document_understanding::WindowBudget {
+                context_tokens: 12,
+                output_tokens: 2,
+                reserved_tokens: 2,
+                prefix_tokens: 2,
+                chars_per_token: 1,
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        windows
+            .iter()
+            .map(|w| &source[w.start_byte..w.end_byte])
+            .collect::<String>(),
+        source
+    );
 }

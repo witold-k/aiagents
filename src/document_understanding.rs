@@ -58,7 +58,8 @@ fn boundary(source: &str, position: usize) -> usize {
 impl SemanticDocumentTree {
     pub fn validate(&self, source: &str) -> Result<(), String> {
         for (i, node) in self.nodes.iter().enumerate() {
-            if node.start_byte >= node.end_byte || node.end_byte > source.len()
+            if node.start_byte >= node.end_byte
+                || node.end_byte > source.len()
                 || !source.is_char_boundary(node.start_byte)
                 || !source.is_char_boundary(node.end_byte)
             {
@@ -78,7 +79,9 @@ impl SemanticDocumentTree {
     }
 
     fn active_at(&self, offset: usize) -> Option<usize> {
-        self.nodes.iter().enumerate()
+        self.nodes
+            .iter()
+            .enumerate()
             .filter(|(_, n)| n.start_byte <= offset && offset < n.end_byte)
             .min_by_key(|(_, n)| n.end_byte - n.start_byte)
             .map(|(i, _)| i)
@@ -96,7 +99,10 @@ impl SemanticDocumentTree {
         let mut prefix = String::from("SOURCE-GROUNDED CONTEXT (not evidence):\n");
         for i in path {
             let node = &self.nodes[i];
-            prefix.push_str(&format!("- {} [bytes {}..{}]\n", node.title, node.start_byte, node.end_byte));
+            prefix.push_str(&format!(
+                "- {} [bytes {}..{}]\n",
+                node.title, node.start_byte, node.end_byte
+            ));
             for fact in &node.context {
                 prefix.push_str(&format!("  - {fact}\n"));
             }
@@ -133,8 +139,15 @@ impl SemanticDocumentTree {
                 }
             }
             end = boundary(source, end);
-            if end <= start { return Err("planner made no progress".into()); }
-            result.push(PlannedWindow { start_byte: start, end_byte: end, prefix, active_node });
+            if end <= start {
+                return Err("planner made no progress".into());
+            }
+            result.push(PlannedWindow {
+                start_byte: start,
+                end_byte: end,
+                prefix,
+                active_node,
+            });
             start = end;
         }
         Ok(result)

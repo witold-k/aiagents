@@ -41,7 +41,14 @@ pub use crate::utils::stringutils::{mask_embedded_data_uris, mask_opaque_lines};
 use crate::workflows::workflow::{Workflow, WorkflowResult};
 
 /// Opt-in diagnostic only: does not change prompts or inference settings.
-fn log_llm_memory_budget(stage: &str, chunk: usize, prompt: &str, context: &str, prefix: &str, output_tokens: u32) {
+fn log_llm_memory_budget(
+    stage: &str,
+    chunk: usize,
+    prompt: &str,
+    context: &str,
+    prefix: &str,
+    output_tokens: u32,
+) {
     if std::env::var_os("AIFIX_LLM_MEMORY_DIAG").is_none() {
         return;
     }
@@ -51,7 +58,10 @@ fn log_llm_memory_budget(stage: &str, chunk: usize, prompt: &str, context: &str,
     // This is not the model tokenizer; use it only for relative comparisons.
     let estimated_input_tokens = (prompt_chars + context_chars).div_ceil(3);
     let gpu = std::process::Command::new("nvidia-smi")
-        .args(["--query-gpu=memory.used,memory.free,memory.total", "--format=csv,noheader,nounits"])
+        .args([
+            "--query-gpu=memory.used,memory.free,memory.total",
+            "--format=csv,noheader,nounits",
+        ])
         .output()
         .ok()
         .filter(|result| result.status.success())
@@ -1976,18 +1986,21 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                         index + 1
                     ));
                 }
-                let scoped_prefix = scoped_tree.as_ref().and_then(|tree| {
-                    let offset = if window == part.text {
-                        Some(part.start_byte)
-                    } else {
-                        let mut matches = part.text.match_indices(&window);
-                        match (matches.next(), matches.next()) {
-                            (Some((offset, _)), None) => Some(part.start_byte + offset),
-                            _ => None,
-                        }
-                    }?;
-                    Some(tree.prefix_at(offset).1)
-                }).unwrap_or_default();
+                let scoped_prefix = scoped_tree
+                    .as_ref()
+                    .and_then(|tree| {
+                        let offset = if window == part.text {
+                            Some(part.start_byte)
+                        } else {
+                            let mut matches = part.text.match_indices(&window);
+                            match (matches.next(), matches.next()) {
+                                (Some((offset, _)), None) => Some(part.start_byte + offset),
+                                _ => None,
+                            }
+                        }?;
+                        Some(tree.prefix_at(offset).1)
+                    })
+                    .unwrap_or_default();
                 let preceding = format!(
                     "{scoped_prefix}{}",
                     preceding_extraction_context(&masked_source, part, &window)
@@ -2259,18 +2272,21 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                         checkpoint.unresolved_findings = true;
                         break;
                     }
-                    let scoped_prefix = scoped_tree.as_ref().and_then(|tree| {
-                        let offset = if window == part.text {
-                            Some(part.start_byte)
-                        } else {
-                            let mut matches = part.text.match_indices(&window);
-                            match (matches.next(), matches.next()) {
-                                (Some((offset, _)), None) => Some(part.start_byte + offset),
-                                _ => None,
-                            }
-                        }?;
-                        Some(tree.prefix_at(offset).1)
-                    }).unwrap_or_default();
+                    let scoped_prefix = scoped_tree
+                        .as_ref()
+                        .and_then(|tree| {
+                            let offset = if window == part.text {
+                                Some(part.start_byte)
+                            } else {
+                                let mut matches = part.text.match_indices(&window);
+                                match (matches.next(), matches.next()) {
+                                    (Some((offset, _)), None) => Some(part.start_byte + offset),
+                                    _ => None,
+                                }
+                            }?;
+                            Some(tree.prefix_at(offset).1)
+                        })
+                        .unwrap_or_default();
                     let preceding = format!(
                         "{scoped_prefix}{}",
                         preceding_extraction_context(&masked_source, part, &window)
