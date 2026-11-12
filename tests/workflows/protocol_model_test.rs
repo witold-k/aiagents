@@ -146,7 +146,7 @@ fn semantic_units_keep_voted_relations_without_assigning_message_identity() {
         supporting_relations: vec![0],
     }];
     let analysis = simplelexer::tablelexer::DocumentAnalysis::parse("");
-    let report = stage(&[], &[], &analysis).with_semantic_units(&graph, &units);
+    let report = stage(&[], &[], &analysis).with_semantic_units(&graph, &units, &[]);
     assert!(report.messages.is_empty());
     assert_eq!(report.semantic_units.len(), 1);
     let unit = &report.semantic_units[0];
@@ -170,7 +170,7 @@ fn invalid_semantic_row_reference_does_not_create_a_unit() {
         supporting_relations: vec![0],
     }];
     let analysis = simplelexer::tablelexer::DocumentAnalysis::parse("");
-    let report = stage(&[], &[], &analysis).with_semantic_units(&graph, &units);
+    let report = stage(&[], &[], &analysis).with_semantic_units(&graph, &units, &[]);
     assert!(report.semantic_units.is_empty());
 }
 
@@ -283,7 +283,7 @@ fn unassembled_rows_retain_bare_type_and_continuation_without_inventing_fields()
         },
     ];
     let analysis = simplelexer::tablelexer::DocumentAnalysis::parse("");
-    let report = stage(&[], &[], &analysis).with_semantic_units(&graph, &units);
+    let report = stage(&[], &[], &analysis).with_semantic_units(&graph, &units, &[]);
     assert_eq!(report.assembled_parameters.len(), 1);
     assert_eq!(report.assembled_parameters[0].name, "blockTime");
     assert_eq!(report.unassembled_semantic_rows.len(), 2);
@@ -291,4 +291,41 @@ fn unassembled_rows_retain_bare_type_and_continuation_without_inventing_fields()
     assert_eq!(report.unassembled_semantic_rows[1].normalized_byte_start, 110910);
     assert_eq!(report.unassembled_semantic_rows[0].cells[1], "2 int frequency MHz");
     assert!(report.unassembled_semantic_rows.iter().all(|row| row.message_owner.is_none()));
+}
+
+#[test]
+fn hypothetical_units_are_serialized_but_never_assembled() {
+    use super::super::llm_structure::{RowEvidence, SemanticUnit, SourceGraph, StructuralRelation};
+    let graph = SourceGraph {
+        rows: vec![
+            RowEvidence { line: 361, start: 114140, previous: None, next: Some(114234),
+                cells: vec!["The seventh parameter indicates to the modem the index of the".into(),
+                    "int active_RF_chain_index".into()] },
+            RowEvidence { line: 362, start: 114234, previous: Some(114140), next: None,
+                cells: vec!["active RF chain".into(), "".into()] },
+        ],
+        relations: vec![StructuralRelation {
+            earlier_row: 114140, later_row: 114234,
+            relation: "text_continuation".into(), votes: 2, valid_attempts: 3,
+        }],
+        assertions: vec![],
+    };
+    let hypothetical = vec![SemanticUnit {
+        entry_row: 114140, row_starts: vec![114140, 114234],
+        supporting_relations: vec![0],
+    }];
+    let analysis = simplelexer::tablelexer::DocumentAnalysis::parse("");
+    let report = stage(&[], &[], &analysis).with_semantic_units(&graph, &[], &hypothetical);
+    assert!(report.semantic_units.is_empty());
+    assert!(report.assembled_parameters.is_empty());
+    assert!(report.unassembled_semantic_rows.is_empty());
+    assert_eq!(report.hypothetical_semantic_units.len(), 1);
+    let unit = &report.hypothetical_semantic_units[0];
+    assert_eq!(unit.status, "hypothetical_voted_boundary_without_lexical_anchor");
+    assert_eq!(unit.rows[0].cells[1], "int active_RF_chain_index");
+    assert_eq!(unit.supporting_relations[0].votes, 2);
+    assert_eq!(unit.supporting_relations[0].valid_attempts, 3);
+    let json = serde_json::to_value(&report).expect("serialize diagnostic model");
+    assert_eq!(json["hypothetical_semantic_units"][0]["entry_normalized_byte"], 114140);
+    assert_eq!(json["hypothetical_semantic_units"][0]["supporting_relations"][0]["relation"], "text_continuation");
 }
