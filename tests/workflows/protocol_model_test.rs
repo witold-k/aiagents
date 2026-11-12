@@ -175,7 +175,7 @@ fn invalid_semantic_row_reference_does_not_create_a_unit() {
 }
 
 #[test]
-fn assembly_keeps_explicit_type_and_range_as_unverified_hints() {
+fn assembly_recognizes_openamip_declarations_in_second_cells() {
     let unit = SemanticUnitEvidence {
         entry_normalized_byte: 12,
         row_normalized_bytes: vec![12, 35],
@@ -183,51 +183,57 @@ fn assembly_keeps_explicit_type_and_range_as_unverified_hints() {
             TableRowEvidence {
                 normalized_byte_start: 12,
                 normalized_byte_end: None,
-                cells: vec!["statusCode".into(), "integer".into()],
+                cells: vec!["Time to Blockage (blockTime)".into(), "blockTime=&lt;int sec>".into()],
             },
             TableRowEvidence {
                 normalized_byte_start: 35,
                 normalized_byte_end: None,
-                cells: vec!["".into(), "range 0..65535".into()],
+                cells: vec!["Additional Antenna Status (statusCode)".into(),
+                    "statusCode=&lt;int 0 to 65535>".into()],
             },
         ],
         supporting_relations: vec![],
         status: "proposed_voted_continuation",
     };
-    let assembled = assemble_unit(&unit).expect("explicit entry");
-    assert_eq!(assembled.name, "statusCode");
-    assert_eq!(assembled.type_hint.as_deref(), Some("integer"));
-    assert_eq!(assembled.range_hint.as_deref(), Some("range 0..65535"));
-    assert_eq!(assembled.evidence_row_starts, vec![12, 35]);
-    assert_eq!(assembled.message_owner, None);
+    let assembled = assemble_unit(&unit);
+    assert_eq!(assembled.len(), 2);
+    assert_eq!(assembled[0].name, "blockTime");
+    assert_eq!(assembled[0].type_hint.as_deref(), Some("int"));
+    assert_eq!(assembled[0].unit_hint.as_deref(), Some("sec"));
+    assert_eq!(assembled[0].evidence_row_starts, vec![12]);
+    assert_eq!(assembled[1].name, "statusCode");
+    assert_eq!(assembled[1].range_hint.as_deref(), Some("0 to 65535"));
+    assert_eq!(assembled[1].evidence_row_starts, vec![35]);
+    assert!(assembled.iter().all(|a| a.message_owner.is_none()));
 }
 
 #[test]
-fn assembly_does_not_guess_from_prose_or_header() {
-    for (name, description) in [
-        ("Parameter", "integer"),
-        ("", "range 0..65535"),
-        ("statusCode", "integer from 0 to 65535"),
-        ("statusCode", "range 0..65535 or higher"),
-    ] {
-        let unit = SemanticUnitEvidence {
-            entry_normalized_byte: 0,
-            row_normalized_bytes: vec![0],
-            rows: vec![TableRowEvidence {
+fn assembly_rejects_examples_prose_and_keeps_conflicting_declarations() {
+    let unit = SemanticUnitEvidence {
+        entry_normalized_byte: 0,
+        row_normalized_bytes: vec![0, 10],
+        rows: vec![
+            TableRowEvidence {
                 normalized_byte_start: 0,
                 normalized_byte_end: None,
-                cells: vec![name.into(), description.into()],
-            }],
-            supporting_relations: vec![],
-            status: "proposed_voted_continuation",
-        };
-        let result = assemble_unit(&unit);
-        if name.is_empty() || name == "Parameter" {
-            assert!(result.is_none());
-        } else {
-            let result = result.expect("valid lexical key");
-            assert_eq!(result.type_hint, None);
-            assert_eq!(result.range_hint, None);
-        }
-    }
+                cells: vec!["Parameter".into(), "statusCode=20".into(),
+                    "statusCode=&lt;int 0 to 65535>".into()],
+            },
+            TableRowEvidence {
+                normalized_byte_start: 10,
+                normalized_byte_end: None,
+                cells: vec!["statusCode".into(), "statusCode=<string>".into()],
+            },
+        ],
+        supporting_relations: vec![],
+        status: "proposed_voted_continuation",
+    };
+    let assembled = assemble_unit(&unit);
+    assert_eq!(assembled.len(), 2);
+    assert_eq!(assembled[0].type_hint.as_deref(), Some("int"));
+    assert_eq!(assembled[1].type_hint.as_deref(), Some("string"));
+    assert_eq!(assembled[0].evidence_row_starts, vec![0]);
+    assert_eq!(assembled[1].evidence_row_starts, vec![10]);
+    assert!(declared_parameter("statusCode=20").is_none());
+    assert!(declared_parameter("The parameter is integer").is_none());
 }
