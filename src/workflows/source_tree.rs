@@ -466,6 +466,41 @@ impl SourceTree {
     }
 }
 
+
+impl SourceTree {
+    /// First-pass deterministic projection into source-spanned document scope.
+    /// It makes no claims about message ownership or inferred semantics.
+    pub(super) fn document_scope(
+        &self,
+        document: &str,
+    ) -> crate::document_understanding::SemanticDocumentTree {
+        use crate::document_understanding::{SemanticDocumentTree, SemanticNode};
+        let mut offsets = vec![0usize];
+        for (index, byte) in document.bytes().enumerate() {
+            if byte == b'\n' {
+                offsets.push(index + 1);
+            }
+        }
+        offsets.push(document.len());
+        let nodes = self.sections.iter().map(|section| {
+            let start = offsets[section.heading_line];
+            let end = offsets[section.end_line];
+            let heading_end = document[start..end].find('\n')
+                .map(|i| start + i)
+                .unwrap_or(end);
+            let title = document[start..heading_end].trim().trim_start_matches('#').trim();
+            SemanticNode {
+                title: title.to_owned(),
+                start_byte: start,
+                end_byte: end,
+                parent: section.parent,
+                context: Vec::new(),
+            }
+        }).collect();
+        SemanticDocumentTree { nodes }
+    }
+}
+
 #[cfg(test)]
 #[path = "../../tests/workflows/source_tree_test.rs"]
 mod tests;
