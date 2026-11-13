@@ -454,7 +454,8 @@ fn invalid_paths_are_rejected() {
 #[test]
 fn fact_navigation_accepts_only_verbatim_quote_from_selected_segment() {
     let source = "Type: A is a message.\nThe status response carries an identifier.\n";
-    let response = r#"{"segment_id":"S2","evidence_quote":"status response carries an identifier"}"#;
+    let response =
+        r#"{"segment_id":"S2","evidence_quote":"status response carries an identifier"}"#;
     assert_eq!(
         verified_navigated_fact_quote(response, source).unwrap(),
         "status response carries an identifier"
@@ -464,18 +465,27 @@ fn fact_navigation_accepts_only_verbatim_quote_from_selected_segment() {
 #[test]
 fn fact_navigation_rejects_invented_segment_and_quote() {
     let source = "Type: A is a message.\nThe status response carries an identifier.\n";
-    assert!(verified_navigated_fact_quote(
-        r#"{"segment_id":"S99","evidence_quote":"status response carries an identifier"}"#,
-        source,
-    ).is_err());
-    assert!(verified_navigated_fact_quote(
-        r#"{"segment_id":"S1","evidence_quote":"status response carries an identifier"}"#,
-        source,
-    ).is_err());
-    assert!(verified_navigated_fact_quote(
-        r#"{"segment_id":"S2","evidence_quote":"fabricated quote that does not occur"}"#,
-        source,
-    ).is_err());
+    assert!(
+        verified_navigated_fact_quote(
+            r#"{"segment_id":"S99","evidence_quote":"status response carries an identifier"}"#,
+            source,
+        )
+        .is_err()
+    );
+    assert!(
+        verified_navigated_fact_quote(
+            r#"{"segment_id":"S1","evidence_quote":"status response carries an identifier"}"#,
+            source,
+        )
+        .is_err()
+    );
+    assert!(
+        verified_navigated_fact_quote(
+            r#"{"segment_id":"S2","evidence_quote":"fabricated quote that does not occur"}"#,
+            source,
+        )
+        .is_err()
+    );
     assert!(verified_navigated_fact_quote(
         r#"{"segment_id":"S2","evidence_quote":"status response carries an identifier","rewrite":"unsafe"}"#,
         source,
@@ -485,9 +495,23 @@ fn fact_navigation_rejects_invented_segment_and_quote() {
 #[test]
 fn cross_chunk_repair_preserves_source_coordinates() {
     let source = "first line\nType: A includes the status identifier.\nlast line\n";
-    let parts = vec![Chunk { start_byte: 0, start_line: 1, end_line: 1, text: "first line\n".into() }, Chunk { start_byte: 11, start_line: 2, end_line: 3, text: source[11..].into() }];
+    let parts = vec![
+        Chunk {
+            start_byte: 0,
+            start_line: 1,
+            end_line: 1,
+            text: "first line\n".into(),
+        },
+        Chunk {
+            start_byte: 11,
+            start_line: 2,
+            end_line: 3,
+            text: source[11..].into(),
+        },
+    ];
     let target = 1;
-    let response = r#"{"segment_id":"S1","evidence_quote":"Type: A includes the status identifier."}"#;
+    let response =
+        r#"{"segment_id":"S1","evidence_quote":"Type: A includes the status identifier."}"#;
     let (quote, byte, start, end) = verified_cross_chunk_quote(response, target, &parts).unwrap();
     assert_eq!(quote, "Type: A includes the status identifier.");
     assert_eq!(&source[byte..byte + quote.len()], quote);
@@ -498,9 +522,12 @@ fn cross_chunk_repair_preserves_source_coordinates() {
 #[test]
 fn cross_chunk_repair_rejects_unlisted_chunk() {
     let parts = chunks("Type: A includes the status identifier.\n", 80);
-    assert!(verified_cross_chunk_quote(
-        r#"{"segment_id":"S1","evidence_quote":"Type: A includes the status identifier."}"#,
-        99,
-        &parts
-    ).is_err());
+    assert!(
+        verified_cross_chunk_quote(
+            r#"{"segment_id":"S1","evidence_quote":"Type: A includes the status identifier."}"#,
+            99,
+            &parts
+        )
+        .is_err()
+    );
 }

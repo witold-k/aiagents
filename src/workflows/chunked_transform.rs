@@ -189,7 +189,8 @@ fn verified_navigated_fact_quote(response: &str, source: &str) -> Result<String,
     let navigation: Navigation = serde_json::from_str(strip_code_fences(response.trim()).trim())
         .map_err(|err| format!("Invalid navigation JSON: {err}"))?;
     let segments = evidence_segments(source);
-    let segment = segments.iter()
+    let segment = segments
+        .iter()
         .find(|segment| segment.id == navigation.segment_id)
         .ok_or_else(|| "Navigation selected an unknown source segment".to_owned())?;
     resolve_source_quote(&segment.text, &navigation.evidence_quote)
@@ -210,7 +211,10 @@ fn verified_cross_chunk_quote(
         return Err("Ambiguous repeated quote in selected chunk".into());
     }
     let line = chunk.start_line
-        + chunk.text[..local_byte].bytes().filter(|byte| *byte == b'\n').count();
+        + chunk.text[..local_byte]
+            .bytes()
+            .filter(|byte| *byte == b'\n')
+            .count();
     let end_line = line + quote.bytes().filter(|byte| *byte == b'\n').count();
     Ok((quote, chunk.start_byte + local_byte, line, end_line))
 }
@@ -2206,9 +2210,9 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                                 .enumerate()
                                 .filter(|(_, line)| {
                                     let line = line.trim().trim_start_matches('#').trim();
-                                    ["Type:", "Command:", "Message:"].iter().any(|prefix| {
-                                        line.starts_with(prefix)
-                                    })
+                                    ["Type:", "Command:", "Message:"]
+                                        .iter()
+                                        .any(|prefix| line.starts_with(prefix))
                                 })
                                 .take(96)
                                 .map(|(line, text)| format!("line {}: {}", line + 1, text.trim()))
@@ -2219,22 +2223,35 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                             );
                             println!(
                                 "## [CHUNKED] IDENTITY NAVIGATE {}/{}: rejected={rejected}",
-                                index + 1, parts.len()
+                                index + 1,
+                                parts.len()
                             );
                             let retry_prompt = format!("{json_prompt}\n\n{feedback}");
-                            let repaired_response = match self.llm_call.run_text_step_limited_with_temperature(
-                                &retry_prompt, &window_context, self.llm_call.max_tokens(), 0.0,
-                            ) {
-                                Ok(text) => text,
-                                Err(err) => return WorkflowResult::LlmCallResult(err),
-                            };
+                            let repaired_response =
+                                match self.llm_call.run_text_step_limited_with_temperature(
+                                    &retry_prompt,
+                                    &window_context,
+                                    self.llm_call.max_tokens(),
+                                    0.0,
+                                ) {
+                                    Ok(text) => text,
+                                    Err(err) => return WorkflowResult::LlmCallResult(err),
+                                };
                             match parse_segmented_window_recoverable(
-                                &repaired_response, &window, &masked_source
+                                &repaired_response,
+                                &window,
+                                &masked_source,
                             ) {
                                 Ok((repaired, remaining))
                                     if remaining < rejected
-                                        && repaired.iter().map(|(_, facts)| facts.len()).sum::<usize>()
-                                            >= found.iter().map(|(_, facts)| facts.len()).sum::<usize>() =>
+                                        && repaired
+                                            .iter()
+                                            .map(|(_, facts)| facts.len())
+                                            .sum::<usize>()
+                                            >= found
+                                                .iter()
+                                                .map(|(_, facts)| facts.len())
+                                                .sum::<usize>() =>
                                 {
                                     println!(
                                         "## [CHUNKED] IDENTITY NAVIGATION RESULT: status=repaired rejected_before={rejected} rejected_after={remaining}"
@@ -2482,15 +2499,16 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                                     "{coverage_prompt}\n\nPrevious JSON response was invalid: {first_error}. Return a single valid JSON object only."
                                 )
                             };
-                            let retried = match self.llm_call.run_text_step_limited_with_temperature(
-                                &retry_prompt,
-                                &context,
-                                self.llm_call.max_tokens(),
-                                0.0,
-                            ) {
-                                Ok(text) => text,
-                                Err(err) => return WorkflowResult::LlmCallResult(err),
-                            };
+                            let retried =
+                                match self.llm_call.run_text_step_limited_with_temperature(
+                                    &retry_prompt,
+                                    &context,
+                                    self.llm_call.max_tokens(),
+                                    0.0,
+                                ) {
+                                    Ok(text) => text,
+                                    Err(err) => return WorkflowResult::LlmCallResult(err),
+                                };
                             parse_segmented_window_recoverable(&retried, &window, &masked_source)
                                 .map(|found| (found, retried))
                         }
@@ -3973,21 +3991,36 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                         fact.statement
                     );
                     let prompt = r#"Previous fact verification failed. Navigate ONLY the supplied source segments. Return JSON {"segment_id":"S1","evidence_quote":"exact verbatim quote of at least 12 characters from selected segment"} or exactly UNSUPPORTED. Do not rewrite facts, invent quotes, or infer identity."#;
-                    println!("## [CHUNKED] FACT NAVIGATE: {path} fact {}: {reason}", index + 1);
+                    println!(
+                        "## [CHUNKED] FACT NAVIGATE: {path} fact {}: {reason}",
+                        index + 1
+                    );
                     match self.llm_call.run_text_step_limited_with_temperature(
-                        prompt, &context, self.llm_call.max_tokens().min(512), 0.0,
+                        prompt,
+                        &context,
+                        self.llm_call.max_tokens().min(512),
+                        0.0,
                     ) {
                         Ok(answer) if answer.trim() == "UNSUPPORTED" => {
-                            println!("## [CHUNKED] FACT NAVIGATION RESULT: {path} fact {} status=unsupported scope=local", index + 1);
+                            println!(
+                                "## [CHUNKED] FACT NAVIGATION RESULT: {path} fact {} status=unsupported scope=local",
+                                index + 1
+                            );
                             Err(reason)
                         }
                         Ok(answer) => match verified_navigated_fact_quote(&answer, source) {
                             Ok(quote) => {
-                                println!("## [CHUNKED] FACT NAVIGATION RESULT: {path} fact {} status=repaired scope=local", index + 1);
+                                println!(
+                                    "## [CHUNKED] FACT NAVIGATION RESULT: {path} fact {} status=repaired scope=local",
+                                    index + 1
+                                );
                                 Ok(quote)
                             }
                             Err(error) => {
-                                println!("## [CHUNKED] FACT NAVIGATION RESULT: {path} fact {} status=invalid_response scope=local reason={error}", index + 1);
+                                println!(
+                                    "## [CHUNKED] FACT NAVIGATION RESULT: {path} fact {} status=invalid_response scope=local reason={error}",
+                                    index + 1
+                                );
                                 Err(reason)
                             }
                         },
@@ -4011,9 +4044,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 ]
                 .into_iter()
                 .flatten()
-                .filter_map(|chunk_index| {
-                    parts.get(chunk_index).map(|part| (chunk_index, part))
-                })
+                .filter_map(|chunk_index| parts.get(chunk_index).map(|part| (chunk_index, part)))
                 .collect();
                 if !neighbors.is_empty() {
                     let menu = neighbors
@@ -4036,66 +4067,93 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                     );
                     let prompt = r#"Find the most likely adjacent source chunk for this unsupported fact. Return ONLY JSON {"chunk":1} using a listed 1-based chunk number, or UNSUPPORTED. This is navigation only; it cannot approve or rewrite the fact."#;
                     let answer = match self.llm_call.run_text_step_limited_with_temperature(
-                        prompt, &context, self.llm_call.max_tokens().min(128), 0.0,
+                        prompt,
+                        &context,
+                        self.llm_call.max_tokens().min(128),
+                        0.0,
                     ) {
                         Ok(answer) => answer,
                         Err(err) => return WorkflowResult::LlmCallResult(err),
                     };
                     if let Ok(selection) = serde_json::from_str::<serde_json::Value>(
                         strip_code_fences(answer.trim()).trim(),
-                    )
-                        && let Some(selected) = selection
-                            .as_object()
-                            .filter(|object| object.len() == 1)
-                            .and_then(|object| object.get("chunk"))
-                            .and_then(serde_json::Value::as_u64)
-                            .and_then(|number| usize::try_from(number).ok())
-                            .and_then(|number| number.checked_sub(1))
-                        && neighbors.iter().any(|(chunk_index, _)| *chunk_index == selected)
+                    ) && let Some(selected) = selection
+                        .as_object()
+                        .filter(|object| object.len() == 1)
+                        .and_then(|object| object.get("chunk"))
+                        .and_then(serde_json::Value::as_u64)
+                        .and_then(|number| usize::try_from(number).ok())
+                        .and_then(|number| number.checked_sub(1))
+                        && neighbors
+                            .iter()
+                            .any(|(chunk_index, _)| *chunk_index == selected)
                     {
-                                let target = &parts[selected];
-                                let segments = evidence_segments(&target.text)
-                                    .iter()
-                                    .map(|segment| format!("{}: {}", segment.id, segment.text.trim()))
-                                    .collect::<Vec<_>>()
-                                    .join("\n");
-                                let repair_context = format!(
-                                    "FACT: {}\nPREVIOUS ERROR: {reason}\nSELECTED CHUNK: {}\n\nSOURCE SEGMENTS:\n{segments}",
-                                    fact.statement, selected + 1
-                                );
-                                let repair_prompt = r#"Find direct verbatim source evidence for FACT in the selected chunk. Return ONLY JSON {"segment_id":"S1","evidence_quote":"exact substring at least 12 characters"} or UNSUPPORTED. Do not rewrite the fact or infer message identity."#;
-                                println!("## [CHUNKED] FACT REPAIR ATTEMPT: {path} fact {} -> chunk {}", index + 1, selected + 1);
-                                let repair_answer = match self.llm_call.run_text_step_limited_with_temperature(
-                                    repair_prompt, &repair_context, self.llm_call.max_tokens().min(512), 0.0,
-                                ) {
-                                    Ok(answer) => answer,
-                                    Err(err) => return WorkflowResult::LlmCallResult(err),
-                                };
-                                if repair_answer.trim() != "UNSUPPORTED" {
-                                    match verified_cross_chunk_quote(&repair_answer, selected, &parts) {
-                                        Ok((quote, absolute_byte, start_line, end_line)) => {
-                                            repaired_location = Some((selected, absolute_byte, start_line, end_line));
-                                            result = Ok(quote);
-                                        }
-                                        Err(repair_error) => println!(
-                                            "## [CHUNKED] FACT NAVIGATION RESULT: {path} fact {} status={} scope=adjacent reason={repair_error}",
-                                            index + 1,
-                                            if repair_error.contains("Ambiguous") { "ambiguous" } else { "invalid_response" }
-                                        ),
-                                    }
+                        let target = &parts[selected];
+                        let segments = evidence_segments(&target.text)
+                            .iter()
+                            .map(|segment| format!("{}: {}", segment.id, segment.text.trim()))
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        let repair_context = format!(
+                            "FACT: {}\nPREVIOUS ERROR: {reason}\nSELECTED CHUNK: {}\n\nSOURCE SEGMENTS:\n{segments}",
+                            fact.statement,
+                            selected + 1
+                        );
+                        let repair_prompt = r#"Find direct verbatim source evidence for FACT in the selected chunk. Return ONLY JSON {"segment_id":"S1","evidence_quote":"exact substring at least 12 characters"} or UNSUPPORTED. Do not rewrite the fact or infer message identity."#;
+                        println!(
+                            "## [CHUNKED] FACT REPAIR ATTEMPT: {path} fact {} -> chunk {}",
+                            index + 1,
+                            selected + 1
+                        );
+                        let repair_answer =
+                            match self.llm_call.run_text_step_limited_with_temperature(
+                                repair_prompt,
+                                &repair_context,
+                                self.llm_call.max_tokens().min(512),
+                                0.0,
+                            ) {
+                                Ok(answer) => answer,
+                                Err(err) => return WorkflowResult::LlmCallResult(err),
+                            };
+                        if repair_answer.trim() != "UNSUPPORTED" {
+                            match verified_cross_chunk_quote(&repair_answer, selected, &parts) {
+                                Ok((quote, absolute_byte, start_line, end_line)) => {
+                                    repaired_location =
+                                        Some((selected, absolute_byte, start_line, end_line));
+                                    result = Ok(quote);
                                 }
+                                Err(repair_error) => println!(
+                                    "## [CHUNKED] FACT NAVIGATION RESULT: {path} fact {} status={} scope=adjacent reason={repair_error}",
+                                    index + 1,
+                                    if repair_error.contains("Ambiguous") {
+                                        "ambiguous"
+                                    } else {
+                                        "invalid_response"
+                                    }
+                                ),
+                            }
+                        }
                     }
                 }
             }
             let current = &mut checkpoint.facts.get_mut(path).expect("fact path exists")[*index];
             match result {
                 Ok(quote) => {
-                    if let Some((chunk_index, absolute_byte, start_line, end_line)) = repaired_location {
+                    if let Some((chunk_index, absolute_byte, start_line, end_line)) =
+                        repaired_location
+                    {
                         current.source_chunk = chunk_index;
-                        current.source_byte_offset = Some(absolute_byte - parts[chunk_index].start_byte);
+                        current.source_byte_offset =
+                            Some(absolute_byte - parts[chunk_index].start_byte);
                         current.start_line = start_line;
                         current.end_line = end_line;
-                        println!("## [CHUNKED] FACT REPAIRED: {path} fact {} -> chunk {} lines {}-{}", index + 1, chunk_index + 1, start_line, end_line);
+                        println!(
+                            "## [CHUNKED] FACT REPAIRED: {path} fact {} -> chunk {} lines {}-{}",
+                            index + 1,
+                            chunk_index + 1,
+                            start_line,
+                            end_line
+                        );
                     }
                     current.evidence_quote = Some(quote);
                     current.review = FactReview::Supported;
