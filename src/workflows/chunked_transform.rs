@@ -2437,7 +2437,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                         _ => eprintln!("## [CHUNKED] POSTRUN LLM NAVIGATION: invalid JSON response; continuing without changes"),
                     }
                 }
-                Err(err) => eprintln!("## [CHUNKED] POSTRUN LLM NAVIGATION: model unavailable ({err:?}); continuing without changes"),
+                Err(_) => eprintln!("## [CHUNKED] POSTRUN LLM NAVIGATION: model unavailable; continuing without changes"),
             }
         }
         let source_windows: Vec<&str> = parts.iter().map(|part| part.text.as_str()).collect();
