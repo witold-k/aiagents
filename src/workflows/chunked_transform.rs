@@ -937,7 +937,7 @@ mod identity_repair_regression_tests {
     fn rejected_payload_does_not_include_accepted_siblings() {
         let source = "Type: g\nThe g message is sent.\n";
         let response = serde_json::json!({"files": [
-            {"path": "notes.md", "facts": [{"statement": "The g message is sent.", "segment_id": "S2"}]},
+            {"path": "messages/g.md", "facts": [{"statement": "The g message is sent.", "segment_id": "S2"}]},
             {"path": "messages/g.md", "facts": [{"statement": "Unsupported assertion", "segment_id": "S999"}]}
         ]}).to_string();
         let payload = rejected_identity_payload(&response, source, source).unwrap();
