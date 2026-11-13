@@ -2284,17 +2284,17 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                         let (found, rejected) = if rejected > 0 {
                             let rejected_payload = rejected_identity_payload(
                                 &accepted_response, &window, &masked_source
-                            ).unwrap_or_else(|| "{\\"files\\":[]}".to_owned());
+                            ).unwrap_or_else(|| r#"{"files":[]}"#.to_owned());
                             println!("## [CHUNKED] IDENTITY NAVIGATE {}/{}: rejected={rejected}", index + 1, parts.len());
                             let repaired = self.llm_call.run_text_step_limited_with_temperature(
                                 "Repair ONLY the rejected facts in the provided JSON. Navigate the source segments and declarations to identify the owning type. Keep statement, segment_id and all evidence fields byte-for-byte identical; change only path and identity_segment_id if justified by an explicit source declaration. Preserve uppercase/lowercase exactly. Return JSON with files and facts in the same schema. Omit unresolved facts; do not guess identities.",
                                 &format!(
-                                    "REJECTED FACTS ONLY:\\n{rejected_payload}\\n\\nSOURCE SEGMENTS:\\n{}\\n\\nDOCUMENT DECLARATIONS:\\n{}",
+                                    "REJECTED FACTS ONLY:\n{rejected_payload}\n\nSOURCE SEGMENTS:\n{}\n\nDOCUMENT DECLARATIONS:\n{}",
                                     segmented_source(&window),
                                     masked_source.lines().filter(|line| {
                                         let line = line.trim().trim_start_matches('#').trim();
                                         ["Type:", "Command:", "Message:"].iter().any(|prefix| line.starts_with(prefix))
-                                    }).take(96).collect::<Vec<_>>().join("\\n")
+                                    }).take(96).collect::<Vec<_>>().join("\n")
                                 ),
                                 self.llm_call.max_tokens().min(4096),
                                 0.0,
