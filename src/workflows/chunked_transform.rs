@@ -913,6 +913,57 @@ fn merge_verified_identity_repairs(
     (accepted, rejected.saturating_sub(added), added)
 }
 
+#[cfg(test)]
+mod identity_repair_regression_tests {
+    use super::*;
+
+    const DECLARATIONS: &str = "Type: g\n\nType: G\n";
+
+    #[test]
+    fn distinct_case_sensitive_types_never_merge_without_evidence() {
+        assert!(fact_message_path("messages/g.md", None, DECLARATIONS).is_err());
+        assert_eq!(
+            fact_message_path("messages/g.md", Some(b'g'), DECLARATIONS).unwrap(),
+            "messages/g.md"
+        );
+        assert_eq!(
+            fact_message_path("messages/g.md", Some(b'G'), DECLARATIONS).unwrap(),
+            "messages/upper_g.md"
+        );
+        assert!(fact_message_path("messages/g.md", Some(b'W'), DECLARATIONS).is_err());
+    }
+
+    #[test]
+    fn rejected_payload_does_not_include_accepted_siblings() {
+        let source = "Type: g\nThe g message is sent.\n";
+        let response = serde_json::json!({"files": [
+            {"path": "notes.md", "facts": [{"statement": "The g message is sent.", "segment_id": "S2"}]},
+            {"path": "messages/g.md", "facts": [{"statement": "Unsupported assertion", "segment_id": "S999"}]}
+        ]}).to_string();
+        let payload = rejected_identity_payload(&response, source, source).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(parsed["files"].as_array().unwrap().len(), 1);
+        assert_eq!(parsed["files"][0]["facts"][0]["segment_id"], "S999");
+    }
+
+    #[test]
+    fn identity_repair_rejects_changed_locator_and_preserves_accepted_facts() {
+        let source = "Type: g\nA source statement.\n";
+        let original = serde_json::json!({"files": [
+            {"path": "messages/g.md", "facts": [{"statement": "A source statement.", "segment_id": "S999"}]}
+        ]}).to_string();
+        let proposal = serde_json::json!({"files": [
+            {"path": "messages/g.md", "facts": [{"statement": "A source statement.", "segment_id": "S2"}]}
+        ]}).to_string();
+        let accepted = vec![("notes.md".to_owned(), vec![("Already accepted".to_owned(), None)])];
+        let (merged, _, recovered) = merge_verified_identity_repairs(
+            &original, &proposal, source, source, accepted.clone(), 1
+        );
+        assert_eq!(recovered, 0);
+        assert_eq!(merged, accepted);
+    }
+}
+
 // Isolate semantically invalid file entries only when the outer JSON is
 // complete and valid. This avoids retrying an entire window because one
 // hallucinated identity was mixed with legitimate facts. The caller MUST
