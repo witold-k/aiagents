@@ -851,7 +851,9 @@ fn rejected_identity_payload(
                 "identity_segment_id": file.identity_segment_id.clone(),
                 "facts": [fact]
             }]});
-            if parse_segmented_window_with_identity(&isolated.to_string(), source, identity_source).is_err() {
+            if parse_segmented_window_with_identity(&isolated.to_string(), source, identity_source)
+                .is_err()
+            {
                 files.push(isolated["files"][0].clone());
             }
         }
@@ -882,7 +884,9 @@ fn merge_verified_identity_repairs(
                 "path": file.path.clone(), "identity_segment_id": file.identity_segment_id.clone(),
                 "facts": [fact.clone()]
             }]});
-            if parse_segmented_window_with_identity(&one.to_string(), source, identity_source).is_err() {
+            if parse_segmented_window_with_identity(&one.to_string(), source, identity_source)
+                .is_err()
+            {
                 rejected_facts.push((fact.statement, fact.segment_id));
             }
         }
@@ -892,15 +896,20 @@ fn merge_verified_identity_repairs(
         for fact in file.facts {
             let Some(position) = rejected_facts.iter().position(|(statement, segment)| {
                 statement == &fact.statement && segment == &fact.segment_id
-            }) else { continue };
+            }) else {
+                continue;
+            };
             let one = serde_json::json!({"files": [{
                 "path": file.path.clone(), "identity_segment_id": file.identity_segment_id.clone(),
                 "facts": [fact.clone()]
             }]});
-            if let Ok(found) = parse_segmented_window_with_identity(&one.to_string(), source, identity_source) {
+            if let Ok(found) =
+                parse_segmented_window_with_identity(&one.to_string(), source, identity_source)
+            {
                 rejected_facts.remove(position);
                 for (path, facts) in found {
-                    if let Some((_, existing)) = accepted.iter_mut().find(|(name, _)| name == &path) {
+                    if let Some((_, existing)) = accepted.iter_mut().find(|(name, _)| name == &path)
+                    {
                         existing.extend(facts);
                     } else {
                         accepted.push((path, facts));
@@ -941,7 +950,8 @@ mod identity_repair_regression_tests {
         let response = serde_json::json!({"files": [
             {"path": "messages/g.md", "facts": [{"statement": "Type: g", "segment_id": "S1"}]},
             {"path": "messages/z.md", "facts": [{"statement": "Type: G", "segment_id": "S2"}]}
-        ]}).to_string();
+        ]})
+        .to_string();
         let payload = rejected_identity_payload(&response, source, source).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&payload).unwrap();
         assert_eq!(parsed["files"].as_array().unwrap().len(), 1);
@@ -957,9 +967,17 @@ mod identity_repair_regression_tests {
         let proposal = serde_json::json!({"files": [
             {"path": "messages/g.md", "facts": [{"statement": "A source statement.", "segment_id": "S2"}]}
         ]}).to_string();
-        let accepted = vec![("notes.md".to_owned(), vec![("Already accepted".to_owned(), None)])];
+        let accepted = vec![(
+            "notes.md".to_owned(),
+            vec![("Already accepted".to_owned(), None)],
+        )];
         let (merged, _, recovered) = merge_verified_identity_repairs(
-            &original, &proposal, source, source, accepted.clone(), 1
+            &original,
+            &proposal,
+            source,
+            source,
+            accepted.clone(),
+            1,
         );
         assert_eq!(recovered, 0);
         assert_eq!(merged, accepted);
@@ -2336,9 +2354,16 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                         // previously accepted records.
                         let (found, rejected) = if rejected > 0 {
                             let rejected_payload = rejected_identity_payload(
-                                &accepted_response, &window, &masked_source
-                            ).unwrap_or_else(|| r#"{"files":[]}"#.to_owned());
-                            println!("## [CHUNKED] IDENTITY NAVIGATE {}/{}: rejected={rejected}", index + 1, parts.len());
+                                &accepted_response,
+                                &window,
+                                &masked_source,
+                            )
+                            .unwrap_or_else(|| r#"{"files":[]}"#.to_owned());
+                            println!(
+                                "## [CHUNKED] IDENTITY NAVIGATE {}/{}: rejected={rejected}",
+                                index + 1,
+                                parts.len()
+                            );
                             let repaired = self.llm_call.run_text_step_limited_with_temperature(
                                 "Repair ONLY the rejected facts in the provided JSON. Navigate the source segments and declarations to identify the owning type. Keep statement, segment_id and all evidence fields byte-for-byte identical; change only path and identity_segment_id if justified by an explicit source declaration. Preserve uppercase/lowercase exactly. Return JSON with files and facts in the same schema. Omit unresolved facts; do not guess identities.",
                                 &format!(
@@ -2354,9 +2379,15 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                             );
                             match repaired {
                                 Ok(answer) => {
-                                    let (merged, remaining, added) = merge_verified_identity_repairs(
-                                        &accepted_response, &answer, &window, &masked_source, found, rejected
-                                    );
+                                    let (merged, remaining, added) =
+                                        merge_verified_identity_repairs(
+                                            &accepted_response,
+                                            &answer,
+                                            &window,
+                                            &masked_source,
+                                            found,
+                                            rejected,
+                                        );
                                     println!(
                                         "## [CHUNKED] IDENTITY NAVIGATION RESULT: status={} recovered={added} remaining={remaining}",
                                         if added > 0 { "repaired" } else { "unsupported" }
@@ -2613,19 +2644,30 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                             // strictly additive, source-verified identity repair.
                             let (found, rejected) = if rejected > 0 {
                                 let payload = rejected_identity_payload(
-                                    &accepted_response, &window, &masked_source
-                                ).unwrap_or_else(|| r#"{"files":[]}"#.to_owned());
+                                    &accepted_response,
+                                    &window,
+                                    &masked_source,
+                                )
+                                .unwrap_or_else(|| r#"{"files":[]}"#.to_owned());
                                 println!(
                                     "## [CHUNKED] COVERAGE IDENTITY NAVIGATE {}/{}: rejected={rejected}",
-                                    index + 1, parts.len()
+                                    index + 1,
+                                    parts.len()
                                 );
                                 let repair_context = format!(
                                     "REJECTED FACTS ONLY:\\n{payload}\\n\\nSOURCE SEGMENTS:\\n{}\\n\\nDOCUMENT DECLARATIONS:\\n{}",
                                     segmented_source(&window),
-                                    masked_source.lines().filter(|line| {
-                                        let text = line.trim().trim_start_matches('#').trim();
-                                        ["Type:", "Command:", "Message:"].iter().any(|prefix| text.starts_with(prefix))
-                                    }).take(96).collect::<Vec<_>>().join("\\n")
+                                    masked_source
+                                        .lines()
+                                        .filter(|line| {
+                                            let text = line.trim().trim_start_matches('#').trim();
+                                            ["Type:", "Command:", "Message:"]
+                                                .iter()
+                                                .any(|prefix| text.starts_with(prefix))
+                                        })
+                                        .take(96)
+                                        .collect::<Vec<_>>()
+                                        .join("\\n")
                                 );
                                 match self.llm_call.run_text_step_limited_with_temperature(
                                     "Repair only the rejected facts. Preserve statement, segment_id, and evidence exactly. Change only destination path and identity_segment_id if source declarations establish case-sensitive identity. Return JSON in the same files/facts schema; omit uncertain facts.",
