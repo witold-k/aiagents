@@ -341,15 +341,19 @@ fn preceding_extraction_context(source: &str, part: &Chunk, window: &str) -> Str
     let Some(local_offset) = local_offset else {
         return "=== CONTEXT LOCATION AMBIGUOUS ===\nNo preceding context is supplied: recovery text has no unique source position. Cite only CURRENT SOURCE.\n\n".to_owned();
     };
-    let before = &source[..(part.start_byte + local_offset).min(source.len())];
+    // Recovery windows inherit their exact position in the normalized source.
+    // A raw character tail alone can cut off the active section declaration.
+    let absolute_offset = (part.start_byte + local_offset).min(source.len());
+    let before = &source[..absolute_offset];
+    let source_line = before.bytes().filter(|byte| *byte == b'\\n').count() + 1;
     let tail_start = before
         .char_indices()
         .rev()
-        .nth(1_199)
+        .nth(3_999)
         .map_or(0, |(offset, _)| offset);
     let tail = &before[tail_start..];
     format!(
-        "{}=== PRECEDING SOURCE CONTEXT (read-only; not evidence) ===\n{tail}\n=== END PRECEDING CONTEXT ===\nUse this context only to understand the current section or message type. A type remains applicable only while the source structure supports it. A new heading, message declaration, table boundary or unrelated section may end it. Preserve uppercase/lowercase exactly (Type: G differs from Type: g). Every emitted fact must cite an S-number from CURRENT SOURCE below; never cite the preceding context as evidence.\n\n",
+        "{}=== SOURCE WINDOW LOCATION (normalized document) ===\nByte offset: {absolute_offset}; line: {source_line}\n=== END SOURCE WINDOW LOCATION ===\n=== PRECEDING SOURCE CONTEXT (read-only; not evidence) ===\n{tail}\n=== END PRECEDING CONTEXT ===\nUse this context only to understand the current section or message type. A type remains applicable only while the source structure supports it. A new heading, message declaration, table boundary or unrelated section may end it. Preserve uppercase/lowercase exactly (Type: G differs from Type: g). Every emitted fact must cite an S-number from CURRENT SOURCE below; never cite the preceding context as evidence.\n\n",
         scoped_source_context(source, part.start_byte + local_offset)
     )
 }
