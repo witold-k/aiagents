@@ -855,8 +855,8 @@ fn merge_verified_identity_repairs(
     for file in before.files {
         for fact in file.facts {
             let one = serde_json::json!({"files": [{
-                "path": file.path, "identity_segment_id": file.identity_segment_id,
-                "facts": [fact]
+                "path": file.path.clone(), "identity_segment_id": file.identity_segment_id.clone(),
+                "facts": [fact.clone()]
             }]});
             if parse_segmented_window_with_identity(&one.to_string(), source, identity_source).is_err() {
                 rejected_facts.push((fact.statement, fact.segment_id));
@@ -870,8 +870,8 @@ fn merge_verified_identity_repairs(
                 statement == &fact.statement && segment == &fact.segment_id
             }) else { continue };
             let one = serde_json::json!({"files": [{
-                "path": file.path, "identity_segment_id": file.identity_segment_id,
-                "facts": [fact]
+                "path": file.path.clone(), "identity_segment_id": file.identity_segment_id.clone(),
+                "facts": [fact.clone()]
             }]});
             if let Ok(found) = parse_segmented_window_with_identity(&one.to_string(), source, identity_source) {
                 rejected_facts.remove(position);
