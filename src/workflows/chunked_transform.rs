@@ -835,6 +835,60 @@ fn parse_segmented_window_with_identity(
     Ok(result)
 }
 
+// A repair may change a destination, but never the original assertion or
+// locator. Reparse each proposed fact against the source before admitting it.
+fn merge_verified_identity_repairs(
+    original: &str,
+    proposal: &str,
+    source: &str,
+    identity_source: &str,
+    mut accepted: ExtractedRecords,
+    rejected: usize,
+) -> (ExtractedRecords, usize, usize) {
+    let parse = |text: &str| -> Option<SegmentedWindow> {
+        serde_json::from_str(strip_code_fences(text.trim()).trim()).ok()
+    };
+    let (Some(before), Some(after)) = (parse(original), parse(proposal)) else {
+        return (accepted, rejected, 0);
+    };
+    let mut rejected_facts = Vec::new();
+    for file in before.files {
+        for fact in file.facts {
+            let one = serde_json::json!({"files": [{
+                "path": file.path, "identity_segment_id": file.identity_segment_id,
+                "facts": [fact]
+            }]});
+            if parse_segmented_window_with_identity(&one.to_string(), source, identity_source).is_err() {
+                rejected_facts.push((fact.statement, fact.segment_id));
+            }
+        }
+    }
+    let mut added = 0;
+    for file in after.files {
+        for fact in file.facts {
+            let Some(position) = rejected_facts.iter().position(|(statement, segment)| {
+                statement == &fact.statement && segment == &fact.segment_id
+            }) else { continue };
+            let one = serde_json::json!({"files": [{
+                "path": file.path, "identity_segment_id": file.identity_segment_id,
+                "facts": [fact]
+            }]});
+            if let Ok(found) = parse_segmented_window_with_identity(&one.to_string(), source, identity_source) {
+                rejected_facts.remove(position);
+                for (path, facts) in found {
+                    if let Some((_, existing)) = accepted.iter_mut().find(|(name, _)| name == &path) {
+                        existing.extend(facts);
+                    } else {
+                        accepted.push((path, facts));
+                    }
+                }
+                added += 1;
+            }
+        }
+    }
+    (accepted, rejected.saturating_sub(added), added)
+}
+
 // Isolate semantically invalid file entries only when the outer JSON is
 // complete and valid. This avoids retrying an entire window because one
 // hallucinated identity was mixed with legitimate facts. The caller MUST
@@ -2201,78 +2255,37 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 };
                 match parsed {
                     Ok(((found, rejected), accepted_response)) => {
-                        // One bounded feedback round for rejected identities.
-                        // The LLM may navigate the provided declarations, but
-                        // the normal parser remains the sole authority.
-                        let (found, rejected, accepted_response) = if rejected > 0 {
-                            let declarations = masked_source
-                                .lines()
-                                .enumerate()
-                                .filter(|(_, line)| {
-                                    let line = line.trim().trim_start_matches('#').trim();
-                                    ["Type:", "Command:", "Message:"]
-                                        .iter()
-                                        .any(|prefix| line.starts_with(prefix))
-                                })
-                                .take(96)
-                                .map(|(line, text)| format!("line {}: {}", line + 1, text.trim()))
-                                .collect::<Vec<_>>()
-                                .join("\n");
-                            let feedback = format!(
-                                "Previous extraction had {rejected} rejected facts due to invalid or ambiguous identity. Navigate the SOURCE DECLARATIONS below to check the identity. Correct only a destination explicitly supported by the source; preserve case and existing facts. Never invent a type or evidence segment. Return the full JSON extraction using only segment IDs from the source window.\n\nSOURCE DECLARATIONS:\n{declarations}"
+                        // Repair only rejected facts. Never regenerate or replace
+                        // previously accepted records.
+                        let (found, rejected) = if rejected > 0 {
+                            let repaired = self.llm_call.run_text_step_limited_with_temperature(
+                                "For each rejected fact, propose only a corrected destination path. Return JSON with files and facts in the original schema. Copy each original statement and segment_id EXACTLY. Do not create new facts. If source identity is uncertain, omit the fact.",
+                                &format!(
+                                    "ORIGINAL RESPONSE:\n{accepted_response}\n\nSOURCE SEGMENTS:\n{}\n\nDOCUMENT TYPE DECLARATIONS:\n{}",
+                                    segmented_source(&window),
+                                    masked_source.lines().filter(|line| {
+                                        let line = line.trim().trim_start_matches('#').trim();
+                                        ["Type:", "Command:", "Message:"].iter().any(|prefix| line.starts_with(prefix))
+                                    }).take(96).collect::<Vec<_>>().join("\n")
+                                ),
+                                self.llm_call.max_tokens().min(4096),
+                                0.0,
                             );
-                            println!(
-                                "## [CHUNKED] IDENTITY NAVIGATE {}/{}: rejected={rejected}",
-                                index + 1,
-                                parts.len()
-                            );
-                            let retry_prompt = format!("{json_prompt}\n\n{feedback}");
-                            let repaired_response =
-                                match self.llm_call.run_text_step_limited_with_temperature(
-                                    &retry_prompt,
-                                    &window_context,
-                                    self.llm_call.max_tokens(),
-                                    0.0,
-                                ) {
-                                    Ok(text) => text,
-                                    Err(err) => return WorkflowResult::LlmCallResult(err),
-                                };
-                            match parse_segmented_window_recoverable(
-                                &repaired_response,
-                                &window,
-                                &masked_source,
-                            ) {
-                                Ok((repaired, remaining))
-                                    if remaining < rejected
-                                        && repaired
-                                            .iter()
-                                            .map(|(_, facts)| facts.len())
-                                            .sum::<usize>()
-                                            >= found
-                                                .iter()
-                                                .map(|(_, facts)| facts.len())
-                                                .sum::<usize>() =>
-                                {
-                                    println!(
-                                        "## [CHUNKED] IDENTITY NAVIGATION RESULT: status=repaired rejected_before={rejected} rejected_after={remaining}"
+                            match repaired {
+                                Ok(answer) => {
+                                    let (merged, remaining, added) = merge_verified_identity_repairs(
+                                        &accepted_response, &answer, &window, &masked_source, found, rejected
                                     );
-                                    (repaired, remaining, repaired_response)
-                                }
-                                Ok((_, remaining)) => {
                                     println!(
-                                        "## [CHUNKED] IDENTITY NAVIGATION RESULT: status=unsupported rejected_before={rejected} rejected_after={remaining}"
+                                        "## [CHUNKED] IDENTITY NAVIGATION RESULT: status={} recovered={added} remaining={remaining}",
+                                        if added > 0 { "repaired" } else { "unsupported" }
                                     );
-                                    (found, rejected, accepted_response)
+                                    (merged, remaining)
                                 }
-                                Err(error) => {
-                                    println!(
-                                        "## [CHUNKED] IDENTITY NAVIGATION RESULT: status=invalid_response reason={error}"
-                                    );
-                                    (found, rejected, accepted_response)
-                                }
+                                Err(err) => return WorkflowResult::LlmCallResult(err),
                             }
                         } else {
-                            (found, rejected, accepted_response)
+                            (found, rejected)
                         };
                         let next_id = staged_candidates
                             .iter()
