@@ -2378,6 +2378,36 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         // Post-extraction navigation is deliberately advisory. The LLM sees
         // source-attributed unresolved facts after all chunks have completed,
         // but its suggestions never override document-grounded identity checks.
+        // Navigate to an exact, unique occurrence before asking the model to
+        // interpret identity. Never attach context to an ambiguous text match.
+        let navigation_prefix = |needle: &str| -> Option<(String, String)> {
+            if needle.trim().is_empty() {
+                return None;
+            }
+            let mut matches = masked_source.match_indices(needle);
+            let (position, _) = matches.next()?;
+            if matches.next().is_some() {
+                return None;
+            }
+            let before = &masked_source[..position];
+            // Expand the prefix to include useful preceding declarations and
+            // section headings. Keep the prompt bounded for local models.
+            let mut start = before.len().saturating_sub(5_000);
+            while !masked_source.is_char_boundary(start) {
+                start += 1;
+            }
+            if let Some(line) = masked_source[start..position].find('\n') {
+                start += line + 1;
+            }
+            let mut end = (position + needle.len() + 700).min(masked_source.len());
+            while !masked_source.is_char_boundary(end) {
+                end -= 1;
+            }
+            Some((
+                masked_source[start..position].to_owned(),
+                masked_source[position..end].to_owned(),
+            ))
+        };
         let navigation_items: Vec<serde_json::Value> = checkpoint
             .candidates
             .iter()
@@ -2386,16 +2416,24 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 message_identity::CandidateIdentity::Unresolved
             ))
             .flat_map(|candidate| {
-                candidate.facts.iter().map(move |fact| serde_json::json!({
-                    "candidate_id": candidate.id,
-                    "proposed_name": candidate.proposed_name,
-                    "statement": fact.statement,
-                    "segment_id": fact.segment_id,
-                    "evidence_quote": fact.evidence_quote,
-                    "source_byte_offset": fact.source_byte_offset
-                }))
+                candidate.facts.iter().map(move |fact| {
+                    let navigation = navigation_prefix(&fact.statement)
+                        .or_else(|| fact.evidence_quote.as_deref().and_then(&navigation_prefix));
+                    let (source_prefix, source_window) = navigation
+                        .unwrap_or_else(|| (String::new(), String::new()));
+                    serde_json::json!({
+                        "candidate_id": candidate.id,
+                        "proposed_name": candidate.proposed_name,
+                        "statement": fact.statement,
+                        "segment_id": fact.segment_id,
+                        "evidence_quote": fact.evidence_quote,
+                        "source_prefix": source_prefix,
+                        "source_window": source_window,
+                        "navigation_status": if source_window.is_empty() { "ambiguous_or_missing" } else { "unique_exact_match" }
+                    })
+                })
             })
-            .take(8)
+            .take(4)
             .collect();
         if !navigation_items.is_empty() {
             println!(
@@ -2414,7 +2452,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                     .collect::<Vec<_>>(),
             }).to_string();
             match self.llm_call.run_text_step_limited_with_temperature(
-                "Return ONLY one compact JSON object: {\"decisions\":[{\"candidate_id\":1,\"segment_id\":\"S1\",\"proposed_destination\":\"messages/a.md\",\"source_evidence\":\"Type: a\",\"status\":\"supported\"}]}. Include one decision per input fact, using status unresolved and empty destination/evidence when the document does not explicitly prove a case-sensitive destination. Do not invent evidence, alter facts, or add prose. This is advisory only.",
+                "Return ONLY one compact JSON object: {\"decisions\":[{\"candidate_id\":1,\"segment_id\":\"S1\",\"proposed_destination\":\"messages/a.md\",\"source_evidence\":\"Type: a\",\"status\":\"supported\"}]}. Include one decision per input fact, using status unresolved and empty destination/evidence when the document does not explicitly prove a case-sensitive destination. Do not invent evidence, alter facts, or add prose. The source_prefix is context, not proof by itself. Cite an exact declaration from source_prefix or source_window and explain its scope. If navigation_status is ambiguous_or_missing, return unresolved. This is advisory only.",
                 &context,
                 self.llm_call.max_tokens().min(4096),
                 0.0,
