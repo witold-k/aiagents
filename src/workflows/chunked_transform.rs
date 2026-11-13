@@ -2459,6 +2459,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 }
             }
         }
+        let navigation_source: &str = &masked_source;
         let navigation_items: Vec<serde_json::Value> = checkpoint.candidates.iter()
             .filter(|candidate| matches!(
                 message_identity::classify_candidate(candidate),
@@ -2468,11 +2469,11 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 let evidence = fact.evidence_quote.as_deref().unwrap_or("");
                 // Offsets in recovery chunks are not necessarily document offsets.
                 // Only a unique, exact occurrence can safely locate the source.
-                let location = unique_source_position(&masked_source, evidence)
-                    .or_else(|| unique_source_position(&masked_source, &fact.statement));
+                let location = unique_source_position(navigation_source, evidence)
+                    .or_else(|| unique_source_position(navigation_source, &fact.statement));
                 let (prefix, window, location_status) = match location {
                     Some(pos) => {
-                        let (prefix, window) = adaptive_navigation_window(&masked_source, pos);
+                        let (prefix, window) = adaptive_navigation_window(navigation_source, pos);
                         (prefix, window, "unique_exact_source")
                     }
                     None => (String::new(), String::new(), "ambiguous_or_missing"),
