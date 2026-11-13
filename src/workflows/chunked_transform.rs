@@ -2197,6 +2197,66 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 };
                 match parsed {
                     Ok(((found, rejected), accepted_response)) => {
+                        // One bounded feedback round for rejected identities.
+                        // The LLM may navigate the provided declarations, but
+                        // the normal parser remains the sole authority.
+                        let (found, rejected, accepted_response) = if rejected > 0 {
+                            let declarations = masked_source
+                                .lines()
+                                .enumerate()
+                                .filter(|(_, line)| {
+                                    let line = line.trim().trim_start_matches('#').trim();
+                                    ["Type:", "Command:", "Message:"].iter().any(|prefix| {
+                                        line.starts_with(prefix)
+                                    })
+                                })
+                                .take(96)
+                                .map(|(line, text)| format!("line {}: {}", line + 1, text.trim()))
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            let feedback = format!(
+                                "Previous extraction had {rejected} rejected facts due to invalid or ambiguous identity. Navigate the SOURCE DECLARATIONS below to check the identity. Correct only a destination explicitly supported by the source; preserve case and existing facts. Never invent a type or evidence segment. Return the full JSON extraction using only segment IDs from the source window.\n\nSOURCE DECLARATIONS:\n{declarations}"
+                            );
+                            println!(
+                                "## [CHUNKED] IDENTITY NAVIGATE {}/{}: rejected={rejected}",
+                                index + 1, parts.len()
+                            );
+                            let retry_prompt = format!("{json_prompt}\n\n{feedback}");
+                            let repaired_response = match self.llm_call.run_text_step_limited_with_temperature(
+                                &retry_prompt, &window_context, self.llm_call.max_tokens(), 0.0,
+                            ) {
+                                Ok(text) => text,
+                                Err(err) => return WorkflowResult::LlmCallResult(err),
+                            };
+                            match parse_segmented_window_recoverable(
+                                &repaired_response, &window, &masked_source
+                            ) {
+                                Ok((repaired, remaining))
+                                    if remaining < rejected
+                                        && repaired.iter().map(|(_, facts)| facts.len()).sum::<usize>()
+                                            >= found.iter().map(|(_, facts)| facts.len()).sum::<usize>() =>
+                                {
+                                    println!(
+                                        "## [CHUNKED] IDENTITY NAVIGATION RESULT: status=repaired rejected_before={rejected} rejected_after={remaining}"
+                                    );
+                                    (repaired, remaining, repaired_response)
+                                }
+                                Ok((_, remaining)) => {
+                                    println!(
+                                        "## [CHUNKED] IDENTITY NAVIGATION RESULT: status=unsupported rejected_before={rejected} rejected_after={remaining}"
+                                    );
+                                    (found, rejected, accepted_response)
+                                }
+                                Err(error) => {
+                                    println!(
+                                        "## [CHUNKED] IDENTITY NAVIGATION RESULT: status=invalid_response reason={error}"
+                                    );
+                                    (found, rejected, accepted_response)
+                                }
+                            }
+                        } else {
+                            (found, rejected, accepted_response)
+                        };
                         let next_id = staged_candidates
                             .iter()
                             .filter_map(|candidate| {
