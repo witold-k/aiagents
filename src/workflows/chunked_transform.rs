@@ -3880,8 +3880,20 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                     match self.llm_call.run_text_step_limited_with_temperature(
                         prompt, &context, self.llm_call.max_tokens().min(512), 0.0,
                     ) {
-                        Ok(answer) if answer.trim() == "UNSUPPORTED" => Err(reason),
-                        Ok(answer) => verified_navigated_fact_quote(&answer, source),
+                        Ok(answer) if answer.trim() == "UNSUPPORTED" => {
+                            println!("## [CHUNKED] FACT NAVIGATION RESULT: {path} fact {} status=unsupported scope=local", index + 1);
+                            Err(reason)
+                        }
+                        Ok(answer) => match verified_navigated_fact_quote(&answer, source) {
+                            Ok(quote) => {
+                                println!("## [CHUNKED] FACT NAVIGATION RESULT: {path} fact {} status=repaired scope=local", index + 1);
+                                Ok(quote)
+                            }
+                            Err(error) => {
+                                println!("## [CHUNKED] FACT NAVIGATION RESULT: {path} fact {} status=invalid_response scope=local reason={error}", index + 1);
+                                Err(reason)
+                            }
+                        },
                         Err(err) => return WorkflowResult::LlmCallResult(err),
                     }
                 } else {
@@ -3969,8 +3981,9 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                                             result = Ok(quote);
                                         }
                                         Err(repair_error) => println!(
-                                            "## [CHUNKED] FACT REPAIR REJECTED: {path} fact {}: {repair_error}",
-                                            index + 1
+                                            "## [CHUNKED] FACT NAVIGATION RESULT: {path} fact {} status={} scope=adjacent reason={repair_error}",
+                                            index + 1,
+                                            if repair_error.contains("Ambiguous") { "ambiguous" } else { "invalid_response" }
                                         ),
                                     }
                                 }
