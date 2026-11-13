@@ -435,7 +435,7 @@ fn segmented_source(source: &str) -> String {
         .collect()
 }
 
-#[derive(Debug, Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 struct SegmentedFact {
     statement: String,
