@@ -2543,6 +2543,43 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             }
             println!("## [CHUNKED] POSTRUN LLM NAVIGATION: batch {}/{} saved", batch_index + 1, total_batches);
         }
+        // Summarize the actual decisions, not merely the number of completed
+        // batches. Counts remain diagnostic: no proposal changes identity.
+        let mut navigation_status_counts = std::collections::BTreeMap::<String, usize>::new();
+        let mut navigation_validation_counts = std::collections::BTreeMap::<String, usize>::new();
+        let mut navigation_location_counts = std::collections::BTreeMap::<String, usize>::new();
+        for item in &navigation_items {
+            let status = item.get("navigation_status").and_then(|v| v.as_str())
+                .unwrap_or("missing_status");
+            *navigation_location_counts.entry(status.to_owned()).or_default() += 1;
+        }
+        if let Some(decisions) = navigation_report.get("decisions").and_then(|v| v.as_array()) {
+            for decision in decisions {
+                let status = decision.get("status").and_then(|v| v.as_str())
+                    .unwrap_or("missing_status");
+                let validation = decision.get("validation").and_then(|v| v.as_str())
+                    .unwrap_or("missing_validation");
+                *navigation_status_counts.entry(status.to_owned()).or_default() += 1;
+                *navigation_validation_counts.entry(validation.to_owned()).or_default() += 1;
+            }
+        }
+        let navigation_summary = serde_json::json!({
+            "total_unresolved_input_facts": navigation_items.len(),
+            "batches_total": total_batches,
+            "batches_completed": navigation_report.get("batches_completed").and_then(|v| v.as_u64()).unwrap_or(0),
+            "decisions_returned": navigation_report.get("decisions").and_then(|v| v.as_array()).map_or(0, Vec::len),
+            "model_status": navigation_status_counts,
+            "validation": navigation_validation_counts,
+            "source_location": navigation_location_counts,
+            "published_from_navigation": 0,
+        });
+        navigation_report["summary"] = navigation_summary.clone();
+        if let Ok(serialized) = serde_json::to_string_pretty(&navigation_report)
+            && let Err(err) = fs::write(&navigation_path, format!("{serialized}\n"))
+        {
+            eprintln!("## [CHUNKED] POSTRUN LLM NAVIGATION: summary write failed: {err}");
+        }
+        println!("## [CHUNKED] POSTRUN LLM NAVIGATION SUMMARY: {navigation_summary}");
         let source_windows: Vec<&str> = parts.iter().map(|part| part.text.as_str()).collect();
         let source_starts: Vec<usize> = parts.iter().map(|part| part.start_byte).collect();
         let locator_stats = message_identity::statement_locator_stats(
