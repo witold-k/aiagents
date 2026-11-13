@@ -935,17 +935,17 @@ mod identity_repair_regression_tests {
 
     #[test]
     fn rejected_payload_does_not_include_accepted_siblings() {
-        // A mismatched explicit Type is a real parser rejection, unlike
-        // merely missing semantic ownership or an unknown segment locator.
+        // The valid sibling must not enter repair. An invented locator is
+        // rejected even when the statement names a declared message type.
         let source = "Type: g\nType: G\n";
         let response = serde_json::json!({"files": [
             {"path": "messages/g.md", "facts": [{"statement": "Type: g", "segment_id": "S1"}]},
-            {"path": "messages/g.md", "facts": [{"statement": "Type: G", "segment_id": "S2"}]}
+            {"path": "messages/g.md", "facts": [{"statement": "Type: G", "segment_id": "S999"}]}
         ]}).to_string();
         let payload = rejected_identity_payload(&response, source, source).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&payload).unwrap();
         assert_eq!(parsed["files"].as_array().unwrap().len(), 1);
-        assert_eq!(parsed["files"][0]["facts"][0]["segment_id"], "S2");
+        assert_eq!(parsed["files"][0]["facts"][0]["segment_id"], "S999");
     }
 
     #[test]
