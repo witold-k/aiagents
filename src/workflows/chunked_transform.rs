@@ -2395,7 +2395,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                     "source_byte_offset": fact.source_byte_offset
                 }))
             })
-            .take(24)
+            .take(8)
             .collect();
         if !navigation_items.is_empty() {
             println!(
@@ -2414,9 +2414,9 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                     .collect::<Vec<_>>(),
             }).to_string();
             match self.llm_call.run_text_step_limited_with_temperature(
-                "Navigate the document identities for the supplied source-backed facts.                  Return JSON with a decisions array. Each decision must include                  candidate_id, segment_id, proposed_destination, source_evidence,                  and status (supported or unresolved). Only mark supported if                  source_evidence explicitly establishes the exact case-sensitive                  destination. Never invent evidence or change facts.                  This is an advisory review, not permission to publish.",
+                "Return ONLY one compact JSON object: {\"decisions\":[{\"candidate_id\":1,\"segment_id\":\"S1\",\"proposed_destination\":\"messages/a.md\",\"source_evidence\":\"Type: a\",\"status\":\"supported\"}]}. Include one decision per input fact, using status unresolved and empty destination/evidence when the document does not explicitly prove a case-sensitive destination. Do not invent evidence, alter facts, or add prose. This is advisory only.",
                 &context,
-                self.llm_call.max_tokens().min(2048),
+                self.llm_call.max_tokens().min(4096),
                 0.0,
             ) {
                 Ok(answer) => {
@@ -2434,7 +2434,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                                 }
                             }
                         }
-                        _ => eprintln!("## [CHUNKED] POSTRUN LLM NAVIGATION: invalid JSON response; continuing without changes"),
+                        _ => eprintln!("## [CHUNKED] POSTRUN LLM NAVIGATION: invalid JSON response ({} chars); continuing without changes", answer.chars().count()),
                     }
                 }
                 Err(_) => eprintln!("## [CHUNKED] POSTRUN LLM NAVIGATION: model unavailable; continuing without changes"),
