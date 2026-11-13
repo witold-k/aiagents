@@ -2536,7 +2536,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             }
             navigation_report["batches_completed"] = serde_json::json!(batch_index + 1);
             if let Ok(serialized) = serde_json::to_string_pretty(&navigation_report)
-                && let Err(err) = fs::write(&navigation_path, format!("{serialized}\\n"))
+                && let Err(err) = fs::write(&navigation_path, format!("{serialized}\n"))
             {
                 eprintln!("## [CHUNKED] POSTRUN LLM NAVIGATION: checkpoint write failed: {err}");
                 break;
