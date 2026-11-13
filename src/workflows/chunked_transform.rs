@@ -4010,3 +4010,45 @@ mod internal_tests;
 #[cfg(test)]
 #[path = "../../tests/workflows/chunked_transform_segmented_evidence_test.rs"]
 mod segmented_evidence_tests;
+
+#[cfg(test)]
+mod postrun_navigation_tests {
+    use super::*;
+
+    #[test]
+    fn unique_navigation_does_not_guess_repeated_evidence() {
+        assert_eq!(unique_source_position("Type: a\nhello", "hello"), Some(8));
+        assert_eq!(unique_source_position("hello hello", "hello"), None);
+        assert_eq!(unique_source_position("hello", ""), None);
+    }
+
+    #[test]
+    fn adaptive_prefix_expands_to_section_context() {
+        let source = format!("## Parent section\n{}\nType: a\nFact text", "context\n".repeat(180));
+        let pos = source.find("Fact text").unwrap();
+        let (prefix, window) = adaptive_navigation_window(&source, pos);
+        assert!(prefix.contains("Type: a"));
+        assert!(window.starts_with("Fact text"));
+    }
+
+    #[test]
+    fn navigation_requires_case_sensitive_source_declaration() {
+        let item = serde_json::json!({
+            "navigation_status": "unique_exact_source",
+            "source_prefix": "## Section\nType: G\n",
+            "source_window": "A fact"
+        });
+        let wrong_case = serde_json::json!({
+            "status": "supported",
+            "proposed_destination": "messages/g.md",
+            "source_evidence": "Type: g"
+        });
+        assert_eq!(validate_navigation_decision(&item, &wrong_case), "rejected_evidence");
+        let correct = serde_json::json!({
+            "status": "supported",
+            "proposed_destination": "messages/G.md",
+            "source_evidence": "Type: G"
+        });
+        assert_eq!(validate_navigation_decision(&item, &correct), "source_declaration_found_review_required");
+    }
+}
