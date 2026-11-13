@@ -256,8 +256,8 @@ fn adaptive_navigation_window(source: &str, position: usize) -> (String, String)
             while !source.is_char_boundary(start) { start += 1; }
         }
     }
-    if start > 0 {
-        if let Some(newline) = source[start..position].find('\n') { start += newline + 1; }
+    if start > 0 && let Some(newline) = source[start..position].find('\n') {
+        start += newline + 1;
     }
     let mut end = (position + 900).min(source.len());
     while !source.is_char_boundary(end) { end -= 1; }
@@ -2450,14 +2450,12 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             "decisions": [],
             "batches_completed": 0,
         });
-        if let Ok(saved) = fs::read_to_string(&navigation_path) {
-            if let Ok(existing) = serde_json::from_str::<serde_json::Value>(&saved) {
-                if existing.get("version").and_then(|v| v.as_u64()) == Some(2)
-                    && existing.get("source_fingerprint") == navigation_report.get("source_fingerprint")
-                {
-                    navigation_report = existing;
-                }
-            }
+        if let Ok(saved) = fs::read_to_string(&navigation_path)
+            && let Ok(existing) = serde_json::from_str::<serde_json::Value>(&saved)
+            && existing.get("version").and_then(|v| v.as_u64()) == Some(2)
+            && existing.get("source_fingerprint") == navigation_report.get("source_fingerprint")
+        {
+            navigation_report = existing;
         }
         let navigation_source: &str = &masked_source;
         let navigation_items: Vec<serde_json::Value> = checkpoint.candidates.iter()
@@ -2537,11 +2535,11 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 all.extend(checked);
             }
             navigation_report["batches_completed"] = serde_json::json!(batch_index + 1);
-            if let Ok(serialized) = serde_json::to_string_pretty(&navigation_report) {
-                if let Err(err) = fs::write(&navigation_path, format!("{serialized}\n")) {
-                    eprintln!("## [CHUNKED] POSTRUN LLM NAVIGATION: checkpoint write failed: {err}");
-                    break;
-                }
+            if let Ok(serialized) = serde_json::to_string_pretty(&navigation_report)
+                && let Err(err) = fs::write(&navigation_path, format!("{serialized}\\n"))
+            {
+                eprintln!("## [CHUNKED] POSTRUN LLM NAVIGATION: checkpoint write failed: {err}");
+                break;
             }
             println!("## [CHUNKED] POSTRUN LLM NAVIGATION: batch {}/{} saved", batch_index + 1, total_batches);
         }
