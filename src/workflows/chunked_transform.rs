@@ -612,6 +612,32 @@ fn fact_message_path(
 // descriptive Type: A | ... entry does not establish an open-ended section.
 // Blank lines and new headings end ownership; unrelated source material must
 // remain unclassified rather than inherit a distant message type.
+// Correct a model-selected one-letter destination only when the assertion
+// and its source segment independently agree on a declared message type.
+fn verified_message_destination(
+    path: &str,
+    statement_type: Option<u8>,
+    evidence_type: Option<u8>,
+    identity_source: &str,
+) -> Option<String> {
+    let letter = statement_type?;
+    if evidence_type != Some(letter) || !letter.is_ascii_alphabetic() {
+        return None;
+    }
+    let slug = path.strip_prefix("messages/")?.strip_suffix(".md")?;
+    let base = slug.strip_prefix("upper_").unwrap_or(slug);
+    if base.len() != 1 || !base.as_bytes()[0].eq_ignore_ascii_case(&letter) {
+        return None;
+    }
+    let lower = (letter.to_ascii_lowercase() as char).to_string();
+    let candidate = if letter.is_ascii_uppercase() {
+        format!("messages/upper_{lower}.md")
+    } else {
+        format!("messages/{lower}.md")
+    };
+    declared_message_identity(&candidate, identity_source).then_some(candidate)
+}
+
 fn section_type_for_line(source: &str, line_index: usize) -> Option<u8> {
     let lines: Vec<&str> = source.lines().collect();
     if line_index >= lines.len() {
@@ -779,8 +805,19 @@ fn parse_segmented_window_with_identity(
                     a as char, b as char
                 ));
             }
-            let destination =
-                fact_message_path(&path, statement_type.or(evidence_type), identity_source)?;
+            let destination = if let Some(corrected) =
+                verified_message_destination(&path, statement_type, evidence_type, identity_source)
+            {
+                if corrected != path {
+                    println!(
+                        "## [CHUNKED] IDENTITY REPAIR: {} -> {} (matching assertion, source segment and declaration)",
+                        path, corrected
+                    );
+                }
+                corrected
+            } else {
+                fact_message_path(&path, statement_type.or(evidence_type), identity_source)?
+            };
             if let Some((_, existing)) = result
                 .iter_mut()
                 .find(|(existing_path, _)| existing_path == &destination)
