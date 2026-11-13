@@ -2556,6 +2556,46 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                     };
                     match parsed {
                         Ok(((found, rejected), accepted_response)) => {
+                            // Coverage is a second extraction path: apply the same
+                            // strictly additive, source-verified identity repair.
+                            let (found, rejected) = if rejected > 0 {
+                                let payload = rejected_identity_payload(
+                                    &accepted_response, &window, &masked_source
+                                ).unwrap_or_else(|| r#"{"files":[]}"#.to_owned());
+                                println!(
+                                    "## [CHUNKED] COVERAGE IDENTITY NAVIGATE {}/{}: rejected={rejected}",
+                                    index + 1, parts.len()
+                                );
+                                let repair_context = format!(
+                                    "REJECTED FACTS ONLY:\\n{payload}\\n\\nSOURCE SEGMENTS:\\n{}\\n\\nDOCUMENT DECLARATIONS:\\n{}",
+                                    segmented_source(&window),
+                                    masked_source.lines().filter(|line| {
+                                        let text = line.trim().trim_start_matches('#').trim();
+                                        ["Type:", "Command:", "Message:"].iter().any(|prefix| text.starts_with(prefix))
+                                    }).take(96).collect::<Vec<_>>().join("\\n")
+                                );
+                                match self.llm_call.run_text_step_limited_with_temperature(
+                                    "Repair only the rejected facts. Preserve statement, segment_id, and evidence exactly. Change only destination path and identity_segment_id if source declarations establish case-sensitive identity. Return JSON in the same files/facts schema; omit uncertain facts.",
+                                    &repair_context,
+                                    self.llm_call.max_tokens().min(4096),
+                                    0.0,
+                                ) {
+                                    Ok(proposal) => {
+                                        let (merged, remaining, recovered) = merge_verified_identity_repairs(
+                                            &accepted_response, &proposal, &window,
+                                            &masked_source, found, rejected
+                                        );
+                                        println!(
+                                            "## [CHUNKED] COVERAGE IDENTITY NAVIGATION RESULT: status={} recovered={recovered} remaining={remaining}",
+                                            if recovered > 0 { "repaired" } else { "unsupported" }
+                                        );
+                                        (merged, remaining)
+                                    }
+                                    Err(err) => return WorkflowResult::LlmCallResult(err),
+                                }
+                            } else {
+                                (found, rejected)
+                            };
                             let next_id = coverage_candidates
                                 .iter()
                                 .filter_map(|candidate: &message_identity::MessageCandidate| {
