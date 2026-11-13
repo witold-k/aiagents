@@ -2392,10 +2392,10 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             &masked_source,
         );
         let grounding_path = checkpoint_file.with_extension("grounding.json");
-        if let Ok(serialized) = serde_json::to_string_pretty(&grounding_inventory) {
-            if let Err(err) = fs::write(&grounding_path, format!("{serialized}\\n")) {
-                eprintln!("## [CHUNKED] SOURCE GROUNDING: report write failed: {err}");
-            }
+        if let Ok(serialized) = serde_json::to_string_pretty(&grounding_inventory)
+            && let Err(err) = fs::write(&grounding_path, format!("{serialized}\n"))
+        {
+            eprintln!("## [CHUNKED] SOURCE GROUNDING: report write failed: {err}");
         }
         println!(
             "## [CHUNKED] SOURCE GROUNDING (advisory): exact_evidence={} unlocated_or_ambiguous={} report={}",
