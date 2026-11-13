@@ -2375,6 +2375,71 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         println!(
             "## [CHUNKED] IDENTITY CLASSIFICATION: {resolved} explicitly typed candidates, {unresolved} unresolved candidates ({unresolved_facts} facts); no automatic alias merging"
         );
+        // Post-extraction navigation is deliberately advisory. The LLM sees
+        // source-attributed unresolved facts after all chunks have completed,
+        // but its suggestions never override document-grounded identity checks.
+        let navigation_items: Vec<serde_json::Value> = checkpoint
+            .candidates
+            .iter()
+            .filter(|candidate| matches!(
+                message_identity::classify_candidate(candidate),
+                message_identity::CandidateIdentity::Unresolved
+            ))
+            .flat_map(|candidate| {
+                candidate.facts.iter().map(move |fact| serde_json::json!({
+                    "candidate_id": candidate.id,
+                    "proposed_name": candidate.proposed_name,
+                    "statement": fact.statement,
+                    "segment_id": fact.segment_id,
+                    "evidence_quote": fact.evidence_quote,
+                    "source_byte_offset": fact.source_byte_offset
+                }))
+            })
+            .take(24)
+            .collect();
+        if !navigation_items.is_empty() {
+            println!(
+                "## [CHUNKED] POSTRUN LLM NAVIGATION: reviewing {} unresolved facts (advisory only)",
+                navigation_items.len()
+            );
+            let context = serde_json::json!({
+                "unresolved_facts": navigation_items,
+                "document_declarations": masked_source.lines()
+                    .filter(|line| {
+                        let line = line.trim().trim_start_matches('#').trim();
+                        ["Type:", "Command:", "Message:"].iter()
+                            .any(|prefix| line.starts_with(prefix))
+                    })
+                    .take(96)
+                    .collect::<Vec<_>>(),
+            }).to_string();
+            match self.llm_call.run_text_step_limited_with_temperature(
+                "Navigate the document identities for the supplied source-backed facts.                  Return JSON with a decisions array. Each decision must include                  candidate_id, segment_id, proposed_destination, source_evidence,                  and status (supported or unresolved). Only mark supported if                  source_evidence explicitly establishes the exact case-sensitive                  destination. Never invent evidence or change facts.                  This is an advisory review, not permission to publish.",
+                &context,
+                self.llm_call.max_tokens().min(2048),
+                0.0,
+            ) {
+                Ok(answer) => {
+                    let parsed = serde_json::from_str::<serde_json::Value>(
+                        strip_code_fences(answer.trim()).trim()
+                    );
+                    match parsed {
+                        Ok(value) if value.get("decisions").and_then(|v| v.as_array()).is_some() => {
+                            let path = checkpoint_file.with_extension("navigation.json");
+                            if let Ok(serialized) = serde_json::to_string_pretty(&value) {
+                                if let Err(err) = fs::write(&path, format!("{serialized}\\n")) {
+                                    eprintln!("## [CHUNKED] POSTRUN LLM NAVIGATION: cannot save advisory report: {err}");
+                                } else {
+                                    println!("## [CHUNKED] POSTRUN LLM NAVIGATION: saved advisory report {}", path.display());
+                                }
+                            }
+                        }
+                        _ => eprintln!("## [CHUNKED] POSTRUN LLM NAVIGATION: invalid JSON response; continuing without changes"),
+                    }
+                }
+                Err(err) => eprintln!("## [CHUNKED] POSTRUN LLM NAVIGATION: model unavailable ({err:?}); continuing without changes"),
+            }
+        }
         let source_windows: Vec<&str> = parts.iter().map(|part| part.text.as_str()).collect();
         let source_starts: Vec<usize> = parts.iter().map(|part| part.start_byte).collect();
         let locator_stats = message_identity::statement_locator_stats(
