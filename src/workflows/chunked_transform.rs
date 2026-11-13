@@ -935,15 +935,17 @@ mod identity_repair_regression_tests {
 
     #[test]
     fn rejected_payload_does_not_include_accepted_siblings() {
-        let source = "Type: g\nThe g message is sent.\n";
+        // Both cases are declared. A typed fact is accepted; an untyped
+        // fact cannot be routed solely from the proposed lowercase path.
+        let source = "Type: g\nThe g message is sent.\n\nType: G\nThe G message is sent.\n";
         let response = serde_json::json!({"files": [
-            {"path": "messages/g.md", "facts": [{"statement": "The g message is sent.", "segment_id": "S2"}]},
-            {"path": "messages/g.md", "facts": [{"statement": "Unsupported assertion", "segment_id": "S999"}]}
+            {"path": "messages/g.md", "facts": [{"statement": "Type: g", "segment_id": "S1"}]},
+            {"path": "messages/g.md", "facts": [{"statement": "Unresolved message behavior", "segment_id": "S2"}]}
         ]}).to_string();
         let payload = rejected_identity_payload(&response, source, source).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&payload).unwrap();
         assert_eq!(parsed["files"].as_array().unwrap().len(), 1);
-        assert_eq!(parsed["files"][0]["facts"][0]["segment_id"], "S999");
+        assert_eq!(parsed["files"][0]["facts"][0]["segment_id"], "S2");
     }
 
     #[test]
