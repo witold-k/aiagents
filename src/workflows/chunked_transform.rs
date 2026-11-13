@@ -229,6 +229,72 @@ pub fn evidence_segments(source: &str) -> Vec<EvidenceSegment> {
 
 // SourceTree is the single syntax authority for section/table/fence boundaries.
 // This is a read-only hint; table cells are never promoted to message identity.
+// Source navigation never guesses between repeated matches.
+fn unique_source_position(source: &str, needle: &str) -> Option<usize> {
+    if needle.trim().is_empty() { return None; }
+    let mut matches = source.match_indices(needle);
+    let (position, _) = matches.next()?;
+    if matches.next().is_some() { return None; }
+    Some(position)
+}
+
+// Prefer complete lines and the nearest section heading; expand the prefix
+// only when the local 1K view has no structural anchor. Hard cap: 12K bytes.
+fn adaptive_navigation_window(source: &str, position: usize) -> (String, String) {
+    let position = position.min(source.len());
+    if !source.is_char_boundary(position) { return (String::new(), String::new()); }
+    let before = &source[..position];
+    let mut start = before.len().saturating_sub(1_000);
+    while !source.is_char_boundary(start) { start += 1; }
+    let local = &source[start..position];
+    if !local.lines().any(|line| line.trim_start().starts_with('#') || line.trim_start().starts_with("Type:")) {
+        start = before.len().saturating_sub(4_000);
+        while !source.is_char_boundary(start) { start += 1; }
+        let medium = &source[start..position];
+        if !medium.lines().any(|line| line.trim_start().starts_with('#') || line.trim_start().starts_with("Type:")) {
+            start = before.len().saturating_sub(12_000);
+            while !source.is_char_boundary(start) { start += 1; }
+        }
+    }
+    if start > 0 {
+        if let Some(newline) = source[start..position].find('\n') { start += newline + 1; }
+    }
+    let mut end = (position + 900).min(source.len());
+    while !source.is_char_boundary(end) { end -= 1; }
+    (source[start..position].to_owned(), source[position..end].to_owned())
+}
+
+// Strictly validate an LLM proposal against its supplied, uniquely located
+// source. This is a diagnostic, not permission to publish or merge facts.
+fn validate_navigation_decision(item: &serde_json::Value, decision: &serde_json::Value) -> &'static str {
+    if item.get("navigation_status").and_then(|v| v.as_str()) != Some("unique_exact_source") {
+        return "rejected_ambiguous_location";
+    }
+    if decision.get("status").and_then(|v| v.as_str()) != Some("supported") {
+        return "unresolved";
+    }
+    let Some(destination) = decision.get("proposed_destination").and_then(|v| v.as_str()) else {
+        return "rejected_destination";
+    };
+    let Some(type_name) = destination.strip_prefix("messages/").and_then(|v| v.strip_suffix(".md")) else {
+        return "rejected_destination";
+    };
+    if type_name.len() != 1 || !type_name.is_ascii() { return "rejected_destination"; }
+    let Some(evidence) = decision.get("source_evidence").and_then(|v| v.as_str()) else {
+        return "rejected_evidence";
+    };
+    let prefix = item.get("source_prefix").and_then(|v| v.as_str()).unwrap_or("");
+    let window = item.get("source_window").and_then(|v| v.as_str()).unwrap_or("");
+    let declaration = format!("Type: {type_name}");
+    if evidence.trim() != declaration || !(prefix.lines().chain(window.lines())
+        .any(|line| line.trim() == declaration)) {
+        return "rejected_evidence";
+    }
+    // A declaration in the prefix can belong to a different section.
+    // Human or stronger structural review is still required.
+    "source_declaration_found_review_required"
+}
+
 fn scoped_source_context(source: &str, byte_offset: usize) -> String {
     const MAX_CONTEXT_CHARS: usize = 1_200;
     let end = byte_offset.min(source.len());
@@ -2375,108 +2441,108 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         println!(
             "## [CHUNKED] IDENTITY CLASSIFICATION: {resolved} explicitly typed candidates, {unresolved} unresolved candidates ({unresolved_facts} facts); no automatic alias merging"
         );
-        // Post-extraction navigation is deliberately advisory. The LLM sees
-        // source-attributed unresolved facts after all chunks have completed,
-        // but its suggestions never override document-grounded identity checks.
-        // Navigate to an exact, unique occurrence before asking the model to
-        // interpret identity. Never attach context to an ambiguous text match.
-        let navigation_prefix = |needle: &str| -> Option<(String, String)> {
-            if needle.trim().is_empty() {
-                return None;
+        // A second, checkpointed pass navigates all unresolved facts. Navigation
+        // proposals are never treated as source evidence or merged automatically.
+        let navigation_path = checkpoint_file.with_extension("navigation.json");
+        let mut navigation_report = serde_json::json!({
+            "version": 2,
+            "source_fingerprint": checkpoint.source_fingerprint,
+            "decisions": [],
+            "batches_completed": 0,
+        });
+        if let Ok(saved) = fs::read_to_string(&navigation_path) {
+            if let Ok(existing) = serde_json::from_str::<serde_json::Value>(&saved) {
+                if existing.get("version").and_then(|v| v.as_u64()) == Some(2)
+                    && existing.get("source_fingerprint") == navigation_report.get("source_fingerprint")
+                {
+                    navigation_report = existing;
+                }
             }
-            let mut matches = masked_source.match_indices(needle);
-            let (position, _) = matches.next()?;
-            if matches.next().is_some() {
-                return None;
-            }
-            let before = &masked_source[..position];
-            // Expand the prefix to include useful preceding declarations and
-            // section headings. Keep the prompt bounded for local models.
-            let mut start = before.len().saturating_sub(5_000);
-            while !masked_source.is_char_boundary(start) {
-                start += 1;
-            }
-            if let Some(line) = masked_source[start..position].find('\n') {
-                start += line + 1;
-            }
-            let mut end = (position + needle.len() + 700).min(masked_source.len());
-            while !masked_source.is_char_boundary(end) {
-                end -= 1;
-            }
-            Some((
-                masked_source[start..position].to_owned(),
-                masked_source[position..end].to_owned(),
-            ))
-        };
-        let navigation_items: Vec<serde_json::Value> = checkpoint
-            .candidates
-            .iter()
+        }
+        let navigation_items: Vec<serde_json::Value> = checkpoint.candidates.iter()
             .filter(|candidate| matches!(
                 message_identity::classify_candidate(candidate),
                 message_identity::CandidateIdentity::Unresolved
             ))
-            .flat_map(|candidate| {
-                candidate.facts.iter().map(move |fact| {
-                    let navigation = navigation_prefix(&fact.statement)
-                        .or_else(|| fact.evidence_quote.as_deref().and_then(&navigation_prefix));
-                    let (source_prefix, source_window) = navigation
-                        .unwrap_or_else(|| (String::new(), String::new()));
-                    serde_json::json!({
-                        "candidate_id": candidate.id,
-                        "proposed_name": candidate.proposed_name,
-                        "statement": fact.statement,
-                        "segment_id": fact.segment_id,
-                        "evidence_quote": fact.evidence_quote,
-                        "source_prefix": source_prefix,
-                        "source_window": source_window,
-                        "navigation_status": if source_window.is_empty() { "ambiguous_or_missing" } else { "unique_exact_match" }
-                    })
+            .flat_map(|candidate| candidate.facts.iter().map(move |fact| {
+                let evidence = fact.evidence_quote.as_deref().unwrap_or("");
+                // Offsets in recovery chunks are not necessarily document offsets.
+                // Only a unique, exact occurrence can safely locate the source.
+                let location = unique_source_position(&masked_source, evidence)
+                    .or_else(|| unique_source_position(&masked_source, &fact.statement));
+                let (prefix, window, location_status) = match location {
+                    Some(pos) => {
+                        let (prefix, window) = adaptive_navigation_window(&masked_source, pos);
+                        (prefix, window, "unique_exact_source")
+                    }
+                    None => (String::new(), String::new(), "ambiguous_or_missing"),
+                };
+                serde_json::json!({
+                    "candidate_id": candidate.id,
+                    "segment_id": fact.segment_id,
+                    "proposed_name": candidate.proposed_name,
+                    "statement": fact.statement,
+                    "evidence_quote": fact.evidence_quote,
+                    "source_prefix": prefix,
+                    "source_window": window,
+                    "navigation_status": location_status,
                 })
-            })
-            .take(4)
+            }))
             .collect();
-        if !navigation_items.is_empty() {
-            println!(
-                "## [CHUNKED] POSTRUN LLM NAVIGATION: reviewing {} unresolved facts (advisory only)",
-                navigation_items.len()
-            );
-            let context = serde_json::json!({
-                "unresolved_facts": navigation_items,
-                "document_declarations": masked_source.lines()
-                    .filter(|line| {
-                        let line = line.trim().trim_start_matches('#').trim();
-                        ["Type:", "Command:", "Message:"].iter()
-                            .any(|prefix| line.starts_with(prefix))
-                    })
-                    .take(96)
-                    .collect::<Vec<_>>(),
-            }).to_string();
-            match self.llm_call.run_text_step_limited_with_temperature(
-                "Return ONLY one compact JSON object: {\"decisions\":[{\"candidate_id\":1,\"segment_id\":\"S1\",\"proposed_destination\":\"messages/a.md\",\"source_evidence\":\"Type: a\",\"status\":\"supported\"}]}. Include one decision per input fact, using status unresolved and empty destination/evidence when the document does not explicitly prove a case-sensitive destination. Do not invent evidence, alter facts, or add prose. The source_prefix is context, not proof by itself. Cite an exact declaration from source_prefix or source_window and explain its scope. If navigation_status is ambiguous_or_missing, return unresolved. This is advisory only.",
+        let already_completed = navigation_report.get("batches_completed")
+            .and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        let total_batches = navigation_items.len().div_ceil(4);
+        println!("## [CHUNKED] POSTRUN LLM NAVIGATION: {} unresolved facts, {} batches ({} previously completed)",
+            navigation_items.len(), total_batches, already_completed);
+        for (batch_index, batch) in navigation_items.chunks(4).enumerate().skip(already_completed) {
+            let context = serde_json::json!({"unresolved_facts": batch}).to_string();
+            let result = self.llm_call.run_text_step_limited_with_temperature(
+                "Return ONLY compact JSON: {\"decisions\":[{\"candidate_id\":\"id\",\"segment_id\":\"S1\",\"proposed_destination\":\"\",\"source_evidence\":\"\",\"status\":\"unresolved\"}]}. One decision per input. Use supported only when an exact, case-sensitive Type declaration in the supplied source window proves ownership; otherwise unresolved. Do not infer ownership from a heading or adjacent table. No prose.",
                 &context,
                 self.llm_call.max_tokens().min(4096),
                 0.0,
-            ) {
-                Ok(answer) => {
-                    let parsed = serde_json::from_str::<serde_json::Value>(
-                        strip_code_fences(answer.trim()).trim()
-                    );
-                    match parsed {
-                        Ok(value) if value.get("decisions").and_then(|v| v.as_array()).is_some() => {
-                            let path = checkpoint_file.with_extension("navigation.json");
-                            if let Ok(serialized) = serde_json::to_string_pretty(&value) {
-                                if let Err(err) = fs::write(&path, format!("{serialized}\\n")) {
-                                    eprintln!("## [CHUNKED] POSTRUN LLM NAVIGATION: cannot save advisory report: {err}");
-                                } else {
-                                    println!("## [CHUNKED] POSTRUN LLM NAVIGATION: saved advisory report {}", path.display());
-                                }
-                            }
-                        }
-                        _ => eprintln!("## [CHUNKED] POSTRUN LLM NAVIGATION: invalid JSON response ({} chars); continuing without changes", answer.chars().count()),
-                    }
+            );
+            let Ok(answer) = result else {
+                eprintln!("## [CHUNKED] POSTRUN LLM NAVIGATION: batch {} unavailable; resume later", batch_index + 1);
+                break;
+            };
+            let Ok(parsed) = serde_json::from_str::<serde_json::Value>(
+                strip_code_fences(answer.trim()).trim()
+            ) else {
+                eprintln!("## [CHUNKED] POSTRUN LLM NAVIGATION: batch {} invalid JSON; resume later", batch_index + 1);
+                break;
+            };
+            let Some(decisions) = parsed.get("decisions").and_then(|v| v.as_array()) else {
+                eprintln!("## [CHUNKED] POSTRUN LLM NAVIGATION: batch {} missing decisions", batch_index + 1);
+                break;
+            };
+            let mut checked = Vec::new();
+            for decision in decisions {
+                let mut decision = decision.clone();
+                let id = decision.get("candidate_id").and_then(|v| v.as_str()).unwrap_or("");
+                let segment = decision.get("segment_id").and_then(|v| v.as_str()).unwrap_or("");
+                let matching = batch.iter().find(|item|
+                    item.get("candidate_id").and_then(|v| v.as_str()) == Some(id)
+                    && item.get("segment_id").and_then(|v| v.as_str()) == Some(segment));
+                let status = if let Some(item) = matching {
+                    validate_navigation_decision(item, &decision)
+                } else { "rejected_unknown_fact" };
+                if let Some(object) = decision.as_object_mut() {
+                    object.insert("validation".to_owned(), serde_json::json!(status));
                 }
-                Err(_) => eprintln!("## [CHUNKED] POSTRUN LLM NAVIGATION: model unavailable; continuing without changes"),
+                checked.push(decision);
             }
+            if let Some(all) = navigation_report.get_mut("decisions").and_then(|v| v.as_array_mut()) {
+                all.extend(checked);
+            }
+            navigation_report["batches_completed"] = serde_json::json!(batch_index + 1);
+            if let Ok(serialized) = serde_json::to_string_pretty(&navigation_report) {
+                if let Err(err) = fs::write(&navigation_path, format!("{serialized}\n")) {
+                    eprintln!("## [CHUNKED] POSTRUN LLM NAVIGATION: checkpoint write failed: {err}");
+                    break;
+                }
+            }
+            println!("## [CHUNKED] POSTRUN LLM NAVIGATION: batch {}/{} saved", batch_index + 1, total_batches);
         }
         let source_windows: Vec<&str> = parts.iter().map(|part| part.text.as_str()).collect();
         let source_starts: Vec<usize> = parts.iter().map(|part| part.start_byte).collect();
