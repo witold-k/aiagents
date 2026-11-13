@@ -835,6 +835,30 @@ fn parse_segmented_window_with_identity(
     Ok(result)
 }
 
+// Send only rejected facts to the repair model, never accepted siblings.
+fn rejected_identity_payload(
+    response: &str,
+    source: &str,
+    identity_source: &str,
+) -> Option<String> {
+    let parsed: SegmentedWindow =
+        serde_json::from_str(strip_code_fences(response.trim()).trim()).ok()?;
+    let mut files = Vec::new();
+    for file in parsed.files {
+        for fact in file.facts {
+            let isolated = serde_json::json!({"files": [{
+                "path": file.path.clone(),
+                "identity_segment_id": file.identity_segment_id.clone(),
+                "facts": [fact]
+            }]});
+            if parse_segmented_window_with_identity(&isolated.to_string(), source, identity_source).is_err() {
+                files.push(isolated["files"][0].clone());
+            }
+        }
+    }
+    Some(serde_json::json!({"files": files}).to_string())
+}
+
 // A repair may change a destination, but never the original assertion or
 // locator. Reparse each proposed fact against the source before admitting it.
 fn merge_verified_identity_repairs(
@@ -2258,15 +2282,19 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                         // Repair only rejected facts. Never regenerate or replace
                         // previously accepted records.
                         let (found, rejected) = if rejected > 0 {
+                            let rejected_payload = rejected_identity_payload(
+                                &accepted_response, &window, &masked_source
+                            ).unwrap_or_else(|| "{\\"files\\":[]}".to_owned());
+                            println!("## [CHUNKED] IDENTITY NAVIGATE {}/{}: rejected={rejected}", index + 1, parts.len());
                             let repaired = self.llm_call.run_text_step_limited_with_temperature(
-                                "For each rejected fact, propose only a corrected destination path. Return JSON with files and facts in the original schema. Copy each original statement and segment_id EXACTLY. Do not create new facts. If source identity is uncertain, omit the fact.",
+                                "Repair ONLY the rejected facts in the provided JSON. Navigate the source segments and declarations to identify the owning type. Keep statement, segment_id and all evidence fields byte-for-byte identical; change only path and identity_segment_id if justified by an explicit source declaration. Preserve uppercase/lowercase exactly. Return JSON with files and facts in the same schema. Omit unresolved facts; do not guess identities.",
                                 &format!(
-                                    "ORIGINAL RESPONSE:\n{accepted_response}\n\nSOURCE SEGMENTS:\n{}\n\nDOCUMENT TYPE DECLARATIONS:\n{}",
+                                    "REJECTED FACTS ONLY:\\n{rejected_payload}\\n\\nSOURCE SEGMENTS:\\n{}\\n\\nDOCUMENT DECLARATIONS:\\n{}",
                                     segmented_source(&window),
                                     masked_source.lines().filter(|line| {
                                         let line = line.trim().trim_start_matches('#').trim();
                                         ["Type:", "Command:", "Message:"].iter().any(|prefix| line.starts_with(prefix))
-                                    }).take(96).collect::<Vec<_>>().join("\n")
+                                    }).take(96).collect::<Vec<_>>().join("\\n")
                                 ),
                                 self.llm_call.max_tokens().min(4096),
                                 0.0,
