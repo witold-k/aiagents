@@ -16,6 +16,8 @@ mod llm_structure;
 mod message_identity;
 #[path = "protocol_model.rs"]
 mod protocol_model;
+#[path = "source_grounding_inventory.rs"]
+mod source_grounding_inventory;
 #[path = "source_tree.rs"]
 #[allow(dead_code)] // New structural model is not yet used by identity resolution.
 mod source_tree;
@@ -2381,6 +2383,26 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         );
         let source_windows: Vec<&str> = parts.iter().map(|part| part.text.as_str()).collect();
         let source_starts: Vec<usize> = parts.iter().map(|part| part.start_byte).collect();
+        // Advisory triage only: keep source spans and semantic hypotheses separate
+        // from canonical message ownership and published extraction output.
+        let grounding_inventory = source_grounding_inventory::build_inventory(
+            &checkpoint.candidates,
+            &source_windows,
+            &source_starts,
+            &masked_source,
+        );
+        let grounding_path = checkpoint_file.with_extension("grounding.json");
+        if let Ok(serialized) = serde_json::to_string_pretty(&grounding_inventory) {
+            if let Err(err) = fs::write(&grounding_path, format!("{serialized}\\n")) {
+                eprintln!("## [CHUNKED] SOURCE GROUNDING: report write failed: {err}");
+            }
+        }
+        println!(
+            "## [CHUNKED] SOURCE GROUNDING (advisory): exact_evidence={} unlocated_or_ambiguous={} report={}",
+            grounding_inventory["located_exact_evidence"],
+            grounding_inventory["unlocated_or_ambiguous"],
+            grounding_path.display(),
+        );
         let locator_stats = message_identity::statement_locator_stats(
             &checkpoint.candidates,
             &source_windows,
