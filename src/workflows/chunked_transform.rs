@@ -345,7 +345,7 @@ fn preceding_extraction_context(source: &str, part: &Chunk, window: &str) -> Str
     // A raw character tail alone can cut off the active section declaration.
     let absolute_offset = (part.start_byte + local_offset).min(source.len());
     let before = &source[..absolute_offset];
-    let source_line = before.bytes().filter(|byte| *byte == b'\\n').count() + 1;
+    let source_line = before.bytes().filter(|byte| *byte == b'\n').count() + 1;
     let tail_start = before
         .char_indices()
         .rev()
