@@ -2390,7 +2390,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         let navigation_regions = document_navigation::classify(&masked_source);
         let regions_path = checkpoint_file.with_extension("regions.json");
         if let Ok(serialized) = serde_json::to_string_pretty(&navigation_regions)
-            && let Err(err) = fs::write(&regions_path, format!("{serialized}\\n"))
+            && let Err(err) = fs::write(&regions_path, format!("{serialized}\n"))
         {
             eprintln!("## [CHUNKED] DOCUMENT REGIONS: report write failed: {err}");
         }
