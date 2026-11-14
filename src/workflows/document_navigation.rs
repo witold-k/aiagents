@@ -41,11 +41,11 @@ pub(super) fn classify(document: &str) -> Value {
             .unwrap_or(section.end_line.min(lines.len()));
         let mut entries = 0usize;
         let mut references = 0usize;
-        for line in (section.heading_line + 1)..end {
+        for (line, text) in lines.iter().enumerate().take(end).skip(section.heading_line + 1) {
             if matches!(tree.block_at_line(line).map(|b| b.kind), Some(BlockKind::FencedCode)) { continue; }
-            if !lines[line].trim().is_empty() {
+            if !text.trim().is_empty() {
                 entries += 1;
-                if reference_like(lines[line]) { references += 1; }
+                if reference_like(text) { references += 1; }
             }
         }
         let confirmed = entries >= 3 && references >= 3 && references * 2 >= entries;
