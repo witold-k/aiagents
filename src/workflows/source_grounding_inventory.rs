@@ -29,7 +29,8 @@ fn row_context(document: &str, offset: usize) -> Value {
         "previous_table_like": previous.contains('|'),
         "next_table_like": next.contains('|'),
         "possible_continuation": table_like && previous.contains('|')
-            && current.trim_start().starts_with('|'),
+            && current.trim_start().starts_with('|')
+            && current.trim_start().trim_start_matches('|').split('|').next().is_some_and(|cell| cell.trim().is_empty()),
         "relationship_verified": false,
         "parameter_identity_verified": false
     })
