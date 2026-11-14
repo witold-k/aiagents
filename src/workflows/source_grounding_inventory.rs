@@ -75,7 +75,7 @@ pub(super) fn build_inventory(
                 if let Some((start, end)) = anchor {
                     located += 1;
                     let line = document[..start].bytes().filter(|b| *b == b'\n').count() + 1;
-                    if document[..start].rsplit_once('\n').map_or(true, |(_, tail)| tail.contains('|')) || document[start..].lines().next().unwrap_or("").contains('|') {
+                    if document[..start].rsplit_once('\n').is_some_and(|(_, tail)| tail.contains('|')) || document[start..].lines().next().unwrap_or("").contains('|') {
                         *table_row_occurrences.entry(line).or_default() += 1;
                     }
                     let preceding = &document[..start];
