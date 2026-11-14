@@ -16,6 +16,8 @@ mod llm_structure;
 mod message_identity;
 #[path = "protocol_model.rs"]
 mod protocol_model;
+#[path = "document_navigation.rs"]
+mod document_navigation;
 #[path = "source_grounding_inventory.rs"]
 mod source_grounding_inventory;
 #[path = "source_tree.rs"]
@@ -2385,6 +2387,18 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         let source_starts: Vec<usize> = parts.iter().map(|part| part.start_byte).collect();
         // Advisory triage only: keep source spans and semantic hypotheses separate
         // from canonical message ownership and published extraction output.
+        let navigation_regions = document_navigation::classify(&masked_source);
+        let regions_path = checkpoint_file.with_extension("regions.json");
+        if let Ok(serialized) = serde_json::to_string_pretty(&navigation_regions)
+            && let Err(err) = fs::write(&regions_path, format!("{serialized}\\n"))
+        {
+            eprintln!("## [CHUNKED] DOCUMENT REGIONS: report write failed: {err}");
+        }
+        println!(
+            "## [CHUNKED] DOCUMENT REGIONS: {} navigation candidates (advisory), report={}",
+            navigation_regions["regions"].as_array().map_or(0, Vec::len),
+            regions_path.display(),
+        );
         let grounding_inventory = source_grounding_inventory::build_inventory(
             &checkpoint.candidates,
             &source_windows,
