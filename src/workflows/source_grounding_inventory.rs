@@ -4,6 +4,7 @@
 //! Read-only source-grounded triage. Never changes message identity or published facts.
 use super::message_identity::{CandidateIdentity, MessageCandidate, classify_candidate};
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 
 fn exact_span(source: &str, start: usize, quote: &str) -> Option<(usize, usize)> {
     let end = start.checked_add(quote.len())?;
@@ -45,6 +46,7 @@ pub(super) fn build_inventory(
     let mut items = Vec::new();
     let mut located = 0usize;
     let mut unlocated = 0usize;
+    let mut table_row_occurrences: BTreeMap<usize, usize> = BTreeMap::new();
     for candidate in candidates {
         let unresolved = matches!(classify_candidate(candidate), CandidateIdentity::Unresolved);
         if !unresolved { continue; }
@@ -72,6 +74,9 @@ pub(super) fn build_inventory(
                 if let Some((start, end)) = anchor {
                     located += 1;
                     let line = document[..start].bytes().filter(|b| *b == b'\n').count() + 1;
+                    if document[..start].rsplit_once('\n').map_or(true, |(_, tail)| tail.contains('|')) || document[start..].lines().next().unwrap_or("").contains('|') {
+                        *table_row_occurrences.entry(line).or_default() += 1;
+                    }
                     let preceding = &document[..start];
                     let section = preceding.lines().rev()
                         .find(|line| line.trim_start().starts_with('#'))
@@ -112,6 +117,11 @@ pub(super) fn build_inventory(
         "coordinate_system": "normalized_document_utf8_bytes",
         "located_exact_evidence": located,
         "unlocated_or_ambiguous": unlocated,
+        "table_row_summary": {
+            "distinct_source_lines": table_row_occurrences.len(),
+            "fact_occurrences": table_row_occurrences.values().sum::<usize>(),
+            "lines": table_row_occurrences.iter().map(|(line, count)| json!({"line": line, "fact_occurrences": count})).collect::<Vec<_>>()
+        },
         "items": items
     })
 }
