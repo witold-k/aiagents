@@ -18,15 +18,23 @@ fn kind(heading: &str) -> Option<&'static str> {
 }
 
 fn reference_like(line: &str) -> bool {
-    let s = line.trim();
+    let s = line.trim().trim_start_matches("- ").trim();
     if s.is_empty() || s.starts_with('#') { return false; }
+    if s.contains("](#") || s.contains("](http") { return true; }
     let last = s.split_whitespace().last().unwrap_or("");
-    let page = !last.is_empty() && last.chars().all(|c| c.is_ascii_digit());
+    let token = last.trim_start_matches('.').trim_end_matches('.');
+    let decimal = !token.is_empty() && token.chars().all(|c| c.is_ascii_digit());
+    let roman = !token.is_empty() && token.len() <= 8
+        && token.chars().all(|c| matches!(c.to_ascii_lowercase(), 'i' | 'v' | 'x' | 'l' | 'c' | 'd' | 'm'));
+    let dotted_number = s.rsplit_once("..").is_some_and(|(_, suffix)| {
+        let suffix = suffix.trim_matches('.').trim();
+        !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit())
+    });
     let comma_pages = s.rsplit_once(',').is_some_and(|(_, tail)| {
         let tail = tail.trim();
         !tail.is_empty() && tail.chars().all(|c| c.is_ascii_digit() || c == '-' || c == ' ')
     });
-    (page && s.len() > last.len() + 2) || s.contains("](#") || s.contains("](http") || comma_pages
+    ((decimal || roman) && s.len() > last.len() + 2) || dotted_number || comma_pages
 }
 
 pub(super) fn classify(document: &str) -> Value {
@@ -73,6 +81,14 @@ mod tests {
         let report = classify(source);
         assert_eq!(report["regions"][0]["classification"], "structurally_supported");
         assert_eq!(report["regions"][0]["exclude_from_extraction"], false);
+    }
+
+    #[test]
+    fn toc_supports_roman_pages_and_attached_dot_leaders() {
+        let source = "# Contents\n- About. vii\n- Audience. viii\n- Chapter 3 Compatibility....43\n- 3.1 Version Compatibility....43\n# Body\n";
+        let report = classify(source);
+        assert_eq!(report["regions"][0]["reference_like_entries"], 4);
+        assert_eq!(report["regions"][0]["classification"], "structurally_supported");
     }
 
     #[test]
