@@ -166,6 +166,48 @@ mod tests {
     }
 
     #[test]
+    fn window_relative_zero_offset_maps_to_absolute_document_position() {
+        let document = "prefix\nType: G\n";
+        let window = "Type: G\n";
+        let candidate = MessageCandidate {
+            id: "window-0-candidate-0".to_owned(),
+            proposed_name: "unknown".to_owned(),
+            facts: vec![CandidateFact {
+                statement: "unresolved declaration".to_owned(),
+                segment_id: "S1".to_owned(),
+                evidence_quote: Some("Type: G".to_owned()),
+                source_byte_offset: Some(0),
+                source_locator_ambiguous: false,
+                statement_byte_offset: None,
+            }],
+        };
+        let report = build_inventory(&[candidate], &[window], &[7], document);
+        assert_eq!(report["located_exact_evidence"], 1);
+        assert_eq!(report["items"][0]["normalized_source_span"]["start"], 7);
+        assert_eq!(report["items"][0]["normalized_source_line"], 2);
+    }
+
+    #[test]
+    fn mismatched_absolute_window_position_is_not_reported_as_exact() {
+        let document = "prefix\nType: G\n";
+        let candidate = MessageCandidate {
+            id: "window-0-candidate-0".to_owned(),
+            proposed_name: "unknown".to_owned(),
+            facts: vec![CandidateFact {
+                statement: "unresolved declaration".to_owned(),
+                segment_id: "S1".to_owned(),
+                evidence_quote: Some("Type: G".to_owned()),
+                source_byte_offset: Some(0),
+                source_locator_ambiguous: false,
+                statement_byte_offset: None,
+            }],
+        };
+        let report = build_inventory(&[candidate], &["Type: G\n"], &[0], document);
+        assert_eq!(report["located_exact_evidence"], 0);
+        assert_eq!(report["unlocated_or_ambiguous"], 1);
+    }
+
+    #[test]
     fn ambiguous_source_does_not_gain_an_anchor() {
         let document = "Type: G\nType: G\n";
         let candidate = MessageCandidate {
