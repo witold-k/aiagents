@@ -73,6 +73,52 @@ fn reserved_declaration(line: &str) -> Option<(&'static str, &'static str)> {
     None
 }
 
+
+fn reservation_subject(source: &str, cells: Option<&[String]>) -> Option<(&'static str, &'static str, String)> {
+    if let Some(cells) = cells {
+        // Interpret cells as a row, not as independent declarations. Exactly
+        // one status cell and one nonempty subject cell are required.
+        let statuses: Vec<usize> = cells.iter().enumerate().filter_map(|(i, cell)| {
+            let status = cell.trim().to_ascii_lowercase();
+            (status == "reserved" || status == "reserved for future use").then_some(i)
+        }).collect();
+        if statuses.len() == 1 {
+            let subjects: Vec<&str> = cells.iter().enumerate()
+                .filter(|(i, cell)| *i != statuses[0] && !cell.trim().is_empty())
+                .map(|(_, cell)| cell.trim()).collect();
+            if subjects.len() == 1 {
+                let declaration = format!("{} Reserved", subjects[0]);
+                if let Some((kind, scope)) = reserved_declaration(&declaration) {
+                    return Some((kind, scope, subjects[0].to_owned()));
+                }
+            }
+        }
+        return None;
+    }
+    let (kind, scope) = reserved_declaration(source)?;
+    let lower = source.to_ascii_lowercase();
+    let prefix = lower.find("reserved").map(|index| source[..index].trim())?;
+    Some((kind, scope, prefix.to_owned()))
+}
+
+fn normalized_subject(subject: &str, kind: &str) -> Value {
+    let value = subject.trim().trim_start_matches('#').trim();
+    let lower = value.to_ascii_lowercase();
+    let range = [" - ", " – ", " to ", "..", "-", "–"].iter()
+        .find_map(|separator| lower.find(separator).map(|index| (index, *separator)));
+    if let Some((index, separator)) = range {
+        let first = value[..index].trim();
+        let last = value[index + separator.len()..].trim();
+        if !first.is_empty() && !last.is_empty() {
+            return json!({"notation": "range", "start": first, "end": last,
+                "expanded": false, "case_preserved": true});
+        }
+    }
+    json!({"notation": if value.is_empty() { "unspecified" } else if kind == "bit_field" {
+        "bit_field"
+    } else { "single" }, "value": value, "expanded": false, "case_preserved": true})
+}
+
 pub(super) fn classify(document: &str) -> Value {
     let tree = SourceTree::parse(document);
     let lines: Vec<&str> = document.lines().collect();
@@ -115,7 +161,13 @@ pub(super) fn classify(document: &str) -> Value {
                 && region["start_line"].as_u64().is_some_and(|start| start <= (line + 1) as u64)
                 && region["end_line_exclusive"].as_u64().is_some_and(|end| (line + 1) < end as usize)
         }) { continue; }
-        if let Some((subject_kind, scope)) = reserved_declaration(source) {
+        let row_cells = tree.block_at_line(line).and_then(|block| {
+            if let BlockKind::Table(index) = block.kind {
+                tree.tables[index].rows.iter().find(|row| row.line == line)
+                    .map(|row| row.cells.as_slice())
+            } else { None }
+        });
+        if let Some((subject_kind, scope, subject)) = reservation_subject(source, row_cells) {
             let context = tree.context_at_line(line);
             let section_path: Vec<Value> = context.as_ref().map_or_else(Vec::new, |ctx| {
                 ctx.section_path.iter().map(|&index| {
@@ -154,6 +206,7 @@ pub(super) fn classify(document: &str) -> Value {
                 "evidence": source.trim(),
                 "subject_kind": subject_kind,
                 "scope": scope,
+                "subject": normalized_subject(&subject, subject_kind),
                 "structural_scope": declaration_span,
                 "classification": "lexical_candidate",
                 "exclude_from_extraction": false
@@ -200,9 +253,38 @@ mod tests {
     fn table_reservation_is_limited_to_matching_row() {
         let source = "# Fields\n| Code | Status |\n| --- | --- |\n| j - p | Reserved |\n| G | Active |\n";
         let report = classify(source);
-        // A multi-column table row is not interpreted by the line-only
-        // lexical detector; it must not accidentally reserve the next row.
+        assert_eq!(report["reserved_declarations"].as_array().unwrap().len(), 1);
+        let declaration = &report["reserved_declarations"][0];
+        assert_eq!(declaration["structural_scope"]["container_kind"], "table_row");
+        assert_eq!(declaration["structural_scope"]["start_line"], 4);
+        assert_eq!(declaration["structural_scope"]["end_line_exclusive"], 5);
+        assert_eq!(declaration["subject"]["start"], "j");
+        assert_eq!(declaration["subject"]["end"], "p");
+    }
+
+    #[test]
+    fn reversed_table_columns_and_case_are_preserved() {
+        let source = "# Codes\n| Status | Code |\n| --- | --- |\n| Reserved | J - P |\n| Active | G |\n";
+        let report = classify(source);
+        assert_eq!(report["reserved_declarations"].as_array().unwrap().len(), 1);
+        assert_eq!(report["reserved_declarations"][0]["subject"]["start"], "J");
+        assert_eq!(report["reserved_declarations"][0]["subject"]["end"], "P");
+    }
+
+    #[test]
+    fn ambiguous_multi_subject_rows_are_not_claimed() {
+        let source = "# Codes\n| Code | Status | Notes |\n| --- | --- | --- |\n| J | Reserved | X |\n| G | Active | Reserved |\n";
+        let report = classify(source);
         assert_eq!(report["reserved_declarations"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn numeric_and_bit_ranges_are_not_expanded() {
+        let report = classify("# Ranges\n0x80-0xFF Reserved\nBits 7:4 reserved\n");
+        assert_eq!(report["reserved_declarations"][0]["subject"]["start"], "0x80");
+        assert_eq!(report["reserved_declarations"][0]["subject"]["end"], "0xFF");
+        assert_eq!(report["reserved_declarations"][0]["subject"]["expanded"], false);
+        assert_eq!(report["reserved_declarations"][1]["subject"]["notation"], "bit_field");
     }
 
     #[test]
