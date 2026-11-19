@@ -55,18 +55,17 @@ fn source_relations(document: &str, offset: usize) -> Value {
                 }));
             }
         }
-        if let Some(super::source_tree::BlockKind::Table(index)) = context.block {
-            if let Some(row) = tree.tables[index].rows.iter().find(|row| row.line == line) {
-                if let Some(source) = lines.get(row.line) {
-                    links.push(json!({
-                        "relation": "within_table_row",
-                        "target_line": row.line + 1,
-                        "source_quote": source,
-                        "status": "observed_syntax",
-                        "message_ownership_verified": false
-                    }));
-                }
-            }
+        if let Some(super::source_tree::BlockKind::Table(index)) = context.block
+            && let Some(row) = tree.tables[index].rows.iter().find(|row| row.line == line)
+            && let Some(source) = lines.get(row.line)
+        {
+            links.push(json!({
+                "relation": "within_table_row",
+                "target_line": row.line + 1,
+                "source_quote": source,
+                "status": "observed_syntax",
+                "message_ownership_verified": false
+            }));
         }
     }
     // A declaration is a candidate only when the source itself contains it.
