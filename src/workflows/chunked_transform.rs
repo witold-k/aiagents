@@ -3890,3 +3890,35 @@ mod internal_tests;
 #[cfg(test)]
 #[path = "../../tests/workflows/chunked_transform_segmented_evidence_test.rs"]
 mod segmented_evidence_tests;
+
+#[cfg(test)]
+mod extraction_context_structure_tests {
+    use super::scoped_source_context;
+
+    #[test]
+    fn table_context_exposes_header_and_row_without_claiming_identity() {
+        let source = "# Messages\n| Type | Description |\n| --- | --- |\n| q | lower |\n";
+        let context = scoped_source_context(source, source.len());
+        assert!(context.contains("Table columns: Type | Description"));
+        assert!(context.contains("Row label candidate (unverified): q"));
+        assert!(context.contains("not ownership evidence"));
+        assert!(!context.contains("Active declaration:"));
+    }
+
+    #[test]
+    fn continuation_row_is_hypothesis_only() {
+        let source = "# Messages\n| Type | Description |\n| --- | --- |\n| Q | upper |\n| | continued |\n";
+        let context = scoped_source_context(source, source.len());
+        assert!(context.contains("Possible continuation row"));
+        assert!(!context.contains("Row label candidate (unverified): Q"));
+    }
+
+    #[test]
+    fn new_section_drops_previous_table_context() {
+        let source = "# Messages\n| Type | Description |\n| --- | --- |\n| q | lower |\n# Other\nnew prose\n";
+        let context = scoped_source_context(source, source.len());
+        assert!(context.contains("Section: # Other"));
+        assert!(!context.contains("Table columns:"));
+        assert!(!context.contains("Row label candidate"));
+    }
+}
