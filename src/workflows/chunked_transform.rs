@@ -313,9 +313,18 @@ fn scoped_source_context(source: &str, byte_offset: usize) -> String {
         }
         if let Some(row) = table.rows.last().filter(|row| row.line == last_line) {
             lines.push(format!(
-                "Current table row (untyped): {}",
+                "Last complete table row (not ownership evidence): {}",
                 row.cells.join(" | ")
             ));
+            // Empty leading cells can indicate a continuation after lossy
+            // Markdown conversion. Keep this as a hypothesis, not an owner.
+            if row.cells.first().is_some_and(|cell| cell.is_empty()) {
+                lines.push("Possible continuation row: leading cell is empty; do not infer the owner".to_owned());
+            } else if let Some(label) = row.cells.first().map(String::as_str)
+                && !label.is_empty()
+            {
+                lines.push(format!("Row label candidate (unverified): {label}"));
+            }
         }
     }
     if lines.is_empty() {
