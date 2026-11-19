@@ -165,7 +165,8 @@ pub(super) fn build_inventory(
                 "normalized_source_line": source_line,
                 "nearest_heading_hint": section_hint,
                 "semantic_category_hint": category_hint,
-                "source_row_context": row_details,\n                "source_relationships": relationships,
+                "source_row_context": row_details,
+                "source_relationships": relationships,
                 "semantic_category_verified": false,
                 "message_ownership_verified": false,
                 "source_locator_ambiguous": fact.source_locator_ambiguous
