@@ -37,6 +37,42 @@ fn reference_like(line: &str) -> bool {
     ((decimal || roman) && s.len() > last.len() + 2) || dotted_number || comma_pages
 }
 
+
+fn reserved_declaration(line: &str) -> Option<(&'static str, &'static str)> {
+    let content = line.trim().trim_start_matches('#').trim();
+    let content = content.trim_start_matches('|').trim_end_matches('|').trim();
+    let lower = content.to_ascii_lowercase();
+    if lower.is_empty() || !lower.is_ascii() { return None; }
+    let tokens: Vec<&str> = lower.split_whitespace().collect();
+    let reserved = tokens.iter().position(|token| token.trim_matches(|c: char| !c.is_ascii_alphabetic()) == "reserved")?;
+    // Descriptive uses and historical statements do not declare a current reservation.
+    if lower.contains("reserved bandwidth") || lower.contains("reserved memory")
+        || lower.contains("previously reserved") || lower.contains("formerly reserved")
+        || lower.contains("no longer reserved") || lower.contains("not reserved")
+        || lower.contains("reserved but now") || lower.contains("reserved, now")
+    { return None; }
+    let before = tokens[..reserved].join(" ");
+    let after = tokens[reserved + 1..].join(" ");
+    let future = after.starts_with("for future use") || after.starts_with("for future")
+        || after.starts_with("for later use");
+    let bare = before.is_empty() && (after.is_empty() || future);
+    let label = before.trim_matches(|c: char| c == '|' || c == ':' || c == '-' || c.is_whitespace());
+    let bits = label.starts_with("bit ") || label.starts_with("bits ")
+        || label.starts_with("bit[") || label.starts_with("bits[");
+    let numeric = label.starts_with("0x") || label.starts_with("0b")
+        || label.chars().next().is_some_and(|c| c.is_ascii_digit());
+    let identifiers = !label.is_empty() && label.len() <= 64
+        && label.chars().all(|c| c.is_ascii_alphanumeric()
+            || matches!(c, ' ' | '-' | '–' | ':' | '.' | '_' | '[' | ']' | '(' | ')'))
+        && (label.contains(" - ") || label.contains(" to ") || label.contains("..")
+            || label.len() <= 8);
+    if bare { return Some(("unspecified", "unscoped")); }
+    if bits { return Some(("bit_field", "explicit")); }
+    if numeric { return Some(("value_range", "explicit")); }
+    if identifiers { return Some(("identifier_or_range", "explicit")); }
+    None
+}
+
 pub(super) fn classify(document: &str) -> Value {
     let tree = SourceTree::parse(document);
     let lines: Vec<&str> = document.lines().collect();
@@ -68,12 +104,53 @@ pub(super) fn classify(document: &str) -> Value {
             "exclude_from_extraction": false
         }));
     }
-    json!({"version": 1, "read_only": true, "regions": regions})
+    let mut reservations = Vec::new();
+    for (line, source) in lines.iter().enumerate() {
+        if matches!(tree.block_at_line(line).map(|block| block.kind), Some(BlockKind::FencedCode)) {
+            continue;
+        }
+        // Navigation entries are references, not definitions.
+        if regions.iter().any(|region| {
+            region["classification"] == "structurally_supported"
+                && region["start_line"].as_u64().is_some_and(|start| start <= (line + 1) as u64)
+                && region["end_line_exclusive"].as_u64().is_some_and(|end| (line + 1) < end as usize)
+        }) { continue; }
+        if let Some((subject_kind, scope)) = reserved_declaration(source) {
+            reservations.push(json!({
+                "kind": "reserved_declaration",
+                "line": line + 1,
+                "evidence": source.trim(),
+                "subject_kind": subject_kind,
+                "scope": scope,
+                "classification": "lexical_candidate",
+                "exclude_from_extraction": false
+            }));
+        }
+    }
+    json!({"version": 1, "read_only": true, "regions": regions, "reserved_declarations": reservations})
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recognizes_generic_reservation_declarations() {
+        let source = "# Definitions\nj - p Reserved\nBits 7:4 reserved\n0x80-0xFF reserved for future use\nReserved for future use\n";
+        let report = classify(source);
+        assert_eq!(report["reserved_declarations"].as_array().unwrap().len(), 4);
+        assert_eq!(report["reserved_declarations"][0]["subject_kind"], "identifier_or_range");
+        assert_eq!(report["reserved_declarations"][1]["subject_kind"], "bit_field");
+        assert_eq!(report["reserved_declarations"][2]["subject_kind"], "value_range");
+        assert_eq!(report["reserved_declarations"][3]["scope"], "unscoped");
+    }
+
+    #[test]
+    fn avoids_historical_descriptive_and_navigation_reservations() {
+        let source = "# Contents\nReserved.... 1\nOther.... 2\nMore.... 3\n# Body\nReserved bandwidth\nPreviously reserved, now assigned\nNot reserved\n```text\nBits 7:4 reserved\n```\n";
+        let report = classify(source);
+        assert_eq!(report["reserved_declarations"].as_array().unwrap().len(), 0);
+    }
 
     #[test]
     fn toc_requires_multiple_references() {
