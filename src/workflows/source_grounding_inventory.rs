@@ -200,7 +200,7 @@ mod tests {
     #[test]
     fn source_relations_record_section_and_row_without_assigning_ownership() {
         let document = "# Messages\n## Types\n| Key | Description |\n| --- | --- |\n| A | a fact |\n";
-        let relations = source_relations(document, &super::source_tree::SourceTree::parse(document), &document.lines().collect::<Vec<_>>(), document.find("a fact").unwrap());
+        let relations = source_relations(document, &super::super::source_tree::SourceTree::parse(document), &document.lines().collect::<Vec<_>>(), document.find("a fact").unwrap());
         assert_eq!(relations["ownership_decision"], "unresolved");
         let links = relations["links"].as_array().unwrap();
         assert!(links.iter().any(|link| link["relation"] == "within_section"));
@@ -211,8 +211,8 @@ mod tests {
     #[test]
     fn source_relations_preserve_case_of_explicit_type_without_claiming_owner() {
         let document = "Type: q | lower\nType: Q | upper\n";
-        let lower = source_relations(document, &super::source_tree::SourceTree::parse(document), &document.lines().collect::<Vec<_>>(), document.find("Type: q").unwrap());
-        let upper = source_relations(document, &super::source_tree::SourceTree::parse(document), &document.lines().collect::<Vec<_>>(), document.find("Type: Q").unwrap());
+        let lower = source_relations(document, &super::super::source_tree::SourceTree::parse(document), &document.lines().collect::<Vec<_>>(), document.find("Type: q").unwrap());
+        let upper = source_relations(document, &super::super::source_tree::SourceTree::parse(document), &document.lines().collect::<Vec<_>>(), document.find("Type: Q").unwrap());
         assert!(lower["links"].as_array().unwrap().iter().any(|link| link["declared_type"] == "q"));
         assert!(upper["links"].as_array().unwrap().iter().any(|link| link["declared_type"] == "Q"));
         assert_eq!(lower["ownership_decision"], "unresolved");
