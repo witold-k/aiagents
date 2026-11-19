@@ -16,6 +16,10 @@ mod llm_structure;
 mod message_identity;
 #[path = "protocol_model.rs"]
 mod protocol_model;
+#[path = "document_navigation.rs"]
+mod document_navigation;
+#[path = "source_grounding_inventory.rs"]
+mod source_grounding_inventory;
 #[path = "source_tree.rs"]
 #[allow(dead_code)] // New structural model is not yet used by identity resolution.
 mod source_tree;
@@ -309,9 +313,18 @@ fn scoped_source_context(source: &str, byte_offset: usize) -> String {
         }
         if let Some(row) = table.rows.last().filter(|row| row.line == last_line) {
             lines.push(format!(
-                "Current table row (untyped): {}",
+                "Last complete table row (not ownership evidence): {}",
                 row.cells.join(" | ")
             ));
+            // Empty leading cells can indicate a continuation after lossy
+            // Markdown conversion. Keep this as a hypothesis, not an owner.
+            if row.cells.first().is_some_and(|cell| cell.is_empty()) {
+                lines.push("Possible continuation row: leading cell is empty; do not infer the owner".to_owned());
+            } else if let Some(label) = row.cells.first().map(String::as_str)
+                && !label.is_empty()
+            {
+                lines.push(format!("Row label candidate (unverified): {label}"));
+            }
         }
     }
     if lines.is_empty() {
@@ -341,15 +354,19 @@ fn preceding_extraction_context(source: &str, part: &Chunk, window: &str) -> Str
     let Some(local_offset) = local_offset else {
         return "=== CONTEXT LOCATION AMBIGUOUS ===\nNo preceding context is supplied: recovery text has no unique source position. Cite only CURRENT SOURCE.\n\n".to_owned();
     };
-    let before = &source[..(part.start_byte + local_offset).min(source.len())];
+    // Recovery windows inherit their exact position in the normalized source.
+    // A raw character tail alone can cut off the active section declaration.
+    let absolute_offset = (part.start_byte + local_offset).min(source.len());
+    let before = &source[..absolute_offset];
+    let source_line = before.bytes().filter(|byte| *byte == b'\n').count() + 1;
     let tail_start = before
         .char_indices()
         .rev()
-        .nth(1_199)
+        .nth(3_999)
         .map_or(0, |(offset, _)| offset);
     let tail = &before[tail_start..];
     format!(
-        "{}=== PRECEDING SOURCE CONTEXT (read-only; not evidence) ===\n{tail}\n=== END PRECEDING CONTEXT ===\nUse this context only to understand the current section or message type. A type remains applicable only while the source structure supports it. A new heading, message declaration, table boundary or unrelated section may end it. Preserve uppercase/lowercase exactly (Type: G differs from Type: g). Every emitted fact must cite an S-number from CURRENT SOURCE below; never cite the preceding context as evidence.\n\n",
+        "{}=== SOURCE WINDOW LOCATION (normalized document) ===\nByte offset: {absolute_offset}; line: {source_line}\n=== END SOURCE WINDOW LOCATION ===\n=== PRECEDING SOURCE CONTEXT (read-only; not evidence) ===\n{tail}\n=== END PRECEDING CONTEXT ===\nUse this context only to understand the current section or message type. A type remains applicable only while the source structure supports it. A new heading, message declaration, table boundary or unrelated section may end it. Preserve uppercase/lowercase exactly (Type: G differs from Type: g). Every emitted fact must cite an S-number from CURRENT SOURCE below; never cite the preceding context as evidence.\n\n",
         scoped_source_context(source, part.start_byte + local_offset)
     )
 }
@@ -2377,6 +2394,38 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         );
         let source_windows: Vec<&str> = parts.iter().map(|part| part.text.as_str()).collect();
         let source_starts: Vec<usize> = parts.iter().map(|part| part.start_byte).collect();
+        // Advisory triage only: keep source spans and semantic hypotheses separate
+        // from canonical message ownership and published extraction output.
+        let navigation_regions = document_navigation::classify(&masked_source);
+        let regions_path = checkpoint_file.with_extension("regions.json");
+        if let Ok(serialized) = serde_json::to_string_pretty(&navigation_regions)
+            && let Err(err) = fs::write(&regions_path, format!("{serialized}\n"))
+        {
+            eprintln!("## [CHUNKED] DOCUMENT REGIONS: report write failed: {err}");
+        }
+        println!(
+            "## [CHUNKED] DOCUMENT REGIONS: {} navigation candidates (advisory), report={}",
+            navigation_regions["regions"].as_array().map_or(0, Vec::len),
+            regions_path.display(),
+        );
+        let grounding_inventory = source_grounding_inventory::build_inventory(
+            &checkpoint.candidates,
+            &source_windows,
+            &source_starts,
+            &masked_source,
+        );
+        let grounding_path = checkpoint_file.with_extension("grounding.json");
+        if let Ok(serialized) = serde_json::to_string_pretty(&grounding_inventory)
+            && let Err(err) = fs::write(&grounding_path, format!("{serialized}\n"))
+        {
+            eprintln!("## [CHUNKED] SOURCE GROUNDING: report write failed: {err}");
+        }
+        println!(
+            "## [CHUNKED] SOURCE GROUNDING (advisory): exact_evidence={} unlocated_or_ambiguous={} report={}",
+            grounding_inventory["located_exact_evidence"],
+            grounding_inventory["unlocated_or_ambiguous"],
+            grounding_path.display(),
+        );
         let locator_stats = message_identity::statement_locator_stats(
             &checkpoint.candidates,
             &source_windows,
@@ -3841,3 +3890,35 @@ mod internal_tests;
 #[cfg(test)]
 #[path = "../../tests/workflows/chunked_transform_segmented_evidence_test.rs"]
 mod segmented_evidence_tests;
+
+#[cfg(test)]
+mod extraction_context_structure_tests {
+    use super::scoped_source_context;
+
+    #[test]
+    fn table_context_exposes_header_and_row_without_claiming_identity() {
+        let source = "# Messages\n| Type | Description |\n| --- | --- |\n| q | lower |\n";
+        let context = scoped_source_context(source, source.len());
+        assert!(context.contains("Table columns: Type | Description"));
+        assert!(context.contains("Row label candidate (unverified): q"));
+        assert!(context.contains("not ownership evidence"));
+        assert!(!context.contains("Active declaration:"));
+    }
+
+    #[test]
+    fn continuation_row_is_hypothesis_only() {
+        let source = "# Messages\n| Type | Description |\n| --- | --- |\n| Q | upper |\n| | continued |\n";
+        let context = scoped_source_context(source, source.len());
+        assert!(context.contains("Possible continuation row"));
+        assert!(!context.contains("Row label candidate (unverified): Q"));
+    }
+
+    #[test]
+    fn new_section_drops_previous_table_context() {
+        let source = "# Messages\n| Type | Description |\n| --- | --- |\n| q | lower |\n# Other\nnew prose\n";
+        let context = scoped_source_context(source, source.len());
+        assert!(context.contains("Section: # Other"));
+        assert!(!context.contains("Table columns:"));
+        assert!(!context.contains("Row label candidate"));
+    }
+}

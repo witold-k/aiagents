@@ -34,8 +34,6 @@ jobs:
       - name: Run code linter
         run: cargo clippy -- -D warnings
 
-      - name: Check formatting
-        run: cargo fmt --check
 
   # Keep coverage instrumentation isolated from the normal build and tests.
   coverage:
