@@ -73,7 +73,7 @@ fn source_relations(document: &str, offset: usize) -> Value {
     if let Some(source) = lines.get(line) {
         let trimmed = source.trim();
         if let Some(rest) = trimmed.strip_prefix("Type:") {
-            let token = rest.split(|c: char| c.is_whitespace() || c == '|').next().unwrap_or("");
+            let token = rest.trim_start().split(|c: char| c.is_whitespace() || c == '|').next().unwrap_or("");
             if token.len() == 1 && token.bytes().all(|b| b.is_ascii_alphanumeric()) {
                 links.push(json!({
                     "relation": "explicit_type_on_evidence_line",
