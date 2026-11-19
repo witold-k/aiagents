@@ -37,10 +37,13 @@ fn row_context(document: &str, offset: usize) -> Value {
 }
 
 /// Evidence-backed context links are observations, never message ownership.
-fn source_relations(document: &str, offset: usize) -> Value {
-    let tree = super::source_tree::SourceTree::parse(document);
+fn source_relations(
+    document: &str,
+    tree: &super::source_tree::SourceTree,
+    lines: &[&str],
+    offset: usize,
+) -> Value {
     let line = document[..offset].bytes().filter(|&b| b == b'\n').count();
-    let lines: Vec<&str> = document.lines().collect();
     let mut links = Vec::new();
     if let Some(context) = tree.context_at_line(line) {
         for &index in &context.section_path {
@@ -101,6 +104,8 @@ pub(super) fn build_inventory(
     starts: &[usize],
     document: &str,
 ) -> Value {
+    let tree = super::source_tree::SourceTree::parse(document);
+    let lines: Vec<&str> = document.lines().collect();
     let mut items = Vec::new();
     let mut located = 0usize;
     let mut unlocated = 0usize;
@@ -153,7 +158,7 @@ pub(super) fn build_inventory(
                     ("unlocated_or_ambiguous", None, None, None, "unclassified", Value::Null)
                 };
             let relationships = source_span.as_ref().and_then(|span| span["start"].as_u64())
-                .map_or(Value::Null, |start| source_relations(document, start as usize));
+                .map_or(Value::Null, |start| source_relations(document, &tree, &lines, start as usize));
             items.push(json!({
                 "candidate_id": candidate.id,
                 "segment_id": fact.segment_id,
@@ -195,7 +200,7 @@ mod tests {
     #[test]
     fn source_relations_record_section_and_row_without_assigning_ownership() {
         let document = "# Messages\n## Types\n| Key | Description |\n| --- | --- |\n| A | a fact |\n";
-        let relations = source_relations(document, document.find("a fact").unwrap());
+        let relations = source_relations(document, &super::source_tree::SourceTree::parse(document), &document.lines().collect::<Vec<_>>(), document.find("a fact").unwrap());
         assert_eq!(relations["ownership_decision"], "unresolved");
         let links = relations["links"].as_array().unwrap();
         assert!(links.iter().any(|link| link["relation"] == "within_section"));
@@ -206,8 +211,8 @@ mod tests {
     #[test]
     fn source_relations_preserve_case_of_explicit_type_without_claiming_owner() {
         let document = "Type: q | lower\nType: Q | upper\n";
-        let lower = source_relations(document, document.find("Type: q").unwrap());
-        let upper = source_relations(document, document.find("Type: Q").unwrap());
+        let lower = source_relations(document, &super::source_tree::SourceTree::parse(document), &document.lines().collect::<Vec<_>>(), document.find("Type: q").unwrap());
+        let upper = source_relations(document, &super::source_tree::SourceTree::parse(document), &document.lines().collect::<Vec<_>>(), document.find("Type: Q").unwrap());
         assert!(lower["links"].as_array().unwrap().iter().any(|link| link["declared_type"] == "q"));
         assert!(upper["links"].as_array().unwrap().iter().any(|link| link["declared_type"] == "Q"));
         assert_eq!(lower["ownership_decision"], "unresolved");
