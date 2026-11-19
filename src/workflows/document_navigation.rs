@@ -196,7 +196,7 @@ pub(super) fn classify(document: &str) -> Value {
             } else { None }
         });
         let fallback_cells = if row_cells.is_none() { pipe_cells(source) } else { None };
-        let cells = row_cells.or_else(|| fallback_cells.as_deref());
+        let cells = row_cells.or(fallback_cells.as_deref());
         if let Some((subject_kind, scope, subject)) = reservation_subject(source, cells) {
             let context = tree.context_at_line(line);
             let section_path: Vec<Value> = context.as_ref().map_or_else(Vec::new, |ctx| {
