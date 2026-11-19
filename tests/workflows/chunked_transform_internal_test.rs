@@ -627,6 +627,6 @@ fn scoped_context_reports_table_columns_without_claiming_identity() {
     let source = "## Messages\n| Type | Meaning |\n| --- | --- |\n| G | Gain |\n";
     let context = scoped_source_context(source, source.len());
     assert!(context.contains("Table columns: Type | Meaning"));
-    assert!(context.contains("Current table row (untyped): G | Gain"));
+    assert!(context.contains("Last complete table row (not ownership evidence): G | Gain"));
     assert!(!context.contains("Active declaration:"));
 }
