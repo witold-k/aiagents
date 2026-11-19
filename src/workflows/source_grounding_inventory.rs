@@ -167,15 +167,15 @@ mod tests {
 
     #[test]
     fn window_relative_zero_offset_maps_to_absolute_document_position() {
-        let document = "prefix\nType: G\n";
-        let window = "Type: G\n";
+        let document = "prefix\nparameter\n";
+        let window = "parameter\n";
         let candidate = MessageCandidate {
             id: "window-0-candidate-0".to_owned(),
             proposed_name: "unknown".to_owned(),
             facts: vec![CandidateFact {
                 statement: "unresolved declaration".to_owned(),
                 segment_id: "S1".to_owned(),
-                evidence_quote: Some("Type: G".to_owned()),
+                evidence_quote: Some("parameter".to_owned()),
                 source_byte_offset: Some(0),
                 source_locator_ambiguous: false,
                 statement_byte_offset: None,
@@ -189,20 +189,20 @@ mod tests {
 
     #[test]
     fn mismatched_absolute_window_position_is_not_reported_as_exact() {
-        let document = "prefix\nType: G\n";
+        let document = "prefix\nparameter\n";
         let candidate = MessageCandidate {
             id: "window-0-candidate-0".to_owned(),
             proposed_name: "unknown".to_owned(),
             facts: vec![CandidateFact {
                 statement: "unresolved declaration".to_owned(),
                 segment_id: "S1".to_owned(),
-                evidence_quote: Some("Type: G".to_owned()),
+                evidence_quote: Some("parameter".to_owned()),
                 source_byte_offset: Some(0),
                 source_locator_ambiguous: false,
                 statement_byte_offset: None,
             }],
         };
-        let report = build_inventory(&[candidate], &["Type: G\n"], &[0], document);
+        let report = build_inventory(&[candidate], &["parameter\n"], &[0], document);
         assert_eq!(report["located_exact_evidence"], 0);
         assert_eq!(report["unlocated_or_ambiguous"], 1);
     }
