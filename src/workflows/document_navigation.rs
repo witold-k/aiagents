@@ -116,12 +116,45 @@ pub(super) fn classify(document: &str) -> Value {
                 && region["end_line_exclusive"].as_u64().is_some_and(|end| (line + 1) < end as usize)
         }) { continue; }
         if let Some((subject_kind, scope)) = reserved_declaration(source) {
+            let context = tree.context_at_line(line);
+            let section_path: Vec<Value> = context.as_ref().map_or_else(Vec::new, |ctx| {
+                ctx.section_path.iter().map(|&index| {
+                    let section = &tree.sections[index];
+                    json!({
+                        "heading_line": section.heading_line + 1,
+                        "heading": lines[section.heading_line].trim(),
+                        "end_line_exclusive": section.end_line + 1
+                    })
+                }).collect()
+            });
+            let block = tree.block_at_line(line);
+            let (container_kind, container_start, container_end, row_line) =
+                match block.map(|block| block.kind) {
+                    Some(BlockKind::Table(index)) => {
+                        let table = &tree.tables[index];
+                        ("table_row", table.start_line + 1, table.end_line + 1, Some(line + 1))
+                    }
+                    Some(BlockKind::Prose) => ("source_line", line + 1, line + 2, None),
+                    _ => ("heading_or_source_line", line + 1, line + 2, None),
+                };
+            // A reservation only governs the declaration line (or the matching
+            // table row). Section ancestry is context, never an ownership span.
+            let declaration_span = json!({
+                "start_line": line + 1,
+                "end_line_exclusive": line + 2,
+                "container_kind": container_kind,
+                "container_start_line": container_start,
+                "container_end_line_exclusive": container_end,
+                "table_row_line": row_line,
+                "section_path": section_path
+            });
             reservations.push(json!({
                 "kind": "reserved_declaration",
                 "line": line + 1,
                 "evidence": source.trim(),
                 "subject_kind": subject_kind,
                 "scope": scope,
+                "structural_scope": declaration_span,
                 "classification": "lexical_candidate",
                 "exclude_from_extraction": false
             }));
@@ -149,6 +182,26 @@ mod tests {
     fn avoids_historical_descriptive_and_navigation_reservations() {
         let source = "# Contents\nReserved.... 1\nOther.... 2\nMore.... 3\n# Body\nReserved bandwidth\nPreviously reserved, now assigned\nNot reserved\n```text\nBits 7:4 reserved\n```\n";
         let report = classify(source);
+        assert_eq!(report["reserved_declarations"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn reservation_scope_does_not_leak_into_following_sections() {
+        let source = "# Messages\n## Reserved\nj - p Reserved\n## Active\nType: G\n";
+        let report = classify(source);
+        let item = &report["reserved_declarations"][0];
+        assert_eq!(item["structural_scope"]["start_line"], 3);
+        assert_eq!(item["structural_scope"]["end_line_exclusive"], 4);
+        assert_eq!(item["structural_scope"]["section_path"][1]["heading"], "## Reserved");
+        assert_eq!(item["exclude_from_extraction"], false);
+    }
+
+    #[test]
+    fn table_reservation_is_limited_to_matching_row() {
+        let source = "# Fields\n| Code | Status |\n| --- | --- |\n| j - p | Reserved |\n| G | Active |\n";
+        let report = classify(source);
+        // A multi-column table row is not interpreted by the line-only
+        // lexical detector; it must not accidentally reserve the next row.
         assert_eq!(report["reserved_declarations"].as_array().unwrap().len(), 0);
     }
 
