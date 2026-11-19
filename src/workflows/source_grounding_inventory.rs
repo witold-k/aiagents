@@ -36,6 +36,64 @@ fn row_context(document: &str, offset: usize) -> Value {
     })
 }
 
+/// Evidence-backed context links are observations, never message ownership.
+fn source_relations(document: &str, offset: usize) -> Value {
+    let tree = super::source_tree::SourceTree::parse(document);
+    let line = document[..offset].bytes().filter(|&b| b == b'\n').count();
+    let lines: Vec<&str> = document.lines().collect();
+    let mut links = Vec::new();
+    if let Some(context) = tree.context_at_line(line) {
+        for &index in &context.section_path {
+            let heading = tree.sections[index].heading_line;
+            if let Some(source) = lines.get(heading) {
+                links.push(json!({
+                    "relation": "within_section",
+                    "target_line": heading + 1,
+                    "source_quote": source,
+                    "status": "observed_syntax",
+                    "message_ownership_verified": false
+                }));
+            }
+        }
+        if let Some(super::source_tree::BlockKind::Table(index)) = context.block {
+            if let Some(row) = tree.tables[index].rows.iter().find(|row| row.line == line) {
+                if let Some(source) = lines.get(row.line) {
+                    links.push(json!({
+                        "relation": "within_table_row",
+                        "target_line": row.line + 1,
+                        "source_quote": source,
+                        "status": "observed_syntax",
+                        "message_ownership_verified": false
+                    }));
+                }
+            }
+        }
+    }
+    // A declaration is a candidate only when the source itself contains it.
+    // Nearby prose, another table row, and proposed filenames are not evidence.
+    if let Some(source) = lines.get(line) {
+        let trimmed = source.trim();
+        if let Some(rest) = trimmed.strip_prefix("Type:") {
+            let token = rest.split(|c: char| c.is_whitespace() || c == '|').next().unwrap_or("");
+            if token.len() == 1 && token.bytes().all(|b| b.is_ascii_alphanumeric()) {
+                links.push(json!({
+                    "relation": "explicit_type_on_evidence_line",
+                    "target_line": line + 1,
+                    "source_quote": source,
+                    "declared_type": token,
+                    "status": "source_declaration_candidate",
+                    "message_ownership_verified": false
+                }));
+            }
+        }
+    }
+    json!({
+        "links": links,
+        "ownership_decision": "unresolved",
+        "reason": "structural proximity or a declaration candidate alone does not prove fact ownership"
+    })
+}
+
 /// Report evidence positions, not positions of paraphrased statements.
 /// A semantic category is a hypothesis and never a destination or ownership claim.
 pub(super) fn build_inventory(
@@ -105,7 +163,7 @@ pub(super) fn build_inventory(
                 "normalized_source_line": source_line,
                 "nearest_heading_hint": section_hint,
                 "semantic_category_hint": category_hint,
-                "source_row_context": row_details,
+                "source_row_context": row_details,\n                "source_relationships": source_span.as_ref().and_then(|span| span["start"].as_u64()).map_or(Value::Null, |start| source_relations(document, start as usize)),
                 "semantic_category_verified": false,
                 "message_ownership_verified": false,
                 "source_locator_ambiguous": fact.source_locator_ambiguous
