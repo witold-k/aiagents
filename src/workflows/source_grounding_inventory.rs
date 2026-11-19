@@ -153,6 +153,8 @@ pub(super) fn build_inventory(
                     unlocated += 1;
                     ("unlocated_or_ambiguous", None, None, None, "unclassified", Value::Null)
                 };
+            let relationships = source_span.as_ref().and_then(|span| span["start"].as_u64())
+                .map_or(Value::Null, |start| source_relations(document, start as usize));
             items.push(json!({
                 "candidate_id": candidate.id,
                 "segment_id": fact.segment_id,
@@ -163,7 +165,7 @@ pub(super) fn build_inventory(
                 "normalized_source_line": source_line,
                 "nearest_heading_hint": section_hint,
                 "semantic_category_hint": category_hint,
-                "source_row_context": row_details,\n                "source_relationships": source_span.as_ref().and_then(|span| span["start"].as_u64()).map_or(Value::Null, |start| source_relations(document, start as usize)),
+                "source_row_context": row_details,\n                "source_relationships": relationships,
                 "semantic_category_verified": false,
                 "message_ownership_verified": false,
                 "source_locator_ambiguous": fact.source_locator_ambiguous
