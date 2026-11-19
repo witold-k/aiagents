@@ -74,22 +74,50 @@ fn reserved_declaration(line: &str) -> Option<(&'static str, &'static str)> {
 }
 
 
+fn explicit_subject(raw: &str) -> &str {
+    let value = raw.trim();
+    if value.get(..5).is_some_and(|prefix| prefix.eq_ignore_ascii_case("type:")) {
+        value[5..].trim()
+    } else {
+        value
+    }
+}
+
+fn pipe_cells(source: &str) -> Option<Vec<String>> {
+    // A flattened or damaged table row can lack a Markdown separator.
+    // Only inspect explicit pipe-delimited source; never infer a table.
+    let trimmed = source.trim();
+    if !trimmed.contains('|') { return None; }
+    let cells: Vec<String> = trimmed.split('|')
+        .map(str::trim).filter(|cell| !cell.is_empty())
+        .map(str::to_owned).collect();
+    (!cells.is_empty()).then_some(cells)
+}
+
 fn reservation_subject(source: &str, cells: Option<&[String]>) -> Option<(&'static str, &'static str, String)> {
     if let Some(cells) = cells {
-        // Interpret cells as a row, not as independent declarations. Exactly
-        // one status cell and one nonempty subject cell are required.
-        let statuses: Vec<usize> = cells.iter().enumerate().filter_map(|(i, cell)| {
-            let status = cell.trim().to_ascii_lowercase();
+        // A status may occupy its own cell, or a flattened row may
+        // contain a complete declaration in one cell.
+        let nonempty: Vec<&str> = cells.iter().map(String::as_str)
+            .map(str::trim).filter(|cell| !cell.is_empty()).collect();
+        let statuses: Vec<usize> = nonempty.iter().enumerate().filter_map(|(i, cell)| {
+            let status = cell.to_ascii_lowercase();
             (status == "reserved" || status == "reserved for future use").then_some(i)
         }).collect();
-        if statuses.len() == 1 {
-            let subjects: Vec<&str> = cells.iter().enumerate()
-                .filter(|(i, cell)| *i != statuses[0] && !cell.trim().is_empty())
-                .map(|(_, cell)| cell.trim()).collect();
-            if subjects.len() == 1 {
-                let declaration = format!("{} Reserved", subjects[0]);
-                if let Some((kind, scope)) = reserved_declaration(&declaration) {
-                    return Some((kind, scope, subjects[0].to_owned()));
+        if statuses.len() == 1 && nonempty.len() == 2 {
+            let subject = explicit_subject(nonempty[1 - statuses[0]]);
+            let declaration = format!("{subject} Reserved");
+            if let Some((kind, scope)) = reserved_declaration(&declaration) {
+                return Some((kind, scope, subject.to_owned()));
+            }
+        }
+        if statuses.is_empty() && nonempty.len() == 1 {
+            let cell = nonempty[0];
+            if let Some((kind, scope)) = reserved_declaration(cell) {
+                let index = cell.to_ascii_lowercase().find("reserved")?;
+                let subject = explicit_subject(cell[..index].trim());
+                if !subject.is_empty() {
+                    return Some((kind, scope, subject.to_owned()));
                 }
             }
         }
@@ -98,7 +126,7 @@ fn reservation_subject(source: &str, cells: Option<&[String]>) -> Option<(&'stat
     let (kind, scope) = reserved_declaration(source)?;
     let lower = source.to_ascii_lowercase();
     let prefix = lower.find("reserved").map(|index| source[..index].trim())?;
-    Some((kind, scope, prefix.to_owned()))
+    Some((kind, scope, explicit_subject(prefix).to_owned()))
 }
 
 fn normalized_subject(subject: &str, kind: &str) -> Value {
@@ -167,7 +195,9 @@ pub(super) fn classify(document: &str) -> Value {
                     .map(|row| row.cells.as_slice())
             } else { None }
         });
-        if let Some((subject_kind, scope, subject)) = reservation_subject(source, row_cells) {
+        let fallback_cells = if row_cells.is_none() { pipe_cells(source) } else { None };
+        let cells = row_cells.or_else(|| fallback_cells.as_deref());
+        if let Some((subject_kind, scope, subject)) = reservation_subject(source, cells) {
             let context = tree.context_at_line(line);
             let section_path: Vec<Value> = context.as_ref().map_or_else(Vec::new, |ctx| {
                 ctx.section_path.iter().map(|&index| {
@@ -287,6 +317,30 @@ mod tests {
         assert_eq!(report["reserved_declarations"][0]["subject"]["end"], "0xFF");
         assert_eq!(report["reserved_declarations"][0]["subject"]["expanded"], false);
         assert_eq!(report["reserved_declarations"][1]["subject"]["notation"], "bit_field");
+    }
+
+    #[test]
+    fn flattened_type_status_rows_extract_exact_identifier() {
+        let source = "# Messages\nType: D | Reserved |  |\nType: b | Reserved |  |\n";
+        let report = classify(source);
+        assert_eq!(report["reserved_declarations"].as_array().unwrap().len(), 2);
+        assert_eq!(report["reserved_declarations"][0]["subject"]["value"], "D");
+        assert_eq!(report["reserved_declarations"][1]["subject"]["value"], "b");
+    }
+
+    #[test]
+    fn flattened_single_cell_reservations_survive_empty_cells() {
+        let source = "# Messages\n| t Reserved |  |\n| u Reserved |  |\n| v Active |  |\n";
+        let report = classify(source);
+        assert_eq!(report["reserved_declarations"].as_array().unwrap().len(), 2);
+        assert_eq!(report["reserved_declarations"][0]["subject"]["value"], "t");
+        assert_eq!(report["reserved_declarations"][1]["subject"]["value"], "u");
+    }
+
+    #[test]
+    fn ambiguous_pipe_row_does_not_claim_reservation() {
+        let report = classify("# Messages\n| D | Reserved | Other |\n");
+        assert_eq!(report["reserved_declarations"].as_array().unwrap().len(), 0);
     }
 
     #[test]
