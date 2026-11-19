@@ -242,7 +242,9 @@ mod tests {
     fn reservation_scope_does_not_leak_into_following_sections() {
         let source = "# Messages\n## Reserved\nj - p Reserved\n## Active\nType: G\n";
         let report = classify(source);
-        let item = &report["reserved_declarations"][0];
+        let item = report["reserved_declarations"].as_array().unwrap().iter()
+            .find(|item| item["line"] == 3)
+            .expect("explicit range declaration on line 3");
         assert_eq!(item["structural_scope"]["start_line"], 3);
         assert_eq!(item["structural_scope"]["end_line_exclusive"], 4);
         assert_eq!(item["structural_scope"]["section_path"][1]["heading"], "## Reserved");
