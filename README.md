@@ -86,6 +86,7 @@ Keep Rust tests separate from production source files while preserving the `src/
 
 - [struct_extractors](https://github.com/witold-k/struct_extractors)
 - [fsscanner](https://github.com/witold-k/fsscanner)
+- [build-wrapper](https://github.com/witold-k/build-wrapper) — independent, non-LLM build/lint/test engine (library and CLI; private repository, SSH access required while private)
 - Planned underlying component: [TokenDB](https://github.com/witold-k/token_db)
 
 ## License

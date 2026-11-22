@@ -8,6 +8,8 @@
 mod codegen_readiness;
 #[path = "coverage_audit.rs"]
 mod coverage_audit;
+#[path = "document_navigation.rs"]
+mod document_navigation;
 #[path = "extraction_quality.rs"]
 mod extraction_quality;
 #[path = "llm_structure.rs"]
@@ -16,8 +18,6 @@ mod llm_structure;
 mod message_identity;
 #[path = "protocol_model.rs"]
 mod protocol_model;
-#[path = "document_navigation.rs"]
-mod document_navigation;
 #[path = "source_grounding_inventory.rs"]
 mod source_grounding_inventory;
 #[path = "source_tree.rs"]
@@ -319,7 +319,10 @@ fn scoped_source_context(source: &str, byte_offset: usize) -> String {
             // Empty leading cells can indicate a continuation after lossy
             // Markdown conversion. Keep this as a hypothesis, not an owner.
             if row.cells.first().is_some_and(|cell| cell.is_empty()) {
-                lines.push("Possible continuation row: leading cell is empty; do not infer the owner".to_owned());
+                lines.push(
+                    "Possible continuation row: leading cell is empty; do not infer the owner"
+                        .to_owned(),
+                );
             } else if let Some(label) = row.cells.first().map(String::as_str)
                 && !label.is_empty()
             {
@@ -3907,7 +3910,8 @@ mod extraction_context_structure_tests {
 
     #[test]
     fn continuation_row_is_hypothesis_only() {
-        let source = "# Messages\n| Type | Description |\n| --- | --- |\n| Q | upper |\n| | continued |\n";
+        let source =
+            "# Messages\n| Type | Description |\n| --- | --- |\n| Q | upper |\n| | continued |\n";
         let context = scoped_source_context(source, source.len());
         assert!(context.contains("Possible continuation row"));
         assert!(!context.contains("Row label candidate (unverified): Q"));

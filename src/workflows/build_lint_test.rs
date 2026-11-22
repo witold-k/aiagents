@@ -7,12 +7,13 @@ use crate::config::Config;
 use crate::generated_workflowsteps::WorkflowSteps;
 use crate::runtimetools::{
     buildresult::Buildresult,
-    buildsystem::{Buildcommand, Buildsystem},
-    generic_work_step::run_cmd,
+    buildsystem::Buildsystem,
+    generic_work_step::from_stage_result,
     llmcall::{LlmCall, LlmCallResult},
 };
 use crate::utils::stringutils::{extract_standalone_choice, extract_standalone_keyword};
 use crate::workflows::{workflow::Workflow, workflow::WorkflowResult};
+use build_wrapper::{BltRunner, BuildCommands};
 use std::cell::RefCell;
 use std::path::Path;
 
@@ -20,7 +21,7 @@ use std::path::Path;
 pub struct BLTWorkflow<'a> {
     config: &'a Config,
     llm_call: LlmCall<'a>,
-    bc: Buildcommand,
+    bc: BuildCommands,
     projdir: &'a Path,
     targetdir: &'a Path,
     previous_repair: RefCell<Option<String>>,
@@ -50,25 +51,30 @@ impl<'a> BLTWorkflow<'a> {
         }
     }
 
-    /// returns build error, if any
+    /// One external BLT validation pass. aiagents only owns repair policy.
     pub fn build(&self) -> Buildresult {
-        println!("## [BLT] BUILD");
-        let br = run_cmd(self.projdir, &self.bc.build);
-        if br.has_error() {
-            return br;
+        let mut runner = BltRunner::new(self.projdir, self.bc.clone());
+        // Setup remains a separate aiagents task, as before migration.
+        runner.run_setup = false;
+        match runner.run_with_observer(|stage| {
+            println!("## [BLT] {}", format!("{stage:?}").to_uppercase());
+        }) {
+            Ok(report) => match report.first_failure() {
+                Some(failure) => from_stage_result(self.projdir, failure),
+                None => Buildresult::new(
+                    0,
+                    self.projdir.to_path_buf(),
+                    self.projdir.to_path_buf(),
+                    vec![],
+                ),
+            },
+            Err(err) => Buildresult::new(
+                -1,
+                self.projdir.to_path_buf(),
+                self.projdir.to_path_buf(),
+                vec![format!("BLT configuration error: {err}")],
+            ),
         }
-        println!("## [BLT] LINT");
-        let br = run_cmd(self.projdir, &self.bc.lint);
-        if br.has_error() {
-            return br;
-        }
-        println!("## [BLT] TEST");
-        let br = run_cmd(self.projdir, &self.bc.test);
-        if br.has_error() {
-            return br;
-        }
-
-        br
     }
 }
 

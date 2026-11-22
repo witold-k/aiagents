@@ -37,7 +37,11 @@ impl<'a> SetupBuildWorkflow<'a> {
 
 impl<'a> Workflow for SetupBuildWorkflow<'a> {
     fn execute(&self) -> WorkflowResult {
-        self.bs.setupbuild(self.projdir, self.targetdir);
-        WorkflowResult::Ok
+        let result = self.bs.setupbuild(self.projdir, self.targetdir);
+        if result.has_error() {
+            WorkflowResult::BuildResult(result)
+        } else {
+            WorkflowResult::Ok
+        }
     }
 }

@@ -13,13 +13,24 @@ fn exact_span(source: &str, start: usize, quote: &str) -> Option<(usize, usize)>
 
 /// Advisory row context; never infers a parameter name or message owner.
 fn row_context(document: &str, offset: usize) -> Value {
-    let Some(line_start) = document.get(..offset).map(|prefix| prefix.rfind('\n').map_or(0, |i| i + 1)) else {
+    let Some(line_start) = document
+        .get(..offset)
+        .map(|prefix| prefix.rfind('\n').map_or(0, |i| i + 1))
+    else {
         return Value::Null;
     };
-    let line_end = document[offset..].find('\n').map_or(document.len(), |i| offset + i);
-    let Some(current) = document.get(line_start..line_end) else { return Value::Null; };
+    let line_end = document[offset..]
+        .find('\n')
+        .map_or(document.len(), |i| offset + i);
+    let Some(current) = document.get(line_start..line_end) else {
+        return Value::Null;
+    };
     let previous = document[..line_start].lines().next_back().unwrap_or("");
-    let next = document[line_end..].trim_start_matches('\n').lines().next().unwrap_or("");
+    let next = document[line_end..]
+        .trim_start_matches('\n')
+        .lines()
+        .next()
+        .unwrap_or("");
     let table_like = current.contains('|');
     json!({
         "line_text": current,
@@ -76,7 +87,11 @@ fn source_relations(
     if let Some(source) = lines.get(line) {
         let trimmed = source.trim();
         if let Some(rest) = trimmed.strip_prefix("Type:") {
-            let token = rest.trim_start().split(|c: char| c.is_whitespace() || c == '|').next().unwrap_or("");
+            let token = rest
+                .trim_start()
+                .split(|c: char| c.is_whitespace() || c == '|')
+                .next()
+                .unwrap_or("");
             if token.len() == 1 && token.bytes().all(|b| b.is_ascii_alphanumeric()) {
                 links.push(json!({
                     "relation": "explicit_type_on_evidence_line",
@@ -112,8 +127,13 @@ pub(super) fn build_inventory(
     let mut table_row_occurrences: BTreeMap<usize, usize> = BTreeMap::new();
     for candidate in candidates {
         let unresolved = matches!(classify_candidate(candidate), CandidateIdentity::Unresolved);
-        if !unresolved { continue; }
-        let window_id = candidate.id.strip_prefix("coverage-").unwrap_or(&candidate.id)
+        if !unresolved {
+            continue;
+        }
+        let window_id = candidate
+            .id
+            .strip_prefix("coverage-")
+            .unwrap_or(&candidate.id)
             .strip_prefix("window-")
             .and_then(|rest| rest.split_once("-candidate-"))
             .and_then(|(id, _)| id.parse::<usize>().ok());
@@ -126,39 +146,68 @@ pub(super) fn build_inventory(
                 window.and_then(|(source, base)| {
                     fact.source_byte_offset.and_then(|offset| {
                         exact_span(source, offset, evidence).and_then(|_| {
-                            base.checked_add(offset).and_then(|absolute| {
-                                exact_span(document, absolute, evidence)
-                            })
+                            base.checked_add(offset)
+                                .and_then(|absolute| exact_span(document, absolute, evidence))
                         })
                     })
                 })
             };
-            let (location_status, source_span, source_line, section_hint, category_hint, row_details) =
-                if let Some((start, end)) = anchor {
-                    located += 1;
-                    let line = document[..start].bytes().filter(|b| *b == b'\n').count() + 1;
-                    if document[..start].rsplit_once('\n').is_some_and(|(_, tail)| tail.contains('|')) || document[start..].lines().next().unwrap_or("").contains('|') {
-                        *table_row_occurrences.entry(line).or_default() += 1;
-                    }
-                    let preceding = &document[..start];
-                    let section = preceding.lines().rev()
-                        .find(|line| line.trim_start().starts_with('#'))
-                        .map(|line| line.trim().to_owned());
-                    let evidence_line = document[start..].lines().next().unwrap_or("");
-                    let category = if evidence_line.contains('|') {
-                        "possible_table_or_parameter"
-                    } else if evidence_line.trim_start().starts_with("Type:") {
-                        "possible_message_declaration"
-                    } else {
-                        "unclassified"
-                    };
-                    ("exact_evidence", Some(json!({"start":start,"end":end})), Some(line), section, category, row_context(document, start))
+            let (
+                location_status,
+                source_span,
+                source_line,
+                section_hint,
+                category_hint,
+                row_details,
+            ) = if let Some((start, end)) = anchor {
+                located += 1;
+                let line = document[..start].bytes().filter(|b| *b == b'\n').count() + 1;
+                if document[..start]
+                    .rsplit_once('\n')
+                    .is_some_and(|(_, tail)| tail.contains('|'))
+                    || document[start..].lines().next().unwrap_or("").contains('|')
+                {
+                    *table_row_occurrences.entry(line).or_default() += 1;
+                }
+                let preceding = &document[..start];
+                let section = preceding
+                    .lines()
+                    .rev()
+                    .find(|line| line.trim_start().starts_with('#'))
+                    .map(|line| line.trim().to_owned());
+                let evidence_line = document[start..].lines().next().unwrap_or("");
+                let category = if evidence_line.contains('|') {
+                    "possible_table_or_parameter"
+                } else if evidence_line.trim_start().starts_with("Type:") {
+                    "possible_message_declaration"
                 } else {
-                    unlocated += 1;
-                    ("unlocated_or_ambiguous", None, None, None, "unclassified", Value::Null)
+                    "unclassified"
                 };
-            let relationships = source_span.as_ref().and_then(|span| span["start"].as_u64())
-                .map_or(Value::Null, |start| source_relations(document, &tree, &lines, start as usize));
+                (
+                    "exact_evidence",
+                    Some(json!({"start":start,"end":end})),
+                    Some(line),
+                    section,
+                    category,
+                    row_context(document, start),
+                )
+            } else {
+                unlocated += 1;
+                (
+                    "unlocated_or_ambiguous",
+                    None,
+                    None,
+                    None,
+                    "unclassified",
+                    Value::Null,
+                )
+            };
+            let relationships = source_span
+                .as_ref()
+                .and_then(|span| span["start"].as_u64())
+                .map_or(Value::Null, |start| {
+                    source_relations(document, &tree, &lines, start as usize)
+                });
             items.push(json!({
                 "candidate_id": candidate.id,
                 "segment_id": fact.segment_id,
@@ -194,27 +243,67 @@ pub(super) fn build_inventory(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::message_identity::CandidateFact;
+    use super::*;
 
     #[test]
     fn source_relations_record_section_and_row_without_assigning_ownership() {
-        let document = "# Messages\n## Types\n| Key | Description |\n| --- | --- |\n| A | a fact |\n";
-        let relations = source_relations(document, &super::super::source_tree::SourceTree::parse(document), &document.lines().collect::<Vec<_>>(), document.find("a fact").unwrap());
+        let document =
+            "# Messages\n## Types\n| Key | Description |\n| --- | --- |\n| A | a fact |\n";
+        let relations = source_relations(
+            document,
+            &super::super::source_tree::SourceTree::parse(document),
+            &document.lines().collect::<Vec<_>>(),
+            document.find("a fact").unwrap(),
+        );
         assert_eq!(relations["ownership_decision"], "unresolved");
         let links = relations["links"].as_array().unwrap();
-        assert!(links.iter().any(|link| link["relation"] == "within_section"));
-        assert!(links.iter().any(|link| link["relation"] == "within_table_row"));
-        assert!(links.iter().all(|link| link["message_ownership_verified"] == false));
+        assert!(
+            links
+                .iter()
+                .any(|link| link["relation"] == "within_section")
+        );
+        assert!(
+            links
+                .iter()
+                .any(|link| link["relation"] == "within_table_row")
+        );
+        assert!(
+            links
+                .iter()
+                .all(|link| link["message_ownership_verified"] == false)
+        );
     }
 
     #[test]
     fn source_relations_preserve_case_of_explicit_type_without_claiming_owner() {
         let document = "Type: q | lower\nType: Q | upper\n";
-        let lower = source_relations(document, &super::super::source_tree::SourceTree::parse(document), &document.lines().collect::<Vec<_>>(), document.find("Type: q").unwrap());
-        let upper = source_relations(document, &super::super::source_tree::SourceTree::parse(document), &document.lines().collect::<Vec<_>>(), document.find("Type: Q").unwrap());
-        assert!(lower["links"].as_array().unwrap().iter().any(|link| link["declared_type"] == "q"));
-        assert!(upper["links"].as_array().unwrap().iter().any(|link| link["declared_type"] == "Q"));
+        let lower = source_relations(
+            document,
+            &super::super::source_tree::SourceTree::parse(document),
+            &document.lines().collect::<Vec<_>>(),
+            document.find("Type: q").unwrap(),
+        );
+        let upper = source_relations(
+            document,
+            &super::super::source_tree::SourceTree::parse(document),
+            &document.lines().collect::<Vec<_>>(),
+            document.find("Type: Q").unwrap(),
+        );
+        assert!(
+            lower["links"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|link| link["declared_type"] == "q")
+        );
+        assert!(
+            upper["links"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|link| link["declared_type"] == "Q")
+        );
         assert_eq!(lower["ownership_decision"], "unresolved");
         assert_eq!(upper["ownership_decision"], "unresolved");
     }

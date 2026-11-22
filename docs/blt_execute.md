@@ -41,6 +41,30 @@ flowchart TD
     class B,L,T,OK nonllm;
 ```
 
+## External deterministic engine
+
+The deterministic build-system detection, command profiles, process execution,
+and BUILD/LINT/TEST stage sequencing have moved to the independent
+[build-wrapper](https://github.com/witold-k/build-wrapper) Rust crate.
+
+`aiagents` retains only the LLM repair policy and compatibility adapters for
+existing workflow diagnostics. `BLTWorkflow::build()` now calls
+`BltRunner::run_with_observer()` and maps a failing `StageResult` back to the
+existing `Buildresult` used by the repair loop. The workflow does not use the
+external crate for LLM calls; the crate has no LLM dependency.
+
+The `setup_build` task remains separate from the BLT pass in `aiagents`,
+which invokes the runner with setup disabled. When using the standalone
+`build-wrapper` CLI, setup is enabled by default.
+
+The external crate also supplies the built-in Cargo, CMake, Just, Make,
+Maven and Meson command definitions; any future profile corrections should
+be made there, not copied back into `aiagents`.
+
+The `build-wrapper` dependency is currently pinned to a reviewable commit.
+Because the destination repository is private, a local Cargo build requires
+GitHub SSH access to that repository.
+
 ## Deterministic BLT execution
 
 `BLTWorkflow::build()` runs the configured commands in order:

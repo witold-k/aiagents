@@ -6,18 +6,19 @@
 use crate::config::Config;
 use crate::repostate::{RepoState, gitstate::GitState};
 use crate::runtimetools::{
-    buildsystem::{Buildcommand, Buildsystem},
+    buildsystem::Buildsystem,
     generic_work_step::run_cmd,
     llmcall::{LlmCall, LlmCallResult},
 };
 use crate::workflows::{workflow::Workflow, workflow::WorkflowResult};
+use build_wrapper::BuildCommands;
 use std::path::Path;
 
 #[expect(dead_code)]
 pub struct DocWorkflow<'a> {
     config: &'a Config,
     llm_call: LlmCall<'a>,
-    bc: Buildcommand,
+    bc: BuildCommands,
     projdir: &'a Path,
     targetdir: &'a Path,
     state: GitState,

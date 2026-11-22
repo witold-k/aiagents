@@ -6,19 +6,18 @@
 
 use crate::config::Config;
 use crate::runtimetools::{
-    buildresult::Buildresult,
-    buildsystem::{Buildcommand, Buildsystem},
-    generic_work_step::run_cmd,
+    buildresult::Buildresult, buildsystem::Buildsystem, generic_work_step::run_cmd,
     llmcall::LlmCall,
 };
 use crate::workflows::{workflow::Workflow, workflow::WorkflowResult};
+use build_wrapper::BuildCommands;
 use std::path::Path;
 
 #[expect(dead_code)]
 pub struct BuildWorkflow<'a> {
     config: &'a Config,
     llm_call: LlmCall<'a>,
-    bc: Buildcommand,
+    bc: BuildCommands,
     projdir: &'a Path,
 }
 

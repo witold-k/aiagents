@@ -1,33 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Witold Kaminski
 
+//! aiagents-specific build-system adapter.
+//!
+//! Command profiles and process execution live in the external build-wrapper
+//! crate. This module retains aiagents' language inference and legacy enum
+//! names for callers that select workflows.
+
 use crate::generated_languages::Languages;
+use crate::runtimetools::buildresult::Buildresult;
+use crate::runtimetools::generic_work_step::run_cmd;
+use build_wrapper::{BuildCommands, BuildSystem};
 use std::path::{Path, PathBuf};
-use std::process::Command;
-
-#[derive(Default, Debug, Clone)]
-pub struct Buildcommand {
-    pub setup: Vec<String>,
-    pub build: Vec<String>,
-    pub lint: Vec<String>,
-    pub test: Vec<String>,
-}
-
-impl Buildcommand {
-    pub fn new(
-        setup: Vec<String>,
-        build: Vec<String>,
-        lint: Vec<String>,
-        test: Vec<String>,
-    ) -> Self {
-        Self {
-            setup,
-            build,
-            lint,
-            test,
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Buildsystem {
@@ -35,6 +19,7 @@ pub enum Buildsystem {
     Cargo,
     Cmake,
     Just,
+    Lake,
     Make,
     Maven,
     Meson,
@@ -45,6 +30,7 @@ pub const ALL_BUILDSYSTEMS: &[Buildsystem] = &[
     Buildsystem::Cargo,
     Buildsystem::Cmake,
     Buildsystem::Just,
+    Buildsystem::Lake,
     Buildsystem::Make,
     Buildsystem::Maven,
     Buildsystem::Meson,
@@ -53,13 +39,14 @@ pub const ALL_BUILDSYSTEMS: &[Buildsystem] = &[
 impl Buildsystem {
     pub fn as_str(&self) -> &'static str {
         match self {
-            Buildsystem::None => "None",
-            Buildsystem::Cargo => "Cargo",
-            Buildsystem::Cmake => "Cmake",
-            Buildsystem::Just => "Just",
-            Buildsystem::Maven => "Maven",
-            Buildsystem::Make => "Make",
-            Buildsystem::Meson => "Meson",
+            Self::None => "None",
+            Self::Cargo => "Cargo",
+            Self::Cmake => "Cmake",
+            Self::Just => "Just",
+            Self::Lake => "Lake",
+            Self::Make => "Make",
+            Self::Maven => "Maven",
+            Self::Meson => "Meson",
         }
     }
 
@@ -75,180 +62,104 @@ impl Buildsystem {
         ALL_BUILDSYSTEMS.iter().map(|t| t.as_str()).collect()
     }
 
-    /// Language prompt associated with an unambiguous build system.
     pub fn inferred_language(&self) -> Option<Languages> {
         match self {
-            Buildsystem::Cargo => Some(Languages::Rust),
-            Buildsystem::Cmake | Buildsystem::Meson => Some(Languages::Cpp),
-            Buildsystem::Maven => Some(Languages::Java),
-            Buildsystem::None | Buildsystem::Just | Buildsystem::Make => None,
+            Self::Cargo => Some(Languages::Rust),
+            Self::Cmake | Self::Meson => Some(Languages::Cpp),
+            Self::Maven => Some(Languages::Java),
+            Self::None | Self::Just | Self::Lake | Self::Make => None,
         }
     }
 
     pub fn is_cargo(&self) -> bool {
-        Buildsystem::Cargo == *self
+        *self == Self::Cargo
     }
 
     pub fn is_none(&self) -> bool {
-        Buildsystem::None == *self
+        *self == Self::None
     }
 
     pub fn get_default_builddir(&self) -> PathBuf {
         match self {
-            Buildsystem::None => PathBuf::from("."),
-            Buildsystem::Cargo => PathBuf::from("target"),
-            Buildsystem::Cmake => PathBuf::from("build"),
-            Buildsystem::Just => PathBuf::from("target"),
-            Buildsystem::Make => PathBuf::from("build"),
-            Buildsystem::Maven => PathBuf::from("target"),
-            Buildsystem::Meson => PathBuf::from("build"),
+            Self::None => PathBuf::from("."),
+            Self::Cargo | Self::Just | Self::Maven => PathBuf::from("target"),
+            Self::Lake => PathBuf::from(".lake/build"),
+            Self::Cmake | Self::Make | Self::Meson => PathBuf::from("build"),
         }
     }
 
-    /// Match by substring, case‑insensitive.
+    /// Compatibility for names supplied by the existing CLI.
     pub fn from_name(name: &str) -> Self {
-        let n = name.to_lowercase();
-
-        static MAP: &[(&str, Buildsystem)] = &[
-            ("cargo", Buildsystem::Cargo),
-            ("cmake", Buildsystem::Cmake),
-            ("just", Buildsystem::Just),
-            ("make", Buildsystem::Make),
-            ("maven", Buildsystem::Maven),
-            ("meson", Buildsystem::Meson),
-        ];
-
-        for (key, variant) in MAP {
-            if n.contains(key) {
-                return *variant;
+        let name = name.to_ascii_lowercase();
+        for (key, system) in [
+            ("cargo", Self::Cargo),
+            ("cmake", Self::Cmake),
+            ("just", Self::Just),
+            ("lake", Self::Lake),
+            ("lean", Self::Lake),
+            ("make", Self::Make),
+            ("maven", Self::Maven),
+            ("meson", Self::Meson),
+        ] {
+            if name.contains(key) {
+                return system;
             }
         }
-
-        Buildsystem::None
+        Self::None
     }
 
-    /// Detect build system by presence of known files.
-    pub fn from_dir(p: &Path) -> Self {
-        if p.join("Cargo.toml").exists() {
-            Buildsystem::Cargo
-        } else if p.join("meson.build").exists() {
-            Buildsystem::Meson
-        } else if p.join("CMakeLists.txt").exists() {
-            Buildsystem::Cmake
-        } else if p.join("pom.xml").exists() {
-            Buildsystem::Maven
-        } else if p.join("Justfile").exists() {
-            Buildsystem::Just
-        } else if p.join("Makefile").exists() {
-            Buildsystem::Make
-        } else {
-            Buildsystem::None
-        }
+    pub fn from_dir(dir: &Path) -> Self {
+        BuildSystem::detect(dir)
+            .map(Self::from)
+            .unwrap_or(Self::None)
     }
 
     pub fn from_current_dir() -> Self {
-        match std::env::current_dir() {
-            Ok(path) => Self::from_dir(&path),
-            Err(_) => Buildsystem::None,
-        }
+        std::env::current_dir().map_or(Self::None, |dir| Self::from_dir(&dir))
     }
 
     pub fn from_versioned_project(path: &Path) -> Self {
-        let proj = fsscanner::pathutils::from_versioned_project(path);
-        Self::from_dir(&proj)
+        let root = fsscanner::pathutils::from_versioned_project(path);
+        Self::from_dir(&root)
     }
 
-    pub fn setupbuild(&self, projdir: &Path, targetdir: &Path) {
-        let bc = self.build_cmd(projdir, targetdir).setup;
-
-        let Some((cmd, args)) = bc.split_first() else {
-            return;
-        };
-
-        let _ = Command::new(cmd).args(args).current_dir(projdir).status();
-    }
-
-    pub fn build_cmd(&self, projdir: &Path, targetdir: &Path) -> Buildcommand {
-        let targetdir = if targetdir.is_relative() {
-            if let Ok(cwd) = std::env::current_dir() {
-                cwd.join(targetdir)
-            } else {
-                // fallback: behave exactly like the else-branch
-                targetdir.to_path_buf()
-            }
-        } else {
-            targetdir.to_path_buf()
-        };
-        let sdir = projdir.to_string_lossy().to_string();
-        let tdir = targetdir.to_string_lossy().to_string();
-
+    fn to_external(self) -> Option<BuildSystem> {
         match self {
-            Buildsystem::Cargo => {
-                let t = ["--target-dir".into(), tdir.clone()];
-                Buildcommand::new(
-                    vec![],
-                    vec!["cargo".into(), "build".into(), t[0].clone(), t[1].clone()],
-                    vec!["cargo".into(), "clippy".into(), t[0].clone(), t[1].clone()],
-                    vec!["cargo".into(), "test".into(), t[0].clone(), t[1].clone()],
-                )
-            }
+            Self::None => None,
+            Self::Cargo => Some(BuildSystem::Cargo),
+            Self::Cmake => Some(BuildSystem::Cmake),
+            Self::Just => Some(BuildSystem::Just),
+            Self::Lake => Some(BuildSystem::Lake),
+            Self::Make => Some(BuildSystem::Make),
+            Self::Maven => Some(BuildSystem::Maven),
+            Self::Meson => Some(BuildSystem::Meson),
+        }
+    }
 
-            Buildsystem::Cmake => Buildcommand::new(
-                vec![
-                    "cmake".into(),
-                    "-S".into(),
-                    sdir.clone(),
-                    "-B".into(),
-                    tdir.clone(),
-                    "-G".into(),
-                    "Ninja".into(),
-                ],
-                vec!["cmake".into(), "--build".into(), tdir.clone()],
-                vec![],
-                vec![
-                    "cmake".into(),
-                    "--build".into(),
-                    tdir.clone(),
-                    "--target".into(),
-                    "test".into(),
-                ],
-            ),
+    /// Delegate all command construction to the standalone BLT library.
+    pub fn build_cmd(&self, projdir: &Path, targetdir: &Path) -> BuildCommands {
+        self.to_external()
+            .map(|system| system.commands(projdir, targetdir))
+            .unwrap_or_default()
+    }
 
-            Buildsystem::Just => {
-                Buildcommand::new(vec![], vec!["just".into(), "build".into()], vec![], vec![])
-            }
+    /// Legacy setup task, now reporting failures rather than silently ignoring them.
+    pub fn setupbuild(&self, projdir: &Path, targetdir: &Path) -> Buildresult {
+        let commands = self.build_cmd(projdir, targetdir);
+        run_cmd(projdir, &commands.setup)
+    }
+}
 
-            Buildsystem::Meson => Buildcommand::new(
-                vec!["meson".into(), "setup".into(), tdir.clone()],
-                vec!["meson".into(), "compile".into(), "-C".into(), tdir.clone()],
-                vec![],
-                vec!["meson".into(), "test".into(), "-C".into(), tdir.clone()],
-            ),
-
-            Buildsystem::Make => {
-                Buildcommand::new(vec![], vec!["make".into(), "build".into()], vec![], vec![])
-            }
-
-            Buildsystem::Maven => Buildcommand::new(
-                vec![
-                    "mvn".into(),
-                    "clean".into(),
-                    format!("-DoutputDirectory={tdir}"),
-                ],
-                vec![
-                    "mvn".into(),
-                    "package".into(),
-                    format!("-DoutputDirectory={tdir}"),
-                ],
-                vec![],
-                vec![
-                    "mvn".into(),
-                    "test".into(),
-                    format!("-DoutputDirectory={tdir}"),
-                ],
-            ),
-
-            Buildsystem::None => Buildcommand::default(),
+impl From<BuildSystem> for Buildsystem {
+    fn from(system: BuildSystem) -> Self {
+        match system {
+            BuildSystem::Cargo => Self::Cargo,
+            BuildSystem::Cmake => Self::Cmake,
+            BuildSystem::Just => Self::Just,
+            BuildSystem::Lake => Self::Lake,
+            BuildSystem::Make => Self::Make,
+            BuildSystem::Maven => Self::Maven,
+            BuildSystem::Meson => Self::Meson,
         }
     }
 }

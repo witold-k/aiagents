@@ -6,7 +6,6 @@ authors = ["Witold Kaminski"]
 description = "Local-first AI agents for software engineering workflows"
 license = "Apache-2.0"
 repository = "https://github.com/witold-k/aiagents"
-homepage = "https://github.com/witold-k/aiagents"
 readme = "README.md"
 keywords = ["ai", "llm", "code-generation", "doc-generation", "code-review", "code-repair", "code-fix"]
 categories = ["command-line-utilities", "development-tools"]
@@ -22,6 +21,8 @@ path = "src/bin/aifix_runtest.rs"
 required-features = ["runtest"]
 
 [dependencies]
+# -- standalone deterministic build/lint/test engine (pinned to merged master)
+build-wrapper = { git = "https://github.com/witold-k/build-wrapper", rev = "a0ef247630c6e6a2c824991409b9b18c418491ec" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 phf =  { version = "0.14", features = ["macros"] }
