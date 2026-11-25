@@ -148,3 +148,15 @@ fn layout_hypotheses_do_not_depend_on_parser_chunk_boundaries() {
     }
     assert_eq!(parser.finish().layout_hypotheses(doc), expected);
 }
+
+#[test]
+fn reused_analysis_matches_direct_parse() {
+    for doc in ["", "# A\r\n## B\r\nRésumé 🧪\r\n", "# A\n| Key | Value |\n| --- | --- |\n| x | y |\n~~~\n# hidden\n~~~\n", "# A\n```\nunfinished"] {
+        let analysis = simplelexer::tablelexer::DocumentAnalysis::parse(doc);
+        let reused = SourceTree::from_analysis(&analysis);
+        let direct = SourceTree::parse(doc);
+        assert_eq!(reused, direct);
+        assert_eq!(reused.transitions(), direct.transitions());
+        assert_eq!(reused.layout_hypotheses(doc), direct.layout_hypotheses(doc));
+    }
+}

@@ -734,11 +734,12 @@ fn parameter_structure_audit_preserves_independent_parameter_evidence() {
         proposed_name: "messages/s.md".into(),
         facts: vec![fact],
     }];
+    let analysis = simplelexer::tablelexer::DocumentAnalysis::parse(&normalized.text);
     let audit = parameter_structure_audit(
         &candidates,
         &[&normalized.text],
         &[0],
-        &normalized.text,
+        &analysis,
         &normalized,
         original,
     );
@@ -754,6 +755,7 @@ fn parameter_structure_audit_preserves_independent_parameter_evidence() {
 fn parameter_structure_audit_is_empty_without_tables() {
     let source = "# Prose\nAn antenna reports its status.\n";
     let normalized = simplelexer::tablelexer::normalize_table_text(source);
-    let audit = parameter_structure_audit(&[], &[source], &[0], source, &normalized, source);
+    let analysis = simplelexer::tablelexer::DocumentAnalysis::parse(source);
+    let audit = parameter_structure_audit(&[], &[source], &[0], &analysis, &normalized, source);
     assert_eq!(audit, ParameterStructureAudit::default());
 }

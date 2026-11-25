@@ -49,242 +49,27 @@ pub(super) struct SourceTree {
     pub section_at_line: Vec<Option<usize>>,
 }
 
-fn heading_level(line: &str) -> Option<usize> {
-    let level = line.bytes().take_while(|byte| *byte == b'#').count();
-    ((1..=6).contains(&level) && line.as_bytes().get(level) == Some(&b' ')).then_some(level)
-}
-
-fn pipe_cells(line: &str) -> Option<Vec<String>> {
-    let line = line.trim();
-    if !line.contains('|') {
-        return None;
-    }
-    let inner = line.strip_prefix('|').unwrap_or(line);
-    let inner = inner.strip_suffix('|').unwrap_or(inner);
-    let cells: Vec<String> = inner
-        .split('|')
-        .map(|cell| cell.trim().to_owned())
-        .collect();
-    (cells.len() >= 2).then_some(cells)
-}
-
-fn separator(cells: &[String]) -> bool {
-    cells.iter().all(|cell| {
-        let trimmed = cell.trim_matches(':');
-        !trimmed.is_empty() && trimmed.bytes().all(|byte| byte == b'-')
-    })
-}
-
-/// Source-backed structural context; deliberately contains no entity identity.
+/// Source-backed structural context.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct StructuralContext {
     pub section_path: Vec<usize>,
     pub block: Option<BlockKind>,
 }
 
-/// Streaming syntax parser. Chunk boundaries have no structural meaning.
-/// Only complete source lines are interpreted; the final line is flushed by finish().
+#[cfg(test)]
 #[derive(Debug, Default)]
 pub(super) struct SourceParser {
-    tree: SourceTree,
-    sections: Vec<usize>,
-    pending: Vec<u8>,
-    pending_header: Option<(usize, Vec<String>)>,
-    active_table: Option<usize>,
-    active_prose: Option<usize>,
-    fence: Option<(u8, usize, usize)>,
-    line: usize,
+    input: simplelexer::tablelexer::DocumentInput,
 }
 
+#[cfg(test)]
 impl SourceParser {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn push_chunk(&mut self, chunk: &str) {
-        self.push_bytes(chunk.as_bytes());
-    }
-
-    /// Byte chunks may even split a UTF-8 code point. A complete line must
-    /// still be valid UTF-8; invalid input is rejected rather than altered.
-    pub fn push_bytes(&mut self, chunk: &[u8]) {
-        self.pending.extend_from_slice(chunk);
-        while let Some(end) = self.pending.iter().position(|&byte| byte == b'\n') {
-            let bytes: Vec<u8> = self.pending.drain(..=end).collect();
-            let line = std::str::from_utf8(&bytes[..bytes.len() - 1])
-                .expect("source document must be UTF-8")
-                .trim_end_matches('\r')
-                .to_owned();
-            self.push_line(&line);
-        }
-    }
-
-    fn section(&self) -> Option<usize> {
-        self.sections.last().copied()
-    }
-
-    fn close_prose(&mut self) {
-        self.active_prose = None;
-    }
-
-    fn close_table(&mut self) {
-        self.active_table = None;
-    }
-
-    fn add_prose(&mut self, line: usize) {
-        if let Some(block) = self.active_prose {
-            self.tree.blocks[block].end_line = line + 1;
-        } else {
-            let block = self.tree.blocks.len();
-            self.tree.blocks.push(Block {
-                start_line: line,
-                end_line: line + 1,
-                section: self.section(),
-                kind: BlockKind::Prose,
-            });
-            self.active_prose = Some(block);
-        }
-    }
-
-    fn start_table(&mut self, header_line: usize, header: Vec<String>) {
-        self.close_prose();
-        let section = self.section();
-        let index = self.tree.tables.len();
-        self.tree.tables.push(Table {
-            section,
-            start_line: header_line,
-            end_line: self.line,
-            rows: vec![Row {
-                line: header_line,
-                cells: header,
-            }],
-        });
-        self.tree.blocks.push(Block {
-            start_line: header_line,
-            end_line: self.line,
-            section,
-            kind: BlockKind::Table(index),
-        });
-        self.active_table = Some(index);
-    }
-
-    fn extend_table(&mut self, cells: Vec<String>) {
-        let index = self.active_table.expect("active table");
-        self.tree.tables[index].end_line = self.line;
-        self.tree.tables[index].rows.push(Row {
-            line: self.line - 1,
-            cells,
-        });
-        let block = self.tree.blocks.last_mut().expect("table block");
-        debug_assert_eq!(block.kind, BlockKind::Table(index));
-        block.end_line = self.line;
-    }
-
-    fn push_line(&mut self, source: &str) {
-        let line = source.trim();
-        let position = self.line;
-        self.line += 1;
-        // Fenced content is opaque, including headings and pipe characters.
-        if let Some((marker, count, block)) = self.fence {
-            let n = line.bytes().take_while(|&byte| byte == marker).count();
-            self.tree.blocks[block].end_line = self.line;
-            self.tree.section_at_line.push(self.section());
-            if n >= count && line[n..].trim().is_empty() {
-                self.fence = None;
-            }
-            return;
-        }
-
-        // A pending pipe row is only a table header when followed by a
-        // Markdown separator of the same width.
-        if let Some((header_line, header)) = self.pending_header.take() {
-            if let Some(rule) = pipe_cells(line)
-                && rule.len() == header.len()
-                && separator(&rule)
-            {
-                self.start_table(header_line, header);
-                self.tree.section_at_line.push(self.section());
-                return;
-            }
-            self.add_prose(header_line);
-        }
-
-        if let Some(table) = self.active_table {
-            if let Some(cells) = pipe_cells(line)
-                && cells.len() == self.tree.tables[table].rows[0].cells.len()
-                && !separator(&cells)
-            {
-                self.extend_table(cells);
-                self.tree.section_at_line.push(self.section());
-                return;
-            }
-            self.close_table();
-        }
-
-        if let Some(level) = heading_level(line) {
-            self.close_prose();
-            while self
-                .sections
-                .last()
-                .is_some_and(|&s| self.tree.sections[s].level >= level)
-            {
-                let closed = self.sections.pop().expect("section stack");
-                self.tree.sections[closed].end_line = position;
-            }
-            let section = self.tree.sections.len();
-            self.tree.sections.push(Section {
-                heading_line: position,
-                level,
-                parent: self.section(),
-                end_line: self.line,
-            });
-            self.sections.push(section);
-            self.tree.section_at_line.push(Some(section));
-            return;
-        }
-
-        if line.starts_with("```") || line.starts_with("~~~") {
-            self.close_prose();
-            let marker = line.as_bytes()[0];
-            let count = line.bytes().take_while(|&byte| byte == marker).count();
-            let block = self.tree.blocks.len();
-            self.tree.blocks.push(Block {
-                start_line: position,
-                end_line: self.line,
-                section: self.section(),
-                kind: BlockKind::FencedCode,
-            });
-            self.fence = Some((marker, count, block));
-            self.tree.section_at_line.push(self.section());
-            return;
-        }
-
-        if line.is_empty() {
-            self.close_prose();
-        } else if let Some(cells) = pipe_cells(line) {
-            // Hold one potential header line until the following source line.
-            self.pending_header = Some((position, cells));
-        } else {
-            self.add_prose(position);
-        }
-        self.tree.section_at_line.push(self.section());
-    }
-
-    pub fn finish(mut self) -> SourceTree {
-        if !self.pending.is_empty() {
-            let bytes = std::mem::take(&mut self.pending);
-            let line = std::str::from_utf8(&bytes)
-                .expect("source document must be UTF-8")
-                .trim_end_matches('\r');
-            self.push_line(line);
-        }
-        if let Some((position, _)) = self.pending_header.take() {
-            self.add_prose(position);
-        }
-        for index in self.sections {
-            self.tree.sections[index].end_line = self.line;
-        }
-        self.tree
+    pub fn new() -> Self { Self::default() }
+    pub fn push_chunk(&mut self, chunk: &str) { self.push_bytes(chunk.as_bytes()); }
+    pub fn push_bytes(&mut self, chunk: &[u8]) { self.input.push_bytes(chunk); }
+    pub fn finish(self) -> SourceTree {
+        let source = self.input.finish().expect("source document must be UTF-8");
+        SourceTree::from_analysis(&simplelexer::tablelexer::DocumentAnalysis::parse(&source))
     }
 }
 
@@ -350,9 +135,69 @@ pub(super) struct StructureHypothesis {
 
 impl SourceTree {
     pub fn parse(document: &str) -> Self {
-        let mut parser = SourceParser::new();
-        parser.push_chunk(document);
-        parser.finish()
+        Self::from_analysis(&simplelexer::tablelexer::DocumentAnalysis::parse(document))
+    }
+
+    /// Adapt lexer byte ranges to the physical line coordinates used by consumers.
+    pub fn from_analysis(analysis: &simplelexer::tablelexer::DocumentAnalysis<'_>) -> Self {
+        use simplelexer::tablelexer::RowKind;
+        let mut starts = Vec::new();
+        let mut offset = 0;
+        for line in analysis.source.split_inclusive('\n') {
+            starts.push(offset);
+            offset += line.len();
+        }
+        let line_at = |byte: usize| starts.partition_point(|&start| start <= byte).saturating_sub(1);
+        let mut tree = Self::default();
+        for (index, heading) in analysis.headings.iter().enumerate() {
+            let path = analysis.heading_path_at(heading.span.start);
+            let end_line = analysis.headings[index + 1..].iter()
+                .find(|next| next.level <= heading.level)
+                .map_or(starts.len(), |next| line_at(next.span.start));
+            tree.sections.push(Section {
+                heading_line: line_at(heading.span.start),
+                level: heading.level,
+                parent: path.iter().rev().nth(1).copied(),
+                end_line,
+            });
+        }
+        for line in 0..starts.len() {
+            let end = starts.get(line + 1).copied().unwrap_or(analysis.source.len());
+            tree.section_at_line.push(analysis.heading_path_at(end - 1).last().copied());
+        }
+        for item in &analysis.tables {
+            let table = analysis.table(item);
+            let start_line = line_at(table.span.start);
+            let end_line = line_at(table.span.end - 1) + 1;
+            let section = item.heading_indices.last().copied();
+            let index = tree.tables.len();
+            tree.tables.push(Table {
+                section, start_line, end_line,
+                rows: table.rows.iter().filter(|row| row.kind != RowKind::Separator)
+                    .map(|row| Row { line: line_at(row.span.start), cells: row.cells.iter().map(|cell| cell.text.trim().to_owned()).collect() }).collect(),
+            });
+            tree.blocks.push(Block { start_line, end_line, section, kind: BlockKind::Table(index) });
+        }
+        for span in &analysis.fences {
+            let start_line = line_at(span.start);
+            tree.blocks.push(Block { start_line, end_line: line_at(span.end - 1) + 1,
+                section: tree.section_at_line[start_line], kind: BlockKind::FencedCode });
+        }
+        for (line, text) in analysis.source.lines().enumerate() {
+            if text.trim().is_empty() || tree.sections.iter().any(|s| s.heading_line == line)
+                || tree.blocks.iter().any(|b| b.start_line <= line && line < b.end_line) {
+                continue;
+            }
+            let section = tree.section_at_line[line];
+            if let Some(block) = tree.blocks.last_mut()
+                && block.kind == BlockKind::Prose && block.end_line == line && block.section == section {
+                block.end_line += 1;
+            } else {
+                tree.blocks.push(Block { start_line: line, end_line: line + 1, section, kind: BlockKind::Prose });
+            }
+        }
+        tree.blocks.sort_by_key(|block| block.start_line);
+        tree
     }
 
     /// Recover *candidate* table-shaped runs after lossy document conversion.

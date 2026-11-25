@@ -428,43 +428,36 @@ struct SourceTree {
 }
 
 impl SourceTree {
+    #[cfg(test)]
     fn from_document(document: &str) -> Self {
-        let mut tree = Self {
-            sections: Vec::new(),
-            section_at_line: Vec::new(),
-        };
-        let mut heading_stack: Vec<usize> = Vec::new();
-        let mut in_fence = false;
-        for (line_index, raw) in document.lines().enumerate() {
-            let line = raw.trim();
-            if line.starts_with("```") {
-                in_fence = !in_fence;
-                tree.section_at_line.push(heading_stack.last().copied());
-                continue;
-            }
-            if !in_fence {
-                let level = line.bytes().take_while(|b| *b == b'#').count();
-                if (1..=6).contains(&level) && line.as_bytes().get(level) == Some(&b' ') {
-                    while heading_stack
-                        .last()
-                        .is_some_and(|index| tree.sections[*index].level >= level)
-                    {
-                        heading_stack.pop();
-                    }
-                    let parent = heading_stack.last().copied();
-                    let index = tree.sections.len();
-                    tree.sections.push(SourceSection {
-                        heading_line: line_index,
-                        level,
-                        parent,
-                    });
-                    heading_stack.push(index);
+        let analysis = simplelexer::tablelexer::DocumentAnalysis::parse(document);
+        Self::from_analysis(&analysis)
+    }
+
+    fn from_analysis(analysis: &simplelexer::tablelexer::DocumentAnalysis) -> Self {
+        let mut sections = Vec::new();
+        let mut section_at_line = Vec::new();
+        let mut offset = 0;
+        let mut next_heading = 0;
+        for (line_index, line) in analysis.source.split_inclusive('\n').enumerate() {
+            let end = offset + line.len();
+            while let Some(heading) = analysis.headings.get(next_heading) {
+                if heading.span.start >= end {
+                    break;
                 }
+                let path = analysis.heading_path_at(heading.span.start);
+                let parent = path.iter().rev().nth(1).copied();
+                sections.push(SourceSection {
+                    heading_line: line_index,
+                    level: heading.level,
+                    parent,
+                });
+                next_heading += 1;
             }
-            let section = heading_stack.last().copied();
-            tree.section_at_line.push(section);
+            section_at_line.push(analysis.heading_path_at(end - 1).last().copied());
+            offset = end;
         }
-        tree
+        Self { sections, section_at_line }
     }
 
     /// A flattened table may have lost its pipe delimiters on continuation
@@ -563,14 +556,12 @@ impl SourceStructure {
         let mut table_row_owners = Vec::new();
         let mut table_row_ranges = Vec::new();
         let mut explicit_table_lines = vec![false; lines.len()];
-        for block in &analysis.blocks {
-            let simplelexer::tablelexer::DocumentChunk::Table(table) = block else {
-                continue;
-            };
+        for item in &analysis.tables {
+            let table = analysis.table(item);
             // Resolve table rows through Simplelexer's format-independent
             // logical grid. Source spans are authoritative even when multiple
             // rows occupy the same physical line.
-            let grid = table.audit_grid();
+            let grid = &item.grid;
             let cell_at = |row_index: usize, column: usize| {
                 grid.placements.iter().find_map(|placement| {
                     (placement.column == column
@@ -720,7 +711,7 @@ impl SourceStructure {
             previous_command = command;
         }
         Self {
-            tree: SourceTree::from_document(document),
+            tree: SourceTree::from_analysis(analysis),
             table_owners,
             example_owners: owners,
             potential_table_lines,
@@ -1217,6 +1208,603 @@ pub(super) fn unresolved_triage_in_document(
     result
 }
 
+/// Structural evidence roles, not verified semantics of model assertions.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(super) struct StructuralRoleStats {
+    pub example: usize,
+    pub declaration_context: usize,
+    pub unknown: usize,
+    pub invalid_evidence: usize,
+}
+
+pub(super) fn structural_role_stats(
+    candidates: &[MessageCandidate],
+    sources: &[&str],
+    starts: &[usize],
+    document: &str,
+) -> StructuralRoleStats {
+    let structure = SourceStructure::from_document(document);
+    let mut stats = StructuralRoleStats::default();
+    for candidate in candidates {
+        for fact in &candidate.facts {
+            let anchor = (|| {
+                if fact.source_locator_ambiguous { return None; }
+                let index = source_window_index(&candidate.id)?;
+                let window = sources.get(index)?;
+                let start = *starts.get(index)?;
+                let offset = fact.source_byte_offset?;
+                let quote = fact.evidence_quote.as_deref()?;
+                if quote.trim().is_empty() || window.get(offset..offset.checked_add(quote.len())?) != Some(quote) {
+                    return None;
+                }
+                let absolute = start.checked_add(offset)?;
+                if document.get(absolute..absolute.checked_add(quote.len())?) != Some(quote) {
+                    return None;
+                }
+                let line = crate::utils::stringutils::line_index_at_byte_offset(document, absolute)?;
+                let last = crate::utils::stringutils::line_index_at_byte_offset(document, absolute.checked_add(quote.trim_end_matches(['\r', '\n']).len().checked_sub(1)?)?)?;
+                Some((absolute, line, last))
+            })();
+            let Some((absolute, line, last)) = anchor else {
+                stats.invalid_evidence += 1;
+                continue;
+            };
+            if line != last {
+                stats.unknown += 1;
+            } else if structure.example_type(line).is_some() {
+                stats.example += 1;
+            } else if structure.table_row_type_at(absolute).is_some()
+                || structure.explicit_table_type(line).is_some()
+            {
+                stats.declaration_context += 1;
+            } else {
+                stats.unknown += 1;
+            }
+        }
+    }
+    stats
+}
+
+#[cfg(test)]
+mod structural_role_tests {
+    use super::*;
+
+    #[test]
+    fn invalid_and_unknown_evidence_are_distinct() {
+        let source = "Ordinary prose.";
+        let fact = CandidateFact {
+            statement: source.into(),
+            segment_id: String::new(),
+            evidence_quote: Some(source.into()),
+            source_byte_offset: Some(0),
+            source_locator_ambiguous: false,
+            statement_byte_offset: None,
+        };
+        let mut invalid = fact.clone();
+        invalid.source_locator_ambiguous = true;
+        let candidates = collect_candidates(0, [("test".into(), vec![fact, invalid])]);
+        let stats = structural_role_stats(&candidates, &[source], &[0], source);
+        assert_eq!(stats, StructuralRoleStats { unknown: 1, invalid_evidence: 1, ..Default::default() });
+    }
+}
+
+/// Original-source table context, independent of message identity and assertion semantics.
+#[derive(Debug, Default)]
+pub(super) struct OriginalTableRoleStats {
+    pub parameter_row: usize,
+    pub enum_member_candidate: usize,
+    pub key_value_row: usize,
+    pub other_table_row: usize,
+    pub outside_table: usize,
+    pub unmapped: usize,
+    pub exact_mapping: usize,
+    pub row_mapping: usize,
+    pub invalid_anchor: usize,
+    pub missing_mapping: usize,
+    pub ambiguous_mapping: usize,
+    pub changed_source_row: usize,
+    pub enum_inventory: Vec<EnumTable>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct EnumTable {
+    pub header_offset: usize,
+    pub members: Vec<EnumMember>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct EnumMember {
+    pub value: String,
+    pub description: String,
+    pub row_start: usize,
+    pub row_end: usize,
+    pub duplicate_value: bool,
+    pub conflicting_description: bool,
+    pub assertion_contexts: Vec<EnumAssertionContext>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct EnumAssertionContext {
+    pub candidate_id: String,
+    pub fact_index: usize,
+    pub statement: String,
+    pub evidence_quote: String,
+    pub exact_original_mapping: bool,
+}
+
+fn enum_inventory(analysis: &simplelexer::tablelexer::DocumentAnalysis) -> Vec<EnumTable> {
+    let mut inventory = Vec::new();
+    for block in &analysis.blocks {
+        let simplelexer::tablelexer::DocumentChunk::Table(table) = block else { continue };
+        let Some(header) = table.rows.first() else { continue };
+        let headers: Vec<_> = header.cells.iter().map(|c| c.text.trim()).collect();
+        let mut members = Vec::new();
+        for row in table.rows.iter().skip(1) {
+            let cells: Vec<_> = row.cells.iter().map(|c| c.text.trim()).collect();
+            if table_context_kind(&headers, &cells) != "enum" { continue; }
+            let Some(code) = headers.iter().position(|h| h.eq_ignore_ascii_case("code")) else { continue };
+            let Some(description) = headers.iter().position(|h| h.eq_ignore_ascii_case("description")) else { continue };
+            members.push(EnumMember {
+                value: cells[code].to_owned(),
+                description: cells[description].to_owned(),
+                row_start: row.span.start,
+                row_end: row.span.end,
+                duplicate_value: false,
+                conflicting_description: false,
+                assertion_contexts: Vec::new(),
+            });
+        }
+        let mut values = std::collections::BTreeMap::<String, (usize, String, bool)>::new();
+        for member in &members {
+            let key = member.value.trim_start_matches('0');
+            let entry = values.entry(key.to_owned()).or_insert_with(|| (0, member.description.clone(), false));
+            entry.0 += 1;
+            entry.2 |= entry.1 != member.description;
+        }
+        for member in &mut members {
+            if let Some((count, _, conflict)) = values.get(member.value.trim_start_matches('0')) {
+                member.duplicate_value = *count > 1;
+                member.conflicting_description = *conflict;
+            }
+        }
+        if !members.is_empty() {
+            inventory.push(EnumTable { header_offset: header.span.start, members });
+        }
+    }
+    inventory
+}
+
+
+/// Advisory logical groups; physical tables and member provenance remain intact.
+#[derive(Debug, Serialize)]
+pub(super) struct LogicalEnumGroup {
+    pub caption: Option<String>,
+    pub physical_header_offsets: Vec<usize>,
+    pub member_count: usize,
+}
+
+fn enum_caption(document: &str, offset: usize) -> Option<(usize, String)> {
+    let prefix = document.get(..offset)?;
+    let line = prefix.trim_end().lines().next_back()?.trim();
+    let rest = line.strip_prefix("Table ")?;
+    let (number, title) = rest.split_once(". ")?;
+    if number.is_empty() || title.trim().is_empty()
+        || !number.bytes().all(|b| b.is_ascii_digit() || b == b'-' || b == b'.')
+    {
+        return None;
+    }
+    let position = prefix.rfind(line)?;
+    Some((position, line.to_owned()))
+}
+
+pub(super) fn logical_enum_groups(document: &str, tables: &[EnumTable]) -> Vec<LogicalEnumGroup> {
+    let mut groups: Vec<LogicalEnumGroup> = Vec::new();
+    for (index, table) in tables.iter().enumerate() {
+        let caption = enum_caption(document, table.header_offset);
+        let continuation = index.checked_sub(1).and_then(|i| {
+            let previous = &tables[i];
+            let (position, label) = caption.as_ref()?;
+            let (_, previous_label) = enum_caption(document, previous.header_offset)?;
+            let last = previous.members.last()?;
+            let first = table.members.first()?;
+            let gap = document.get(last.row_end..*position)?;
+            if *label != previous_label || !gap.trim().is_empty() {
+                return None;
+            }
+            // Require identical physical header text and a consecutive numeric boundary.
+            let header = |offset| document.get(offset..)?.lines().next();
+            if header(previous.header_offset)? != header(table.header_offset)? {
+                return None;
+            }
+            let mut values = std::collections::BTreeSet::new();
+            for member in previous.members.iter().chain(&table.members) {
+                if !values.insert(member.value.parse::<u64>().ok()?) {
+                    return None;
+                }
+            }
+            if last.value.parse::<u64>().ok()?.checked_add(1)? != first.value.parse::<u64>().ok()? {
+                return None;
+            }
+            Some(())
+        }).is_some();
+        if continuation
+            && let Some(group) = groups.last_mut()
+        {
+            group.physical_header_offsets.push(table.header_offset);
+            group.member_count += table.members.len();
+        } else {
+            groups.push(LogicalEnumGroup {
+                caption: caption.map(|(_, label)| label),
+                physical_header_offsets: vec![table.header_offset],
+                member_count: table.members.len(),
+            });
+        }
+    }
+    groups
+}
+
+#[cfg(test)]
+mod logical_enum_tests {
+    use super::*;
+
+    #[test]
+    fn repeated_caption_and_adjacent_values_group_tables() {
+        let source = "Table 1. Status\n\n| Code | Description |\n| --- | --- |\n| 0 | Ready |\n\nTable 1. Status\n\n| Code | Description |\n| --- | --- |\n| 1 | Busy |\n";
+        let tables = enum_inventory(&simplelexer::tablelexer::DocumentAnalysis::parse(source));
+        assert_eq!(tables.len(), 2);
+        let groups = logical_enum_groups(source, &tables);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].member_count, 2);
+        let separate = source.replace("Table 1. Status\n\n| Code | Description |\n| --- | --- |\n| 1", "Table 2. Status\n\n| Code | Description |\n| --- | --- |\n| 1");
+        let tables = enum_inventory(&simplelexer::tablelexer::DocumentAnalysis::parse(&separate));
+        assert_eq!(logical_enum_groups(&separate, &tables).len(), 2);
+    }
+}
+
+/// Row-level provenance is retained even when a cell is empty.
+#[derive(Debug, Serialize)]
+pub(super) struct LogicalRowCandidate {
+    pub header_offset: usize,
+    pub source_rows: Vec<(usize, usize)>,
+    pub cells: Vec<Vec<String>>,
+    pub status: &'static str,
+}
+
+/// Materialize the upstream lexer grid without inferring semantic ownership.
+pub(super) fn html_grid_inventory(analysis: &simplelexer::tablelexer::DocumentAnalysis) -> Vec<serde_json::Value> {
+    use simplelexer::tablelexer::{GridSlot, TableType};
+    let mut inventory = Vec::new();
+    for item in &analysis.tables {
+        let table = analysis.table(item);
+        if table.table_type != TableType::Html {
+            continue;
+        }
+        let grid = &item.grid;
+        let rows: Vec<_> = table.rows.iter().enumerate().map(|(index, row)| {
+            let slots: Vec<_> = (0..grid.width).map(|column| {
+                let (p, covered) = match grid.cell_at(index, column) {
+                    GridSlot::Missing => return serde_json::json!({"state": "missing"}),
+                    GridSlot::Conflict => return serde_json::json!({"state": "conflict"}),
+                    GridSlot::Origin(p) => (p, false),
+                    GridSlot::Covered(p) => (p, true),
+                };
+                let cell = &table.rows[p.row].cells[p.cell];
+                let state = if covered {
+                    "covered"
+                } else if cell.text.trim().is_empty() {
+                    "empty"
+                } else {
+                    "explicit"
+                };
+                serde_json::json!({
+                    "state": state, "origin_row": p.row, "origin_column": p.column,
+                    "source_span": [p.span.start, p.span.end],
+                    "text": cell.text, "rowspan": p.rowspan, "colspan": p.colspan,
+                })
+            }).collect();
+            serde_json::json!({"row": index, "source_span": [row.span.start, row.span.end], "slots": slots})
+        }).collect();
+        let issues: Vec<_> = grid.issues.iter().map(|issue| serde_json::json!({
+            "kind": format!("{:?}", issue.kind), "row": issue.row,
+            "source_span": [issue.span.start, issue.span.end],
+        })).collect();
+        inventory.push(serde_json::json!({
+            "source_span": [table.span.start, table.span.end],
+            "width": grid.width, "rows": rows, "issues": issues,
+        }));
+    }
+    inventory
+}
+
+#[cfg(test)]
+mod html_grid_inventory_tests {
+    use super::*;
+
+    #[test]
+    fn distinguishes_covered_empty_and_missing_slots() {
+        let source = "<table><tr><td rowspan=\"2\">A</td><td colspan=\"2\">B</td></tr><tr><td></td></tr></table>";
+        let analysis = simplelexer::tablelexer::DocumentAnalysis::parse(source);
+        let tables = html_grid_inventory(&analysis);
+        assert_eq!(tables.len(), 1);
+        let rows = &tables[0]["rows"];
+        assert_eq!(rows[0]["slots"][2]["state"], "covered");
+        assert_eq!(rows[1]["slots"][0]["state"], "covered");
+        assert_eq!(rows[1]["slots"][0]["source_span"], rows[0]["slots"][0]["source_span"]);
+        assert_eq!(rows[1]["slots"][1]["state"], "empty");
+        assert_eq!(rows[1]["slots"][2]["state"], "missing");
+    }
+}
+
+pub(super) fn logical_row_candidates(analysis: &simplelexer::tablelexer::DocumentAnalysis) -> Vec<LogicalRowCandidate> {
+    let document = analysis.source;
+    let mut result = Vec::new();
+    for block in &analysis.blocks {
+        let simplelexer::tablelexer::DocumentChunk::Table(table) = block else { continue };
+        let Some(header) = table.rows.first() else { continue };
+        let headers: Vec<_> = header.cells.iter().map(|cell| cell.text.trim()).collect();
+        let keys: Vec<_> = headers.iter().enumerate().filter(|(_, h)| {
+            ["parameter", "code", "key", "type"].iter().any(|name| h.eq_ignore_ascii_case(name))
+        }).map(|(index, _)| index).collect();
+        let key = if keys.len() == 1 { Some(keys[0]) } else { None };
+        let mut pending: Option<LogicalRowCandidate> = None;
+        for row in table.rows.iter().skip(1) {
+            let cells: Vec<_> = row.cells.iter().map(|cell| cell.text.trim().to_owned()).collect();
+            // Markdown alignment separators are syntax, not data rows.
+            if row.span.start >= header.span.end
+                && cells.len() == headers.len()
+                && !cells.is_empty()
+                && cells.iter().all(|cell| {
+                    let dashes = cell.trim_matches(':');
+                    dashes.len() >= 3 && dashes.bytes().all(|b| b == b'-')
+                })
+                && document.get(header.span.end..row.span.start).is_some_and(|gap| gap.trim().is_empty())
+                && document.get(row.span.start..row.span.end).is_some_and(|raw| !raw.trim_start().starts_with('<'))
+            {
+                continue;
+            }
+            let span = (row.span.start, row.span.end);
+            let continuation = key.is_some_and(|k| {
+                cells.len() == headers.len() && cells[k].is_empty()
+                    && cells.iter().any(|cell| !cell.is_empty())
+            });
+            if continuation
+                && let Some(previous) = pending.as_mut()
+                && previous.source_rows.last().is_some_and(|(_, end)| {
+                    document.get(*end..span.0).is_some_and(|gap| gap.trim().is_empty())
+                })
+            {
+                previous.source_rows.push(span);
+                for (column, cell) in previous.cells.iter_mut().zip(cells) {
+                    column.push(cell);
+                }
+                previous.status = "explicit_empty_key_continuation_candidate";
+                continue;
+            }
+            if let Some(previous) = pending.take()
+                && previous.source_rows.len() > 1
+            {
+                result.push(previous);
+            }
+            if key.is_some_and(|k| cells.len() == headers.len() && !cells[k].is_empty()) {
+                pending = Some(LogicalRowCandidate {
+                    header_offset: header.span.start,
+                    source_rows: vec![span],
+                    cells: cells.into_iter().map(|cell| vec![cell]).collect(),
+                    status: "single_row",
+                });
+            } else if cells.len() != headers.len() || key.is_none() || continuation {
+                result.push(LogicalRowCandidate {
+                    header_offset: header.span.start,
+                    source_rows: vec![span],
+                    cells: cells.into_iter().map(|cell| vec![cell]).collect(),
+                    status: "unresolved_structure",
+                });
+            }
+        }
+        if let Some(previous) = pending
+            && previous.source_rows.len() > 1
+        {
+            result.push(previous);
+        }
+    }
+    result
+}
+
+#[cfg(test)]
+mod logical_row_tests {
+    use super::*;
+
+    #[test]
+    fn empty_key_preserves_column_fragments_and_row_spans() {
+        let source = "| Parameter | Description |\n| --- | --- |\n| speed | First |\n| | Second |\n| mode | Separate |\n";
+        let analysis = simplelexer::tablelexer::DocumentAnalysis::parse(source);
+        let rows = logical_row_candidates(&analysis);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].source_rows.len(), 2);
+        assert_eq!(rows[0].cells[1], vec!["First", "Second"]);
+        assert_eq!(rows[0].status, "explicit_empty_key_continuation_candidate");
+    }
+
+    #[test]
+    fn unknown_schema_does_not_join_rows() {
+        let source = "| Text | Details |\n| --- | --- |\n| A | First |\n| | Second |\n";
+        let analysis = simplelexer::tablelexer::DocumentAnalysis::parse(source);
+        let rows = logical_row_candidates(&analysis);
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|row| row.source_rows.len() == 1));
+        assert_eq!(rows[0].cells[0], vec!["A"]);
+        assert_eq!(rows[1].cells[1], vec!["Second"]);
+    }
+}
+
+fn table_context_kind(headers: &[&str], cells: &[&str]) -> &'static str {
+    if headers.len() != cells.len() || headers.len() < 2 {
+        return "other";
+    }
+    let unique = |name: &str| {
+        let mut matches = headers.iter().enumerate().filter(|(_, h)| h.eq_ignore_ascii_case(name));
+        let (index, _) = matches.next()?;
+        matches.next().is_none().then_some(index)
+    };
+    let populated = |a: usize, b: usize| !cells[a].is_empty() && !cells[b].is_empty();
+    if let (Some(a), Some(b)) = (unique("parameter"), unique("description"))
+        && populated(a, b)
+    {
+        return "parameter";
+    }
+    if let (Some(a), Some(b)) = (unique("code"), unique("description"))
+        && populated(a, b) && cells[a].bytes().all(|c| c.is_ascii_digit())
+    {
+        return "enum";
+    }
+    if let (Some(a), Some(b)) = (unique("key"), unique("value"))
+        && populated(a, b)
+    {
+        return "key_value";
+    }
+    "other"
+}
+
+pub(super) fn original_table_role_stats(
+    candidates: &[MessageCandidate],
+    sources: &[&str],
+    starts: &[usize],
+    document: &str,
+    normalized: &simplelexer::tablelexer::NormalizedTableText,
+    analysis: &simplelexer::tablelexer::DocumentAnalysis,
+    pre_normalized: &str,
+) -> OriginalTableRoleStats {
+    let original = analysis.source;
+    let mut stats = OriginalTableRoleStats { enum_inventory: enum_inventory(analysis), ..Default::default() };
+    for candidate in candidates {
+        for (fact_index, fact) in candidate.facts.iter().enumerate() {
+            let anchor = (|| {
+                if fact.source_locator_ambiguous { return None; }
+                let index = source_window_index(&candidate.id)?;
+                let window = sources.get(index)?;
+                let offset = fact.source_byte_offset?;
+                let quote = fact.evidence_quote.as_deref()?;
+                if quote.trim().is_empty() || window.get(offset..offset.checked_add(quote.len())?) != Some(quote) {
+                    return None;
+                }
+                let absolute = starts.get(index)?.checked_add(offset)?;
+                let end = absolute.checked_add(quote.len())?;
+                if document.get(absolute..end) != Some(quote) {
+                    return None;
+                }
+                Some((absolute, end, quote))
+            })();
+            let Some((absolute, rendered_end, quote)) = anchor else {
+                stats.invalid_anchor += 1;
+                stats.unmapped += 1;
+                continue;
+            };
+            let exact = normalized.source_offset(absolute).and_then(|begin| {
+                let end = begin.checked_add(quote.len())?;
+                if original.get(begin..end) != Some(quote) {
+                    return None;
+                }
+                if !(0..quote.len()).all(|i| normalized.source_offset(absolute + i) == Some(begin + i)) {
+                    return None;
+                }
+                Some((begin, end))
+            });
+            let (begin, end) = if let Some(span) = exact {
+                stats.exact_mapping += 1;
+                span
+            } else {
+                let mut matches = normalized.rows.iter().filter(|mapping| {
+                    mapping.rendered.start <= absolute && rendered_end <= mapping.rendered.end
+                });
+                let Some(mapping) = matches.next() else {
+                    stats.missing_mapping += 1;
+                    stats.unmapped += 1;
+                    continue;
+                };
+                if matches.next().is_some() {
+                    stats.ambiguous_mapping += 1;
+                    stats.unmapped += 1;
+                    continue;
+                }
+                let span = &mapping.source;
+                if original.get(span.clone()).is_none()
+                    || original.get(span.clone()) != pre_normalized.get(span.clone())
+                    || !analysis.source_row_at(span.start).is_some_and(|(_, row)| row.span.start == span.start && row.span.end == span.end)
+                {
+                    stats.changed_source_row += 1;
+                    stats.unmapped += 1;
+                    continue;
+                }
+                stats.row_mapping += 1;
+                (span.start, span.end)
+            };
+            let Some((table, row)) = analysis.source_row_at(begin) else {
+                stats.outside_table += 1;
+                continue;
+            };
+            let Some(header) = table.rows.first() else {
+                stats.other_table_row += 1;
+                continue;
+            };
+            if end > row.span.end || row.span.start == header.span.start {
+                stats.other_table_row += 1;
+                continue;
+            }
+            let headers: Vec<_> = header.cells.iter().map(|c| c.text.trim()).collect();
+            let cells: Vec<_> = row.cells.iter().map(|c| c.text.trim()).collect();
+            match table_context_kind(&headers, &cells) {
+                "parameter" => stats.parameter_row += 1,
+                "enum" => {
+                    stats.enum_member_candidate += 1;
+                    let mut matches = stats.enum_inventory.iter_mut().flat_map(|table| table.members.iter_mut())
+                        .filter(|member| member.row_start == row.span.start && member.row_end == row.span.end);
+                    if let Some(member) = matches.next()
+                        && matches.next().is_none()
+                        && !member.duplicate_value
+                    {
+                        member.assertion_contexts.push(EnumAssertionContext {
+                            candidate_id: candidate.id.clone(),
+                            fact_index,
+                            statement: fact.statement.clone(),
+                            evidence_quote: quote.to_owned(),
+                            exact_original_mapping: exact.is_some(),
+                        });
+                    }
+                },
+                "key_value" => stats.key_value_row += 1,
+                _ => stats.other_table_row += 1,
+            }
+        }
+    }
+    stats
+}
+
+#[cfg(test)]
+mod original_table_role_tests {
+    use super::*;
+
+    #[test]
+    fn enum_inventory_keeps_tables_separate_and_flags_duplicates() {
+        let source = "| Code | Description |\n| --- | --- |\n| 1 | Busy |\n| 01 | Idle |\n\nText.\n\n| Code | Description |\n| --- | --- |\n| 1 | Ready |\n";
+        let analysis = simplelexer::tablelexer::DocumentAnalysis::parse(source);
+        let inventory = enum_inventory(&analysis);
+        assert_eq!(inventory.len(), 2);
+        assert_eq!(inventory[0].members.len(), 2);
+        assert!(inventory[0].members.iter().all(|m| m.duplicate_value && m.conflicting_description));
+        assert!(!inventory[1].members[0].duplicate_value);
+    }
+
+    #[test]
+    fn explicit_headers_distinguish_table_contexts() {
+        assert_eq!(table_context_kind(&["Code", "Description"], &["17", "Busy"]), "enum");
+        assert_eq!(table_context_kind(&["Parameter", "Description"], &["speed", "Velocity"]), "parameter");
+        assert_eq!(table_context_kind(&["Key", "Value"], &["mode", "auto"]), "key_value");
+        assert_eq!(table_context_kind(&["Code", "Description"], &["", "Continuation"]), "other");
+        assert_eq!(table_context_kind(&["Code", "Code", "Description"], &["1", "2", "Busy"]), "other");
+        assert_eq!(table_context_kind(&["Code", "Description"], &["1"]), "other");
+    }
+}
+
 /// Independent, source-backed parameter assertions. They are deliberately
 /// not assigned a message identity and are not yet publication-approved.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1321,6 +1909,219 @@ pub(super) fn parameter_facts_in_document(
     }
     inventory.sort_by_key(|fact| fact.source_byte_offset);
     inventory
+}
+
+/// A parameter definition observed directly in an explicit source table.
+/// The row is the identity boundary; identical names in different rows are not merged.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct ParameterDefinition {
+    pub parameter: String,
+    pub description: String,
+    pub section: String,
+    pub header_line: usize,
+    pub row_line: usize,
+    pub header_quote: String,
+    pub row_quote: String,
+    pub columns: Vec<String>,
+    pub cells: Vec<String>,
+    pub source_byte_offset: usize,
+}
+
+/// Extract explicit definitions without requiring an LLM candidate or message identity.
+/// Only unambiguous Parameter and Description columns in original Markdown qualify.
+#[cfg(test)]
+pub(super) fn parameter_definitions(document: &str) -> Vec<ParameterDefinition> {
+    let analysis = simplelexer::tablelexer::DocumentAnalysis::parse(document);
+    parameter_definitions_from_analysis(&analysis)
+}
+
+pub(super) fn parameter_definitions_from_analysis(analysis: &simplelexer::tablelexer::DocumentAnalysis<'_>) -> Vec<ParameterDefinition> {
+    let document = analysis.source;
+    let tree = super::source_tree::SourceTree::from_analysis(analysis);
+    let lines: Vec<_> = document.lines().collect();
+    let mut offset = 0;
+    let offsets: Vec<_> = document.split_inclusive('\n').map(|line| {
+        let start = offset;
+        offset += line.len();
+        start
+    }).collect();
+    let mut definitions = Vec::new();
+    for table in &tree.tables {
+        let Some(header) = table.rows.first() else { continue };
+        let unique_column = |name: &str| {
+            let mut matches = header.cells.iter().enumerate()
+                .filter(|(_, cell)| cell.eq_ignore_ascii_case(name));
+            let (index, _) = matches.next()?;
+            matches.next().is_none().then_some(index)
+        };
+        let (Some(name), Some(description)) =
+            (unique_column("parameter"), unique_column("description")) else { continue };
+        // Keep the conservative evidence policy. Do not interpret
+        // escaped pipes or inline code containing pipes as verified columns.
+        if lines[header.line].contains('\\') || lines[header.line].contains('`') {
+            continue;
+        }
+        for row in table.rows.iter().skip(1) {
+            let (Some(parameter), Some(detail)) = (row.cells.get(name), row.cells.get(description)) else { continue };
+            if parameter.is_empty()
+                || !parameter.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+                || !parameter.bytes().any(|b| b.is_ascii_alphabetic())
+                || parameter.eq_ignore_ascii_case("reserved")
+                || detail.is_empty()
+                || lines[row.line].contains('\\')
+                || lines[row.line].contains('`')
+            {
+                continue;
+            }
+            definitions.push(ParameterDefinition {
+                parameter: parameter.clone(),
+                description: detail.clone(),
+                section: table.section.map(|index| lines[tree.sections[index].heading_line].to_owned())
+                    .unwrap_or_default(),
+                header_line: header.line + 1,
+                row_line: row.line + 1,
+                header_quote: lines[header.line].to_owned(),
+                row_quote: lines[row.line].to_owned(),
+                columns: header.cells.clone(),
+                cells: row.cells.clone(),
+                source_byte_offset: offsets[row.line],
+            });
+        }
+    }
+    definitions
+}
+
+/// Source properties are literal cell values, not inferred constraints.
+#[derive(Debug, Serialize)]
+pub(super) struct ParameterEntity<'a> {
+    pub definition: &'a ParameterDefinition,
+    pub properties: Vec<ParameterProperty<'a>>,
+    pub assertions: Vec<&'a ParameterFact>,
+    pub assertion_semantics_verified: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct ParameterProperty<'a> {
+    pub kind: &'static str,
+    pub column: usize,
+    pub value: &'a str,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct ParameterResolution<'a> {
+    pub entities: Vec<ParameterEntity<'a>>,
+    pub unresolved_assertions: Vec<&'a ParameterFact>,
+}
+
+pub(super) fn resolve_parameter_entities<'a>(
+    document: &str,
+    definitions: &'a [ParameterDefinition],
+    assertions: &'a [ParameterFact],
+) -> ParameterResolution<'a> {
+    let mut entities: Vec<_> = definitions.iter().map(|definition| {
+        let properties = definition.columns.iter().enumerate().filter_map(|(index, header)| {
+            let kind = match header.to_ascii_lowercase().as_str() {
+                "type" | "data type" | "datatype" => "data_type",
+                "unit" | "units" => "unit",
+                "range" | "value range" => "value_range",
+                "allowed values" | "valid values" => "allowed_values",
+                _ => return None,
+            };
+            let value = definition.cells.get(index)?.as_str();
+            if value.is_empty() { return None; }
+            Some(ParameterProperty { kind, column: index + 1, value })
+        }).collect();
+        ParameterEntity { definition, properties, assertions: Vec::new(), assertion_semantics_verified: false }
+    }).collect();
+    let mut unresolved_assertions = Vec::new();
+    for assertion in assertions {
+        let start = assertion.source_byte_offset;
+        let Some(end) = start.checked_add(assertion.evidence_quote.len()) else {
+            unresolved_assertions.push(assertion);
+            continue;
+        };
+        if assertion.evidence_quote.trim().is_empty()
+            || document.get(start..end) != Some(assertion.evidence_quote.as_str())
+        {
+            unresolved_assertions.push(assertion);
+            continue;
+        }
+        // A trailing line ending is harmless; any substantive cross-row
+        // evidence is not. Names are case-sensitive and never global keys.
+        let content_end = start + assertion.evidence_quote.trim_end_matches(['\r', '\n']).len();
+        let mut matches = definitions.iter().enumerate().filter(|(_, definition)| {
+            definition.parameter == assertion.parameter
+                && start >= definition.source_byte_offset
+                && content_end <= definition.source_byte_offset.saturating_add(definition.row_quote.len())
+                && document.get(definition.source_byte_offset..definition.source_byte_offset.saturating_add(definition.row_quote.len()))
+                    == Some(definition.row_quote.as_str())
+        });
+        if let Some((index, _)) = matches.next()
+            && matches.next().is_none()
+        {
+            entities[index].assertions.push(assertion);
+        } else {
+            unresolved_assertions.push(assertion);
+        }
+    }
+    ParameterResolution { entities, unresolved_assertions }
+}
+
+#[cfg(test)]
+mod parameter_resolution_tests {
+    use super::*;
+
+    #[test]
+    fn links_only_exact_case_sensitive_single_row_evidence() {
+        let source = "| Parameter | Description | Unit |\n| --- | --- | --- |\n| rate | Speed | m/s |\n| rate | Other | Hz |\n";
+        let definitions = parameter_definitions(source);
+        let fact = |parameter: &str, quote: &str, offset| ParameterFact {
+            statement: "Unverified claim".into(),
+            parameter: parameter.into(),
+            section: String::new(),
+            evidence_quote: quote.into(),
+            source_byte_offset: offset,
+        };
+        let offset = source.find("Speed").unwrap();
+        let assertions = vec![
+            fact("rate", "Speed", offset),
+            fact("Rate", "Speed", offset),
+            fact("rate", "Wrong", offset),
+            fact("rate", "Speed | m/s |\n| rate", offset),
+            fact("rate", "Other", source.find("Other").unwrap()),
+        ];
+        let result = resolve_parameter_entities(source, &definitions, &assertions);
+        assert_eq!(result.entities.len(), 2);
+        assert_eq!(result.entities[0].assertions.len(), 1);
+        assert_eq!(result.entities[1].assertions.len(), 1);
+        assert_eq!(result.entities[0].properties[0].value, "m/s");
+        assert!(!result.entities[0].assertion_semantics_verified);
+        assert_eq!(result.unresolved_assertions.len(), 3);
+    }
+}
+
+#[cfg(test)]
+mod parameter_definition_tests {
+    use super::*;
+
+    #[test]
+    fn explicit_columns_and_source_rows_define_independent_parameters() {
+        let source = "# First\n| Description | Parameter | Unit |\n| --- | --- | --- |\n| Speed | rate | m/s |\n| continuation | | |\n\n# Second\n| Parameter | Description |\n| --- | --- |\n| rate | Other rate |\n";
+        let definitions = parameter_definitions(source);
+        assert_eq!(definitions.len(), 2);
+        assert_eq!(definitions[0].parameter, "rate");
+        assert_eq!(definitions[0].description, "Speed");
+        assert_eq!(definitions[1].section, "# Second");
+        for definition in definitions {
+            assert!(source[definition.source_byte_offset..].starts_with(&definition.row_quote));
+        }
+    }
+
+    #[test]
+    fn ambiguous_headers_fences_and_reserved_rows_are_not_definitions() {
+        let source = "| Parameter | Parameter | Description |\n| --- | --- | --- |\n| a | b | text |\n\n```\n| Parameter | Description |\n| --- | --- |\n| a | text |\n```\n\n| Parameter | Description |\n| --- | --- |\n| Reserved | future |\n| | continuation |\n";
+        assert!(parameter_definitions(source).is_empty());
+    }
 }
 
 /// Read-only audit of unresolved facts against independently verified parameter
@@ -1532,10 +2333,11 @@ pub(super) fn parameter_coverage_in_document(
     candidates: &[MessageCandidate],
     sources: &[&str],
     starts: &[usize],
-    document: &str,
+    analysis: &simplelexer::tablelexer::DocumentAnalysis,
     normalized: &simplelexer::tablelexer::NormalizedTableText,
     original: &str,
 ) -> ParameterCoverage {
+    let document = analysis.source;
     let verified =
         parameter_facts_in_document(candidates, sources, starts, document, normalized, original);
     let anchors: std::collections::BTreeSet<_> = verified
@@ -1548,8 +2350,7 @@ pub(super) fn parameter_coverage_in_document(
             )
         })
         .collect();
-    let structure = SourceStructure::from_document(document);
-    let analysis = simplelexer::tablelexer::DocumentAnalysis::parse(document);
+    let structure = SourceStructure::from_analysis(document, analysis);
     let lines: Vec<_> = document.lines().collect();
     let mut coverage = ParameterCoverage::default();
     for candidate in candidates {
@@ -1646,10 +2447,11 @@ pub(super) fn parameter_structure_audit(
     candidates: &[MessageCandidate],
     sources: &[&str],
     starts: &[usize],
-    document: &str,
+    analysis: &simplelexer::tablelexer::DocumentAnalysis,
     normalized: &simplelexer::tablelexer::NormalizedTableText,
     original: &str,
 ) -> ParameterStructureAudit {
+    let document = analysis.source;
     let verified =
         parameter_facts_in_document(candidates, sources, starts, document, normalized, original);
     let anchors: std::collections::BTreeSet<_> = verified
@@ -1662,8 +2464,7 @@ pub(super) fn parameter_structure_audit(
             )
         })
         .collect();
-    let structure = SourceStructure::from_document(document);
-    let analysis = simplelexer::tablelexer::DocumentAnalysis::parse(document);
+    let structure = SourceStructure::from_analysis(document, analysis);
     let mut result = ParameterStructureAudit {
         distinct_parameters: verified
             .iter()
@@ -1715,7 +2516,7 @@ pub(super) fn parameter_structure_audit(
             if line.map(|index| unresolved_source_shape(document, index)) != Some("parameter") {
                 result.other_unresolved += 1;
                 if let (Some(offset), Some(index)) = (absolute, line) {
-                    record_remaining_lexer_row(&analysis, offset, index + 1, &mut result);
+                    record_remaining_lexer_row(analysis, offset, index + 1, &mut result);
                 }
                 if let Some(index) = line {
                     result.other_unresolved_lines.push(index + 1);
@@ -1733,7 +2534,7 @@ pub(super) fn parameter_structure_audit(
             } else {
                 result.parameter_shaped_without_verified_evidence += 1;
                 if let (Some(offset), Some(index)) = (absolute, line) {
-                    record_remaining_lexer_row(&analysis, offset, index + 1, &mut result);
+                    record_remaining_lexer_row(analysis, offset, index + 1, &mut result);
                 }
                 if let Some(index) = line {
                     result.unverified_table_lines.push(index + 1);
@@ -2238,7 +3039,7 @@ pub(super) fn flattened_table_identity_gains(
     let structure = SourceStructure::from_document(document);
     let mut gains = std::collections::BTreeMap::new();
     let lines: Vec<&str> = document.lines().collect();
-    let tree = SourceTree::from_document(document);
+    let tree = &structure.tree;
     for candidate in candidates {
         let Some(window_index) = source_window_index(&candidate.id) else {
             continue;
@@ -2523,12 +3324,12 @@ pub(super) fn statement_structure_stats(
     candidates: &[MessageCandidate],
     sources: &[&str],
     starts: &[usize],
-    document: &str,
+    analysis: &simplelexer::tablelexer::DocumentAnalysis,
 ) -> StatementStructureStats {
-    let tree = SourceTree::from_document(document);
-    let structure = SourceStructure::from_document(document);
+    let document = analysis.source;
+    let structure = SourceStructure::from_analysis(document, analysis);
+    let tree = &structure.tree;
     // Source rows are byte-positioned: multiple HTML rows can share one physical line.
-    let analysis = simplelexer::tablelexer::DocumentAnalysis::parse(document);
     let line_starts: Vec<usize> = std::iter::once(0)
         .chain(document.match_indices('\n').map(|(at, _)| at + 1))
         .collect();
@@ -2632,7 +3433,7 @@ pub(super) fn flattened_gain_provenance_audit(
     document: &str,
 ) -> Vec<String> {
     let structure = SourceStructure::from_document(document);
-    let tree = SourceTree::from_document(document);
+    let tree = &structure.tree;
     let lines: Vec<&str> = document.lines().collect();
     let mut audit = std::collections::BTreeMap::new();
     for candidate in candidates {

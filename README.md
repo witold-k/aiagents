@@ -58,9 +58,28 @@ AIFIX_IDENTITY_REPLAY=1 aifix -t extract_message_tables -a document.md
 
 The replay is diagnostic only. Its identity resolver still depends on local source-window signals; generic document-wide definition ownership remains work in progress. The [current status snapshot](docs/current_status.md) records the latest supplied checkpoint metrics with explicit denominators and limitations. The workflow also emits evidence-coverage, semantic-review, conservative codegen-readiness, and a **language-neutral diagnostic protocol model** (`coverage-audit.json.protocol-model.json`). That model retains lexical assemblies and voted table continuations separately from verified protocol definitions; it does not establish canonical message owners or a code-generation-ready schema. See [chunked extraction](docs/chunked_transform.md) and the [task guide](docs/tasks/extract_message_tables/README.md) for the boundaries of these reports. Historical measurements belong in [project status history](docs/project_status_history.md).
 
+## Structural analysis and semantic resolution
+
+Simplelexer is an independent, generic structural lexer. Aiagents consumes
+its source spans, document headings, table grids and logical cell lookups;
+protocol identities, evidence interpretation, entity relationships and
+semantic verification remain in aiagents.
+
+The structural refactoring (R1–R3) reuses document analyses and existing
+grid placements rather than recomputing them. The next steps consolidate
+heading/section, block and fence handling before replacing the remaining
+local source parsers. Streaming requirements are evaluated separately.
+
+The 2026-11-25 checkpoint replay reported 689 fact occurrences, 666 mapped
+original-source contexts (301 exact, 365 structural-row), 57 parameter
+entities with 103 linked assertions, and 31 enum members in one logical
+group. Identity projection previously reported 363 facts and 284 unresolved
+occurrences across 33 messages. These are diagnostic counts, not proof of
+semantic correctness or complete output equivalence.
+
 ## Next extraction milestone
 
-First verify the current branch with a fresh build and test run. Then explain the missing exact statement locators without confusing normalized statements with source quotations. Complete deterministic scoped-context transitions and validate a source-grounded, language-independent schema against **multiple independent documents**. Code generation remains a separate, gated project. See [current status](docs/current_status.md) and [TODO](TODO.md).
+First complete the structural parser consolidation and verify each migration with build, tests and checkpoint replay. Then explain the missing exact statement locators without confusing normalized statements with source quotations. Complete deterministic scoped-context transitions and validate a source-grounded, language-independent schema against **multiple independent documents**. Code generation remains a separate, gated project. See [current status](docs/current_status.md) and [TODO](TODO.md).
 
 ## Design and safety
 
@@ -84,6 +103,7 @@ Keep Rust tests separate from production source files while preserving the `src/
 
 ## Dependencies
 
+- [simplelexer](https://github.com/witold-k/simplelexer) — independent source-preserving structural lexer
 - [struct_extractors](https://github.com/witold-k/struct_extractors)
 - [fsscanner](https://github.com/witold-k/fsscanner)
 - [build-wrapper](https://github.com/witold-k/build-wrapper) — independent, non-LLM build/lint/test engine (library and CLI; private repository, SSH access required while private)
@@ -92,3 +112,35 @@ Keep Rust tests separate from production source files while preserving the `src/
 ## License
 
 Apache-2.0 © 2026 Witold Kaminski. See [LICENSE](LICENSE).
+
+
+### Structural consolidation: R4
+
+R4a uses Simplelexer heading paths in the identity source adapter. The
+checkpoint replay retained the previous structural counts. R4b–R4d prepare
+generic source-range queries and buffered UTF-8 input in Simplelexer
+(branch `feature/document-block-lookup`); integration awaits validation.
+Buffered input is not online parsing and does not emit incremental events.
+The existing local source tree remains until its consumers are migrated
+and regression-tested in R5. Semantic interpretation stays in aiagents.
+
+### R5: lexer-backed source tree
+
+The local source tree now adapts Simplelexer document analysis to physical
+line coordinates. Heading, table and fence recognition and buffered input
+are delegated to the independent lexer. Layout hypotheses and semantic
+interpretation remain in aiagents. HTML tables and stricter Markdown
+recognition can change structural diagnostics; build, tests and replay
+must validate the migration before it is considered complete.
+
+### R6/R7: reuse and regression checks
+
+Reuse the original analysis for parameter definitions and the masked analysis
+for the replay source tree. Identity diagnostics share their existing section
+adapter rather than parsing the same source twice. Direct string parsing avoids
+an unnecessary buffered copy. Ragged rows without required columns are skipped.
+Regression tests compare complete structural trees, transitions and hypotheses
+for reused versus direct analysis, including UTF-8, CRLF and unclosed fences.
+These tests do not establish equivalence to historical semantic output; compare
+checkpoint replay sidecars separately. Remaining workflow-specific ownership
+heuristics stay in aiagents.

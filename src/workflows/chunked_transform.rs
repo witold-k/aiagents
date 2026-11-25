@@ -1190,7 +1190,7 @@ fn extraction_fingerprint(source: &str, prompts: &[&str]) -> String {
 /// This is deliberately independent of checkpoint and message publication.
 fn export_parameter_inventory(
     path: &Path,
-    facts: &[message_identity::ParameterFact],
+    facts: &[impl Serialize],
 ) -> Result<(), String> {
     use std::io::Write;
     let data = serde_json::to_vec_pretty(facts)
@@ -2449,7 +2449,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             &checkpoint.candidates,
             &source_windows,
             &source_starts,
-            &masked_source,
+            &table_analysis,
         );
         println!(
             "## [CHUNKED] STATEMENT STRUCTURE: compared={} same_row={} different_row={} same_section_no_row={} different_section_no_row={} unknown={} missing_anchor={} (diagnostic only)",
@@ -2461,6 +2461,121 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             structure_stats.unknown,
             structure_stats.missing_anchor,
         );
+        let roles = message_identity::structural_role_stats(
+            &checkpoint.candidates,
+            &source_windows,
+            &source_starts,
+            &masked_source,
+        );
+        println!(
+            "## [CHUNKED] STRUCTURAL ROLES: example={} declaration_context={} unknown={} invalid_evidence={} (candidate fact occurrences; assertion semantics unverified)",
+            roles.example, roles.declaration_context, roles.unknown, roles.invalid_evidence,
+        );
+        let table_roles = message_identity::original_table_role_stats(
+            &checkpoint.candidates,
+            &source_windows,
+            &source_starts,
+            &masked_source,
+            &normalized_tables,
+            &source_analysis,
+            &pre_normalized,
+        );
+        println!(
+            "## [CHUNKED] ORIGINAL TABLE ROLES: parameter_row={} enum_member_candidate={} key_value_row={} other_table_row={} outside_table={} unmapped={} (candidate fact occurrences; context only)",
+            table_roles.parameter_row, table_roles.enum_member_candidate,
+            table_roles.key_value_row, table_roles.other_table_row,
+            table_roles.outside_table, table_roles.unmapped,
+        );
+        println!(
+            "## [CHUNKED] ORIGINAL SOURCE MAPPING: exact={} structural_row={} invalid_anchor={} missing_mapping={} ambiguous_mapping={} changed_source_row={} (structural context is not exact original evidence)",
+            table_roles.exact_mapping, table_roles.row_mapping,
+            table_roles.invalid_anchor, table_roles.missing_mapping,
+            table_roles.ambiguous_mapping, table_roles.changed_source_row,
+        );
+        let enum_members = table_roles.enum_inventory.iter().flat_map(|table| &table.members);
+        let member_count = enum_members.clone().count();
+        let linked = enum_members.clone().map(|member| member.assertion_contexts.len()).sum::<usize>();
+        println!(
+            "## [CHUNKED] ENUM ENTITY RESOLUTION: tables={} members={} linked_contexts={} unlinked_contexts={} duplicate_rows={} conflicting_rows={} members_without_context={} (assertion semantics unverified)",
+            table_roles.enum_inventory.len(), member_count, linked,
+            table_roles.enum_member_candidate.saturating_sub(linked),
+            enum_members.clone().filter(|member| member.duplicate_value).count(),
+            enum_members.clone().filter(|member| member.conflicting_description).count(),
+            enum_members.filter(|member| member.assertion_contexts.is_empty()).count(),
+        );
+        let html_grids = message_identity::html_grid_inventory(&source_analysis);
+        let mut states = std::collections::BTreeMap::<String, usize>::new();
+        let mut grid_rows = 0;
+        for table in &html_grids {
+            if let Some(rows) = table["rows"].as_array() {
+                grid_rows += rows.len();
+                for row in rows {
+                    if let Some(slots) = row["slots"].as_array() {
+                        for slot in slots {
+                            if let Some(state) = slot["state"].as_str() {
+                                *states.entry(state.to_owned()).or_default() += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        println!("## [CHUNKED] HTML GRID INVENTORY: tables={} rows={} slots={:?} (structural only)", html_grids.len(), grid_rows, states);
+        if let Ok(output) = std::env::var("AIFIX_COVERAGE_AUDIT_JSON") {
+            let path = format!("{output}.html-grids.json");
+            let report = serde_json::json!({
+                "read_only": true,
+                "coordinate_space": "original_source_utf8_bytes",
+                "assertion_semantics_verified": false,
+                "tables": html_grids,
+            });
+            match serde_json::to_string_pretty(&report) {
+                Ok(json) => match std::fs::write(&path, json) {
+                    Ok(()) => println!("## [CHUNKED] HTML GRIDS: wrote {path:?} (read-only)"),
+                    Err(error) => eprintln!("## [CHUNKED] HTML GRIDS: {error}"),
+                },
+                Err(error) => eprintln!("## [CHUNKED] HTML GRIDS: {error}"),
+            }
+        }
+        let logical_rows = message_identity::logical_row_candidates(&source_analysis);
+        let continuation_rows = logical_rows.iter().filter(|row| row.source_rows.len() > 1).count();
+        println!(
+            "## [CHUNKED] LOGICAL ROW RECONSTRUCTION: continuation_candidates={} unresolved_rows={} (advisory only)",
+            continuation_rows, logical_rows.len() - continuation_rows,
+        );
+        if let Ok(output) = std::env::var("AIFIX_COVERAGE_AUDIT_JSON") {
+            let path = format!("{output}.logical-rows.json");
+            let report = serde_json::json!({
+                "read_only": true,
+                "coordinate_space": "original_source_utf8_bytes",
+                "assertion_semantics_verified": false,
+                "rows": logical_rows,
+            });
+            match std::fs::write(&path, serde_json::to_string_pretty(&report).unwrap_or_default()) {
+                Ok(()) => println!("## [CHUNKED] LOGICAL ROWS: wrote {path:?} (read-only)"),
+                Err(error) => eprintln!("## [CHUNKED] LOGICAL ROWS: {error}"),
+            }
+        }
+        let logical_groups = message_identity::logical_enum_groups(&source, &table_roles.enum_inventory);
+        println!(
+            "## [CHUNKED] LOGICAL ENUM GROUPS: physical_tables={} logical_groups={} continuation_groups={} (advisory only)",
+            table_roles.enum_inventory.len(), logical_groups.len(),
+            logical_groups.iter().filter(|group| group.physical_header_offsets.len() > 1).count(),
+        );
+        if let Ok(output) = std::env::var("AIFIX_COVERAGE_AUDIT_JSON") {
+            let path = format!("{output}.enum-inventory.json");
+            let report = serde_json::json!({
+                "read_only": true,
+                "assertion_semantics_verified": false,
+                "coordinate_space": "original_source_utf8_bytes",
+                "tables": table_roles.enum_inventory,
+                "logical_groups": logical_groups,
+            });
+            match std::fs::write(&path, serde_json::to_string_pretty(&report).unwrap_or_default()) {
+                Ok(()) => println!("## [CHUNKED] ENUM INVENTORY: wrote {path:?} (read-only)"),
+                Err(error) => eprintln!("## [CHUNKED] ENUM INVENTORY: {error}"),
+            }
+        }
         let diagnostics = message_identity::resolution_diagnostics_in_document(
             &checkpoint.candidates,
             &source_windows,
@@ -2501,11 +2616,26 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             "## [CHUNKED] P4 PARAMETER INVENTORY: {} distinct source-backed parameter assertions; separate from message identity, not published",
             parameter_inventory.len()
         );
+        let parameter_definitions = message_identity::parameter_definitions_from_analysis(&source_analysis);
+        println!(
+            "## [CHUNKED] PARAMETER DEFINITIONS: {} explicit original-source table rows (no message ownership inferred)",
+            parameter_definitions.len()
+        );
+        let parameter_resolution = message_identity::resolve_parameter_entities(
+            &source, &parameter_definitions, &parameter_inventory,
+        );
+        println!(
+            "## [CHUNKED] PARAMETER ENTITY RESOLUTION: entities={} linked_assertions={} unresolved_assertions={} literal_properties={} (assertion semantics unverified)",
+            parameter_resolution.entities.len(),
+            parameter_resolution.entities.iter().map(|entity| entity.assertions.len()).sum::<usize>(),
+            parameter_resolution.unresolved_assertions.len(),
+            parameter_resolution.entities.iter().map(|entity| entity.properties.len()).sum::<usize>(),
+        );
         let audit = message_identity::parameter_structure_audit(
             &checkpoint.candidates,
             &source_windows,
             &source_starts,
-            &masked_source,
+            &table_analysis,
             &normalized_tables,
             &source,
         );
@@ -2513,7 +2643,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             &checkpoint.candidates,
             &source_windows,
             &source_starts,
-            &masked_source,
+            &table_analysis,
             &normalized_tables,
             &source,
         );
@@ -3044,6 +3174,23 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             if let Err(err) = export_parameter_inventory(&destination, &parameter_inventory) {
                 return WorkflowResult::Error(err);
             }
+            let definitions_destination =
+                input.with_file_name(format!("{stem}_parameter-definitions.json"));
+            if let Err(err) = export_parameter_inventory(&definitions_destination, &parameter_definitions) {
+                return WorkflowResult::Error(err);
+            }
+            let entities_destination =
+                input.with_file_name(format!("{stem}_parameter-entities.json"));
+            if let Err(err) = export_parameter_inventory(
+                &entities_destination, std::slice::from_ref(&parameter_resolution),
+            ) {
+                return WorkflowResult::Error(err);
+            }
+            println!(
+                "## [CHUNKED] PARAMETER DEFINITIONS EXPORTED: {} rows to {}",
+                parameter_definitions.len(),
+                definitions_destination.display()
+            );
             println!(
                 "## [CHUNKED] PARAMETER INVENTORY EXPORTED: {} assertions to {} (unverified)",
                 parameter_inventory.len(),
@@ -3077,8 +3224,9 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                     .map(|row| row.cells.len())
                     .sum::<usize>()
             );
-            for table in &explicit_tables {
-                let grid = table.audit_grid();
+            for item in &table_analysis.tables {
+                let table = table_analysis.table(item);
+                let grid = &item.grid;
                 println!(
                     "## [CHUNKED] SIMPLELEXER TABLE: bytes={}..{} type={:?} rows={} columns={} grid_issues={} (observed only)",
                     table.span.start,
@@ -3089,7 +3237,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                     grid.issues.len()
                 );
             }
-            let structure = source_tree::SourceTree::parse(&masked_source);
+            let structure = source_tree::SourceTree::from_analysis(&table_analysis);
             let transitions = structure.transitions();
             println!(
                 "## [CHUNKED] SOURCE TREE SHADOW: sections={} tables={} blocks={} transitions={}",
