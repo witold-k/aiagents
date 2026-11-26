@@ -2692,7 +2692,10 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             let staged_model =
                 protocol_model::stage(&checkpoint.candidates, &source_windows, &table_analysis);
             let model_output = format!("{output}.protocol-model.json");
-            match serde_json::to_string_pretty(&staged_model) {
+            match serde_json::to_string_pretty(&staged_model.with_source_entities(
+                &parameter_resolution, &table_roles.enum_inventory, &logical_groups,
+                &logical_rows, &html_grids,
+            )) {
                 Ok(json) => {
                     if let Err(err) = fs::write(&model_output, format!("{json}\n")) {
                         eprintln!(
@@ -2798,6 +2801,202 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                     Err(err) => {
                         eprintln!("## [CHUNKED] SEMANTIC VERIFY: serialization failed: {err}")
                     }
+                }
+            }
+            // Separate opt-in: assertion correctness, not extraction coverage.
+            if std::env::var_os("AIFIX_ASSERTION_VERIFY").is_some() {
+                let limit = std::env::var("AIFIX_SEMANTIC_VERIFY_LIMIT")
+                    .ok().and_then(|value| value.parse::<usize>().ok())
+                    .unwrap_or(12).min(200);
+                let mut tasks = coverage_audit::assertion_review_tasks(
+                    &checkpoint.candidates, &source_windows,
+                );
+                coverage_audit::attach_original_context(&mut tasks, &table_roles, &source_analysis, &source_starts, &masked_source, &normalized_tables, &pre_normalized);
+                // Explicit model identity is required for persistent reuse.
+                let model_key = std::env::var("AIFIX_ASSERTION_CACHE_MODEL")
+                    .ok().filter(|value| !value.trim().is_empty());
+                let cache_path = format!("{output}.assertion-cache.json");
+                let mut cache: std::collections::BTreeMap<String, String> = if model_key.is_some() {
+                    fs::read_to_string(&cache_path).ok()
+                        .and_then(|json| serde_json::from_str(&json).ok()).unwrap_or_default()
+                } else { Default::default() };
+                let mut reviews = Vec::new();
+                let mut calls = 0;
+                let mut cache_hits = 0;
+                let mut verbatim = 0;
+                for task in &tasks {
+                    if coverage_audit::verbatim_match(task.statement, task.source_excerpt) {
+                        verbatim += 1;
+                        reviews.push(serde_json::json!({
+                            "task": task, "response_valid": true, "method": "deterministic",
+                            "judgment": {"verdict": "verbatim_match", "evidence_quote": task.statement.trim(),
+                                "rationale": "Exact text containment only; ownership and semantics unverified."},
+                        }));
+                        continue;
+                    }
+                    let context = serde_json::to_string(task).expect("serialize assertion task");
+                    let budget = self.llm_call.max_tokens().min(512);
+                    let key = model_key.as_ref().map(|model| serde_json::json!([
+                        4, model, coverage_audit::ASSERTION_VERIFIER_PROMPT, budget, 0.0, context
+                    ]).to_string());
+                    let cached = key.as_ref().and_then(|key| cache.get(key))
+                        .and_then(|response| coverage_audit::validate_assertion_judgment(task.source_excerpt, response));
+                    let (judgment, method) = if let Some(judgment) = cached {
+                        cache_hits += 1;
+                        (Some(judgment), "cache")
+                    } else {
+                        if calls >= limit { continue; }
+                        calls += 1;
+                        let response = match self.llm_call.run_text_step_limited_with_temperature(
+                            coverage_audit::ASSERTION_VERIFIER_PROMPT, &context, budget, 0.0,
+                        ) {
+                            Ok(response) => response,
+                            Err(err) => return WorkflowResult::LlmCallResult(err),
+                        };
+                        let judgment = coverage_audit::validate_assertion_judgment(task.source_excerpt, &response);
+                        if judgment.is_some() && let Some(key) = key {
+                            cache.insert(key, response);
+                            let temp = format!("{cache_path}.tmp");
+                            if let Err(err) = fs::write(&temp, serde_json::to_vec(&cache).expect("serialize cache"))
+                                .and_then(|()| fs::rename(&temp, &cache_path)) {
+                                eprintln!("## [CHUNKED] ASSERTION CACHE: {err}");
+                            }
+                        }
+                        (judgment, "llm")
+                    };
+                    reviews.push(serde_json::json!({
+                        "task": task, "response_valid": judgment.is_some(), "judgment": judgment, "method": method,
+                    }));
+                }
+                let report = serde_json::json!({
+                    "schema_version": 4, "coordinate_space": "source_window_utf8_bytes",
+                    "eligible_tasks": tasks.len(), "attempted": reviews.len(),
+                    "llm_calls": calls, "cache_hits": cache_hits, "verbatim_matches": verbatim,
+                    "pending": tasks.len() - reviews.len(), "cache_enabled": model_key.is_some(),
+                    "reviews": reviews, "diagnostic_only": true,
+                });
+                let path = format!("{output}.assertion-verification.json");
+                match serde_json::to_string_pretty(&report) {
+                    Ok(json) => {
+                        if let Err(err) = fs::write(&path, format!("{json}\n")) {
+                            eprintln!("## [CHUNKED] ASSERTION VERIFY: unable to write {path:?}: {err}");
+                        } else {
+                            println!("## [CHUNKED] ASSERTION VERIFY: wrote {path:?} (diagnostic only)");
+                        }
+                    }
+                    Err(err) => eprintln!("## [CHUNKED] ASSERTION VERIFY: serialization failed: {err}"),
+                }
+            }
+            // Independent relation extraction, including verbatim assertions.
+            if std::env::var_os("AIFIX_RELATION_EXTRACT").is_some() {
+                let limit = std::env::var("AIFIX_RELATION_LIMIT").ok()
+                    .and_then(|value| value.parse::<usize>().ok()).unwrap_or(12).min(200);
+                let mut tasks = coverage_audit::assertion_review_tasks(&checkpoint.candidates, &source_windows);
+                coverage_audit::attach_original_context(&mut tasks, &table_roles, &source_analysis, &source_starts, &masked_source, &normalized_tables, &pre_normalized);
+                let model_key = std::env::var("AIFIX_ASSERTION_CACHE_MODEL").ok()
+                    .filter(|value| !value.trim().is_empty());
+                let cache_path = format!("{output}.relation-cache.json");
+                let mut cache: std::collections::BTreeMap<String, String> = if model_key.is_some() {
+                    fs::read_to_string(&cache_path).ok().and_then(|json| serde_json::from_str(&json).ok()).unwrap_or_default()
+                } else { Default::default() };
+                let retry_limit = std::env::var("AIFIX_RELATION_RETRY_LIMIT").ok()
+                    .and_then(|value| value.parse::<usize>().ok()).unwrap_or(0).min(200);
+                let mut retry_calls = 0;
+                let mut retry_cache_hits = 0;
+                let mut reviews = Vec::new();
+                let mut calls = 0;
+                let mut cache_hits = 0;
+                for task in &tasks {
+                    let context = serde_json::to_string(task).expect("serialize relation task");
+                    let budget = self.llm_call.max_tokens().min(1024);
+                    let key = model_key.as_ref().map(|model| serde_json::json!([
+                        3, model, coverage_audit::RELATION_PROMPT, budget, 0.0, context
+                    ]).to_string());
+                    let cached = key.as_ref().and_then(|key| cache.get(key)).cloned();
+                    let (response, method) = if let Some(response) = cached {
+                        cache_hits += 1;
+                        (response, "cache")
+                    } else {
+                        if calls >= limit { continue; }
+                        calls += 1;
+                        let response = match self.llm_call.run_text_step_limited_with_temperature(
+                            coverage_audit::RELATION_PROMPT, &context, budget, 0.0,
+                        ) {
+                            Ok(response) => response,
+                            Err(err) => return WorkflowResult::LlmCallResult(err),
+                        };
+                        if let Some(key) = key {
+                            cache.insert(key, response.clone());
+                            let temp = format!("{cache_path}.tmp");
+                            if let Err(err) = fs::write(&temp, serde_json::to_vec(&cache).expect("serialize relation cache"))
+                                .and_then(|()| fs::rename(&temp, &cache_path)) {
+                                eprintln!("## [CHUNKED] RELATION CACHE: {err}");
+                            }
+                        }
+                        (response, "llm")
+                    };
+                    let review = coverage_audit::review_relations(task.source_excerpt, &response);
+                    let mut retry = None;
+                    if review.status != "valid" {
+                        let retry_budget = self.llm_call.max_tokens().min(4096);
+                        let retry_key = model_key.as_ref().map(|model| serde_json::json!([
+                            "relation_retry_v2", model, coverage_audit::RELATION_PROMPT,
+                            retry_budget, 0.0, context
+                        ]).to_string());
+                        let cached_retry = retry_key.as_ref().and_then(|key| cache.get(key)).cloned();
+                        let retry_response = if let Some(raw) = cached_retry {
+                            retry_cache_hits += 1;
+                            Some(raw)
+                        } else if retry_calls < retry_limit && retry_key.is_some() {
+                            retry_calls += 1;
+                            let raw = match self.llm_call.run_text_step_limited_with_temperature(
+                                coverage_audit::RELATION_PROMPT, &context, retry_budget, 0.0,
+                            ) {
+                                Ok(raw) => raw,
+                                Err(err) => return WorkflowResult::LlmCallResult(err),
+                            };
+                            if let Some(key) = retry_key {
+                                cache.insert(key, raw.clone());
+                                let temp = format!("{cache_path}.tmp");
+                                if let Err(err) = fs::write(&temp, serde_json::to_vec(&cache).expect("serialize relation cache"))
+                                    .and_then(|()| fs::rename(&temp, &cache_path)) {
+                                    eprintln!("## [CHUNKED] RELATION CACHE: {err}");
+                                }
+                            }
+                            Some(raw)
+                        } else { None };
+                        if let Some(raw) = retry_response {
+                            let result = coverage_audit::review_relations(task.source_excerpt, &raw);
+                            retry = Some(serde_json::json!({
+                                "raw_response": raw, "review": result, "token_budget": retry_budget,
+                            }));
+                        }
+                    }
+                    reviews.push(serde_json::json!({
+                        "task": task, "response_valid": review.status == "valid",
+                        "relations": review.relations, "behaviors": review.behaviors, "instances": review.instances, "rejected": review.rejected,
+                        "validation_status": review.status, "raw_response": response,
+                        "method": method, "status": "unverified_hypotheses", "retry": retry,
+                    }));
+                }
+                let normalized = coverage_audit::normalized_hypotheses(&reviews);
+                let normalized_path = format!("{output}.normalized-hypotheses.json");
+                if let Err(err) = fs::write(&normalized_path, serde_json::to_vec_pretty(&normalized).expect("serialize normalized hypotheses")) {
+                    eprintln!("## [CHUNKED] NORMALIZED HYPOTHESES: {err}");
+                } else {
+                    println!("## [CHUNKED] NORMALIZED HYPOTHESES: wrote {normalized_path:?} (diagnostic only)");
+                }
+                let report = serde_json::json!({
+                    "schema_version": 5, "diagnostic_only": true, "eligible_tasks": tasks.len(),
+                    "attempted": reviews.len(), "pending": tasks.len() - reviews.len(),
+                    "retry_calls": retry_calls, "retry_cache_hits": retry_cache_hits, "llm_calls": calls, "cache_hits": cache_hits, "cache_enabled": model_key.is_some(),
+                    "reviews": reviews,
+                });
+                let path = format!("{output}.semantic-relations.json");
+                if let Err(err) = fs::write(&path, serde_json::to_vec_pretty(&report).expect("serialize relation report")) {
+                    eprintln!("## [CHUNKED] RELATION EXTRACT: {err}");
+                } else {
+                    println!("## [CHUNKED] RELATION EXTRACT: wrote {path:?} (unverified hypotheses)");
                 }
             }
             let evidence_output = format!("{output}.evidence-coverage.json");
@@ -3033,7 +3232,10 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                     )
                     .with_semantic_units(&graph, &units, &hypothetical);
                     let model_output = format!("{output}.protocol-model.json");
-                    match serde_json::to_string_pretty(&model) {
+                    match serde_json::to_string_pretty(&model.with_source_entities(
+                        &parameter_resolution, &table_roles.enum_inventory, &logical_groups,
+                &logical_rows, &html_grids,
+                    )) {
                         Ok(json) => {
                             if let Err(err) = fs::write(&model_output, format!("{json}\n")) {
                                 eprintln!(

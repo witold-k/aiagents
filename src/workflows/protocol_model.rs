@@ -22,6 +22,304 @@ pub(super) struct ProtocolModel {
     caveats: Vec<&'static str>,
 }
 
+
+/// Original-source inventories are independent of normalized message hypotheses.
+/// Borrow the existing evidence rather than reparse or infer ownership.
+#[derive(Serialize)]
+pub(super) struct EntityModel<'a> {
+    #[serde(flatten)]
+    model: &'a ProtocolModel,
+    source_entities: SourceEntities<'a>,
+}
+
+#[derive(Serialize)]
+struct SourceEntities<'a> {
+    coordinate_space: &'static str,
+    assertion_semantics_verified: bool,
+    parameters: &'a super::message_identity::ParameterResolution<'a>,
+    enum_tables: &'a [super::message_identity::EnumTable],
+    logical_enum_groups: &'a [super::message_identity::LogicalEnumGroup],
+    logical_rows: &'a [super::message_identity::LogicalRowCandidate],
+    html_grids: &'a [serde_json::Value],
+    relationships: Vec<SourceRelationship>,
+    relationship_review: RelationshipReview,
+    entity_registry: EntityRegistry,
+}
+
+
+#[derive(Serialize)]
+struct SourceRelationship {
+    kind: &'static str,
+    group_index: usize,
+    table_header_offset: usize,
+    member_row_start: Option<usize>,
+    status: &'static str,
+}
+
+fn enum_relationships(
+    tables: &[super::message_identity::EnumTable],
+    groups: &[super::message_identity::LogicalEnumGroup],
+) -> Vec<SourceRelationship> {
+    let mut relations = Vec::new();
+    for (group_index, group) in groups.iter().enumerate() {
+        for &offset in &group.physical_header_offsets {
+            let mut matches = tables.iter().filter(|table| table.header_offset == offset);
+            let Some(table) = matches.next() else { continue };
+            if matches.next().is_some() {
+                continue;
+            }
+            if groups.iter().filter(|g| g.physical_header_offsets.contains(&offset)).count() != 1
+                || group.physical_header_offsets.iter().filter(|&&o| o == offset).count() != 1
+            {
+                continue;
+            }
+            relations.push(SourceRelationship {
+                kind: "enum_group_contains_table",
+                group_index,
+                table_header_offset: offset,
+                member_row_start: None,
+                status: "structural_hypothesis",
+            });
+            for member in &table.members {
+                relations.push(SourceRelationship {
+                    kind: "enum_group_contains_member",
+                    group_index,
+                    table_header_offset: offset,
+                    member_row_start: Some(member.row_start),
+                    status: "structural_hypothesis",
+                });
+            }
+        }
+    }
+    relations
+}
+
+
+#[derive(Serialize)]
+struct ParameterRelationship {
+    kind: &'static str,
+    definition_offset: usize,
+    target_index: usize,
+    assertion_offset: Option<usize>,
+    status: &'static str,
+}
+
+#[derive(Serialize)]
+struct RelationshipIssue {
+    kind: &'static str,
+    source_index: usize,
+    source_offset: Option<usize>,
+    reason: &'static str,
+}
+
+#[derive(Serialize)]
+struct ReferenceCandidate {
+    message_index: usize,
+    hint_index: usize,
+    parameter_definition_offsets: Vec<usize>,
+    status: &'static str,
+}
+
+#[derive(Serialize)]
+struct RelationshipReview {
+    parameter_relationships: Vec<ParameterRelationship>,
+    message_parameter_candidates: Vec<ReferenceCandidate>,
+    issues: Vec<RelationshipIssue>,
+    message_enum_status: &'static str,
+}
+
+fn review_relationships(
+    model: &ProtocolModel,
+    parameters: &super::message_identity::ParameterResolution<'_>,
+    tables: &[super::message_identity::EnumTable],
+    groups: &[super::message_identity::LogicalEnumGroup],
+) -> RelationshipReview {
+    let mut review = RelationshipReview {
+        parameter_relationships: Vec::new(),
+        message_parameter_candidates: Vec::new(),
+        issues: Vec::new(),
+        message_enum_status: "requires_explicit_reference_evidence",
+    };
+    for (index, entity) in parameters.entities.iter().enumerate() {
+        let offset = entity.definition.source_byte_offset;
+        if parameters.entities.iter().filter(|e| e.definition.source_byte_offset == offset).count() != 1 {
+            review.issues.push(RelationshipIssue {
+                kind: "parameter_definition", source_index: index, source_offset: Some(offset),
+                reason: "duplicate_definition_anchor",
+            });
+            continue;
+        }
+        for (target_index, assertion) in entity.assertions.iter().enumerate() {
+            review.parameter_relationships.push(ParameterRelationship {
+                kind: "parameter_has_assertion", definition_offset: offset, target_index,
+                assertion_offset: Some(assertion.source_byte_offset), status: "source_link_semantics_unverified",
+            });
+        }
+        for (target_index, _) in entity.properties.iter().enumerate() {
+            review.parameter_relationships.push(ParameterRelationship {
+                kind: "parameter_has_literal_property", definition_offset: offset, target_index,
+                assertion_offset: None, status: "literal_source_property",
+            });
+        }
+    }
+    for (index, assertion) in parameters.unresolved_assertions.iter().enumerate() {
+        review.issues.push(RelationshipIssue {
+            kind: "parameter_assertion", source_index: index,
+            source_offset: Some(assertion.source_byte_offset), reason: "unresolved_assertion",
+        });
+    }
+    for (message_index, message) in model.messages.iter().enumerate() {
+        for (hint_index, hint) in message.parameter_hints.iter().enumerate() {
+            let offsets: Vec<_> = parameters.entities.iter()
+                .filter(|entity| entity.definition.parameter == hint.name)
+                .map(|entity| entity.definition.source_byte_offset).collect();
+            let status = match offsets.len() {
+                0 => "no_exact_name_candidate",
+                1 => "name_match_only_not_ownership",
+                _ => "ambiguous_name_candidates",
+            };
+            review.message_parameter_candidates.push(ReferenceCandidate {
+                message_index, hint_index, parameter_definition_offsets: offsets, status,
+            });
+        }
+    }
+    for (index, group) in groups.iter().enumerate() {
+        for &offset in &group.physical_header_offsets {
+            let count = tables.iter().filter(|t| t.header_offset == offset).count();
+            let reason = if count == 0 { "missing_table_anchor" }
+                else if count > 1 { "duplicate_table_anchor" }
+                else if groups.iter().filter(|g| g.physical_header_offsets.contains(&offset)).count() != 1
+                    || group.physical_header_offsets.iter().filter(|&&o| o == offset).count() != 1 {
+                    "ambiguous_group_membership"
+                } else { continue };
+            review.issues.push(RelationshipIssue {
+                kind: "enum_group", source_index: index, source_offset: Some(offset), reason,
+            });
+        }
+    }
+    for (index, table) in tables.iter().enumerate() {
+        for member in &table.members {
+            if member.duplicate_value || member.conflicting_description {
+                review.issues.push(RelationshipIssue {
+                    kind: "enum_member", source_index: index, source_offset: Some(member.row_start),
+                    reason: if member.conflicting_description { "conflicting_description" } else { "duplicate_value" },
+                });
+            }
+        }
+    }
+    review
+}
+
+#[derive(Serialize)]
+struct RegistryEntry {
+    id: String,
+    kind: &'static str,
+    name: Option<String>,
+    locator: serde_json::Value,
+    status: &'static str,
+}
+
+#[derive(Serialize)]
+struct EntityRegistry {
+    schema_version: u32,
+    identity_scope: &'static str,
+    entries: Vec<RegistryEntry>,
+    ambiguous_ids: Vec<String>,
+}
+
+fn entity_registry(
+    model: &ProtocolModel,
+    parameters: &super::message_identity::ParameterResolution<'_>,
+    tables: &[super::message_identity::EnumTable],
+    groups: &[super::message_identity::LogicalEnumGroup],
+) -> EntityRegistry {
+    use serde_json::json;
+    let mut entries = Vec::new();
+    for (index, message) in model.messages.iter().enumerate() {
+        entries.push(RegistryEntry {
+            id: format!("message_candidate:{}", message.candidate_id),
+            kind: "message_candidate",
+            name: Some(message.proposed_name.clone()),
+            locator: json!({"message_index": index, "candidate_id": message.candidate_id}),
+            status: message.identity_status,
+        });
+    }
+    for (index, entity) in parameters.entities.iter().enumerate() {
+        let offset = entity.definition.source_byte_offset;
+        entries.push(RegistryEntry {
+            id: format!("parameter:{offset}"),
+            kind: "parameter_definition",
+            name: Some(entity.definition.parameter.to_string()),
+            locator: json!({"definition_index": index, "original_byte_offset": offset}),
+            status: "source_definition_semantics_unverified",
+        });
+    }
+    for (index, table) in tables.iter().enumerate() {
+        let offset = table.header_offset;
+        entries.push(RegistryEntry {
+            id: format!("enum_table:{offset}"),
+            kind: "enum_table",
+            name: None,
+            locator: json!({"table_index": index, "original_byte_offset": offset}),
+            status: "source_table",
+        });
+        for (member_index, member) in table.members.iter().enumerate() {
+            entries.push(RegistryEntry {
+                id: format!("enum_member:{offset}:{}", member.row_start),
+                kind: "enum_member",
+                name: Some(member.value.to_string()),
+                locator: json!({"table_index": index, "member_index": member_index,
+                    "original_byte_offset": member.row_start, "table_header_offset": offset}),
+                status: "source_member_semantics_unverified",
+            });
+        }
+    }
+    for (index, group) in groups.iter().enumerate() {
+        let mut offsets = group.physical_header_offsets.clone();
+        offsets.sort_unstable();
+        entries.push(RegistryEntry {
+            id: format!("enum_group:{}", offsets.iter().map(usize::to_string).collect::<Vec<_>>().join(":")),
+            kind: "enum_group",
+            name: group.caption.clone(),
+            locator: json!({"group_index": index, "physical_header_offsets": offsets}),
+            status: "structural_hypothesis",
+        });
+    }
+    let mut counts = std::collections::BTreeMap::new();
+    for entry in &entries {
+        *counts.entry(entry.id.clone()).or_insert(0usize) += 1;
+    }
+    let ambiguous_ids = counts.into_iter().filter_map(|(id, count)| (count > 1).then_some(id)).collect();
+    EntityRegistry { schema_version: 1, identity_scope: "single_document_snapshot", entries, ambiguous_ids }
+}
+
+impl ProtocolModel {
+    pub(super) fn with_source_entities<'a>(
+        &'a self,
+        parameters: &'a super::message_identity::ParameterResolution<'a>,
+        enum_tables: &'a [super::message_identity::EnumTable],
+        logical_enum_groups: &'a [super::message_identity::LogicalEnumGroup],
+        logical_rows: &'a [super::message_identity::LogicalRowCandidate],
+        html_grids: &'a [serde_json::Value],
+    ) -> EntityModel<'a> {
+        EntityModel {
+            model: self,
+            source_entities: SourceEntities {
+                coordinate_space: "original_source_utf8_bytes",
+                assertion_semantics_verified: false,
+                parameters,
+                enum_tables,
+                logical_enum_groups,
+                logical_rows,
+                html_grids,
+                relationships: enum_relationships(enum_tables, logical_enum_groups),
+                relationship_review: review_relationships(self, parameters, enum_tables, logical_enum_groups),
+                entity_registry: entity_registry(self, parameters, enum_tables, logical_enum_groups),
+            },
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 struct TableEvidence {
     normalized_byte_start: usize,

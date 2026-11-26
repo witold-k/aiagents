@@ -1304,6 +1304,7 @@ pub(super) struct OriginalTableRoleStats {
     pub ambiguous_mapping: usize,
     pub changed_source_row: usize,
     pub enum_inventory: Vec<EnumTable>,
+    pub assertion_spans: std::collections::BTreeMap<(String, usize), (usize, usize, bool)>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1674,7 +1675,6 @@ pub(super) fn original_table_role_stats(
     analysis: &simplelexer::tablelexer::DocumentAnalysis,
     pre_normalized: &str,
 ) -> OriginalTableRoleStats {
-    let original = analysis.source;
     let mut stats = OriginalTableRoleStats { enum_inventory: enum_inventory(analysis), ..Default::default() };
     for candidate in candidates {
         for (fact_index, fact) in candidate.facts.iter().enumerate() {
@@ -1694,50 +1694,25 @@ pub(super) fn original_table_role_stats(
                 }
                 Some((absolute, end, quote))
             })();
-            let Some((absolute, rendered_end, quote)) = anchor else {
+            let Some((absolute, _rendered_end, quote)) = anchor else {
                 stats.invalid_anchor += 1;
                 stats.unmapped += 1;
                 continue;
             };
-            let exact = normalized.source_offset(absolute).and_then(|begin| {
-                let end = begin.checked_add(quote.len())?;
-                if original.get(begin..end) != Some(quote) {
-                    return None;
-                }
-                if !(0..quote.len()).all(|i| normalized.source_offset(absolute + i) == Some(begin + i)) {
-                    return None;
-                }
-                Some((begin, end))
-            });
-            let (begin, end) = if let Some(span) = exact {
-                stats.exact_mapping += 1;
-                span
-            } else {
-                let mut matches = normalized.rows.iter().filter(|mapping| {
-                    mapping.rendered.start <= absolute && rendered_end <= mapping.rendered.end
-                });
-                let Some(mapping) = matches.next() else {
-                    stats.missing_mapping += 1;
-                    stats.unmapped += 1;
-                    continue;
-                };
-                if matches.next().is_some() {
-                    stats.ambiguous_mapping += 1;
+            let (begin, end, is_exact) = match original_source_span(analysis, normalized, pre_normalized, absolute, quote) {
+                Ok(span) => span,
+                Err(error) => {
+                    match error {
+                        SourceMappingError::Missing => stats.missing_mapping += 1,
+                        SourceMappingError::Ambiguous => stats.ambiguous_mapping += 1,
+                        SourceMappingError::ChangedRow => stats.changed_source_row += 1,
+                    }
                     stats.unmapped += 1;
                     continue;
                 }
-                let span = &mapping.source;
-                if original.get(span.clone()).is_none()
-                    || original.get(span.clone()) != pre_normalized.get(span.clone())
-                    || !analysis.source_row_at(span.start).is_some_and(|(_, row)| row.span.start == span.start && row.span.end == span.end)
-                {
-                    stats.changed_source_row += 1;
-                    stats.unmapped += 1;
-                    continue;
-                }
-                stats.row_mapping += 1;
-                (span.start, span.end)
             };
+            if is_exact { stats.exact_mapping += 1; } else { stats.row_mapping += 1; }
+            stats.assertion_spans.insert((candidate.id.clone(), fact_index), (begin, end, is_exact));
             let Some((table, row)) = analysis.source_row_at(begin) else {
                 stats.outside_table += 1;
                 continue;
@@ -1767,7 +1742,7 @@ pub(super) fn original_table_role_stats(
                             fact_index,
                             statement: fact.statement.clone(),
                             evidence_quote: quote.to_owned(),
-                            exact_original_mapping: exact.is_some(),
+                            exact_original_mapping: is_exact,
                         });
                     }
                 },
@@ -3667,3 +3642,37 @@ pub(super) fn resolved_source_facts(
 #[cfg(test)]
 #[path = "../../tests/workflows/message_identity_test.rs"]
 mod tests;
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum SourceMappingError {
+    Missing,
+    Ambiguous,
+    ChangedRow,
+}
+
+/// Map a validated rendered excerpt to original bytes or one unchanged physical row.
+pub(super) fn original_source_span(
+    analysis: &simplelexer::tablelexer::DocumentAnalysis<'_>,
+    normalized: &simplelexer::tablelexer::NormalizedTableText,
+    pre_normalized: &str,
+    absolute: usize,
+    quote: &str,
+) -> Result<(usize, usize, bool), SourceMappingError> {
+    let end = absolute.checked_add(quote.len()).ok_or(SourceMappingError::Missing)?;
+    if let Some(begin) = normalized.source_offset(absolute)
+        && let Some(finish) = begin.checked_add(quote.len())
+        && analysis.source.get(begin..finish) == Some(quote)
+        && (0..quote.len()).all(|i| normalized.source_offset(absolute + i) == Some(begin + i))
+    {
+        return Ok((begin, finish, true));
+    }
+    let mut rows = normalized.rows.iter().filter(|row| row.rendered.start <= absolute && end <= row.rendered.end);
+    let row = rows.next().ok_or(SourceMappingError::Missing)?;
+    if rows.next().is_some() { return Err(SourceMappingError::Ambiguous); }
+    let span = &row.source;
+    if analysis.source.get(span.clone()).is_none()
+        || analysis.source.get(span.clone()) != pre_normalized.get(span.clone())
+        || !analysis.source_row_at(span.start).is_some_and(|(_, row)| row.span.start == span.start && row.span.end == span.end)
+    { return Err(SourceMappingError::ChangedRow); }
+    Ok((span.start, span.end, false))
+}
