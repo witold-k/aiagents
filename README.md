@@ -48,7 +48,7 @@ Use `-m` for additional literal task instructions; place it before `-a/--args`, 
 
 ## Experimental protocol extraction
 
-G8 introduces a diagnostic `TableRoleHypothesis` contract in `llm_structure`: table roles and identifier columns are proposed independently of header spelling, with exact cell evidence validated against supplied rows. Set `AIFIX_LLM_TABLE_ROLES=1` to classify normalized lexer tables in a bounded classification pass (two attempts, first 12 rows, 24000-byte prompt limit). The report is `<AIFIX_COVERAGE_AUDIT_JSON>.table-roles.json` (default `coverage-audit.json.table-roles.json`). Agreed, source-mapped enum and parameter-definition inventories are active when enabled, without legacy fallback; message ownership and some parameter assertion heuristics remain legacy. Responses use the shared string utilities to remove code fences before strict JSON parsing. Rejections distinguish JSON/schema errors from invalid source evidence or roles. Calls are capped at 1024 output tokens; a required call failure preserves a partial report and aborts the workflow. The report includes the returned call error, cache_hits, llm_calls, failed_calls and explicit statuses for skipped tables. Column roles also include timestamp, duration, quantity and status. With `AIFIX_ASSERTION_CACHE_MODEL` set, validated attempts are cached individually in `<AIFIX_COVERAGE_AUDIT_JSON>.table-role-cache` using exact prompt and model keys and revalidated on read. No semantic verification is performed.
+G8 introduces a diagnostic `TableRoleHypothesis` contract in `llm_structure`: table roles and identifier columns are proposed independently of header spelling, with exact cell evidence validated against supplied rows. By default, the workflow classifies normalized lexer tables in a bounded classification pass (two attempts, first 12 rows, 24000-byte prompt limit). The report is `<AIFIX_COVERAGE_AUDIT_JSON>.table-roles.json` (default `coverage-audit.json.table-roles.json`). Agreed, source-mapped enum and parameter-definition inventories are active when enabled, without legacy fallback; message ownership and some parameter assertion heuristics remain legacy. Responses use the shared string utilities to remove code fences before strict JSON parsing. Rejections distinguish JSON/schema errors from invalid source evidence or roles. Calls are capped at 1024 output tokens; a required call failure preserves a partial report and aborts the workflow. The report includes the returned call error, cache_hits, llm_calls, failed_calls and explicit statuses for skipped tables. Column roles also include timestamp, duration, quantity and status. With `AIFIX_ASSERTION_CACHE_MODEL` set, validated attempts are cached individually in `<AIFIX_COVERAGE_AUDIT_JSON>.table-role-cache` using exact prompt and model keys and revalidated on read. No semantic verification is performed.
 
 Table-role hypotheses additionally distinguish entity kind, row structure and scope independently of the primary role. These optional fields preserve compatibility with older responses; their labels are validated, but their semantic correctness is not established. Table hypotheses now allow identifier columns for enumerations and properties, multiple non-exclusive functions, and optional per-column roles with exact sampled-cell evidence. The legacy primary role remains for compatibility. The accepted enum rows and parameter columns are mapped back to original source evidence; logical row reconstruction and semantic verification remain outstanding.
 
@@ -182,12 +182,12 @@ response budget. They are separate opt-ins.
 | `AIFIX_DOCUMENT_PLAN` | Document planning diagnostics |
 | `AIFIX_SCOPED_PREFIX` | Scoped source context |
 | `AIFIX_LLM_MEMORY_DIAG` | LLM memory diagnostics |
-| `AIFIX_LLM_STRUCTURE` | Optional voted structure analysis |
-| `AIFIX_SEMANTIC_VERIFY` | Optional coverage verification |
-| `AIFIX_ASSERTION_VERIFY` | Optional assertion correctness verification |
+| `AIFIX_LLM_STRUCTURE` | Voted structure analysis (default on) |
+| `AIFIX_SEMANTIC_VERIFY` | Coverage verification (default on) |
+| `AIFIX_ASSERTION_VERIFY` | Assertion correctness verification (default on) |
 | `AIFIX_SEMANTIC_VERIFY_LIMIT` | Per-verifier task limit, default 12, maximum 200 |
 
-The extraction flags `AIFIX_IDENTITY_REPLAY`, `AIFIX_SEMANTIC_VERIFY`, `AIFIX_ASSERTION_VERIFY`, `AIFIX_RELATION_EXTRACT`, `AIFIX_LLM_TABLE_ROLES`, `AIFIX_LLM_STRUCTURE`, `AIFIX_EXPORT_PARAMETER_INVENTORY` and `AIFIX_STRUCTURE_LLM_REPLAY` accept unset, `0` or `false` to disable and `1` or `true` to enable. Other values are errors. Other environment switches have not yet been audited; unset them to disable.
+Table classification, voted structure analysis, semantic coverage verification, assertion verification and relation extraction are enabled by default. Set their respective `AIFIX_LLM_TABLE_ROLES`, `AIFIX_LLM_STRUCTURE`, `AIFIX_SEMANTIC_VERIFY`, `AIFIX_ASSERTION_VERIFY` or `AIFIX_RELATION_EXTRACT` flag to `0` or `false` to disable. Replay-only flags `AIFIX_IDENTITY_REPLAY`, `AIFIX_EXPORT_PARAMETER_INVENTORY` and `AIFIX_STRUCTURE_LLM_REPLAY` remain opt-in. All eight flags accept `1`/`true` and `0`/`false`; other values are errors. Audit reports default to `coverage-audit.json` in the working directory; override with `AIFIX_COVERAGE_AUDIT_JSON`. Existing per-stage budgets remain unchanged.
 Assertion tasks require a nonempty exact quote at the recorded window-relative
 UTF-8 offset and a nonambiguous locator. The initial implementation checks the
 first eligible tasks in checkpoint order. Verdicts are supported, contradicted,
@@ -422,7 +422,7 @@ schema change is required by the mapping refactor.
 
 ### P6.11a Semantic relation hypotheses
 
-Enable with `AIFIX_RELATION_EXTRACT=1`; `AIFIX_RELATION_LIMIT` limits new
+Enabled by default; `AIFIX_RELATION_LIMIT` limits new
 LLM calls (default 12, maximum 200). All eligible assertion tasks, including
 verbatim matches, participate. The independent semantic-relations.json report
 contains subject, predicate, object, conditions, scope and exact excerpt quote.

@@ -1828,46 +1828,47 @@ impl<'a> ChunkedTransformWorkflow<'a> {
 
 impl Workflow for ChunkedTransformWorkflow<'_> {
     fn execute(&self) -> WorkflowResult {
-        let read_flag = |name: &str| -> Result<bool, String> {
+        let read_flag = |name: &str, default: bool| -> Result<bool, String> {
             let result = match std::env::var(name) {
                 Ok(value) => crate::utils::stringutils::parse_optional_bool(Some(&value)),
-                Err(std::env::VarError::NotPresent) => Ok(false),
+                Err(std::env::VarError::NotPresent) => Ok(default),
                 Err(err) => Err(err.to_string()),
             };
             result.map_err(|err| format!("{name}: {err}"))
         };
-        let aifix_identity_replay = match read_flag("AIFIX_IDENTITY_REPLAY") {
+        let aifix_identity_replay = match read_flag("AIFIX_IDENTITY_REPLAY", false) {
             Ok(enabled) => enabled,
             Err(err) => return WorkflowResult::Error(err),
         };
-        let aifix_semantic_verify = match read_flag("AIFIX_SEMANTIC_VERIFY") {
+        let aifix_semantic_verify = match read_flag("AIFIX_SEMANTIC_VERIFY", true) {
             Ok(enabled) => enabled,
             Err(err) => return WorkflowResult::Error(err),
         };
-        let aifix_assertion_verify = match read_flag("AIFIX_ASSERTION_VERIFY") {
+        let aifix_assertion_verify = match read_flag("AIFIX_ASSERTION_VERIFY", true) {
             Ok(enabled) => enabled,
             Err(err) => return WorkflowResult::Error(err),
         };
-        let aifix_relation_extract = match read_flag("AIFIX_RELATION_EXTRACT") {
+        let aifix_relation_extract = match read_flag("AIFIX_RELATION_EXTRACT", true) {
             Ok(enabled) => enabled,
             Err(err) => return WorkflowResult::Error(err),
         };
-        let aifix_llm_table_roles = match read_flag("AIFIX_LLM_TABLE_ROLES") {
+        let aifix_llm_table_roles = match read_flag("AIFIX_LLM_TABLE_ROLES", true) {
             Ok(enabled) => enabled,
             Err(err) => return WorkflowResult::Error(err),
         };
-        let aifix_llm_structure = match read_flag("AIFIX_LLM_STRUCTURE") {
+        let aifix_llm_structure = match read_flag("AIFIX_LLM_STRUCTURE", true) {
             Ok(enabled) => enabled,
             Err(err) => return WorkflowResult::Error(err),
         };
-        let aifix_export_parameter_inventory = match read_flag("AIFIX_EXPORT_PARAMETER_INVENTORY") {
+        let aifix_export_parameter_inventory = match read_flag("AIFIX_EXPORT_PARAMETER_INVENTORY", false) {
             Ok(enabled) => enabled,
             Err(err) => return WorkflowResult::Error(err),
         };
-        let aifix_structure_llm_replay = match read_flag("AIFIX_STRUCTURE_LLM_REPLAY") {
+        let aifix_structure_llm_replay = match read_flag("AIFIX_STRUCTURE_LLM_REPLAY", false) {
             Ok(enabled) => enabled,
             Err(err) => return WorkflowResult::Error(err),
         };
+        let audit_output = std::env::var("AIFIX_COVERAGE_AUDIT_JSON").unwrap_or_else(|_| "coverage-audit.json".to_owned());
         let (input, output) = match self.paths() {
             Ok(paths) => paths,
             Err(err) => return WorkflowResult::Error(err),
@@ -1906,7 +1907,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             println!("## [CHUNKED] DOCUMENT INTEGRITY: stage={stage} findings={} (advisory)", issues.len());
             serde_json::json!({"coordinate_space": stage, "issues": issues})
         }).collect();
-        if let Ok(path) = std::env::var("AIFIX_COVERAGE_AUDIT_JSON") {
+        { let path = &audit_output;
             let report = serde_json::json!({
                 "schema_version": 1, "diagnostic_only": true, "stages": integrity_stages
             });
@@ -1944,7 +1945,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             }
         }
         println!("## [CHUNKED] DELIMITER CONTINUATIONS: candidates={} (advisory)", continuation_candidates.len());
-        if let Ok(path) = std::env::var("AIFIX_COVERAGE_AUDIT_JSON") {
+        { let path = &audit_output;
             let report = serde_json::json!({
                 "schema_version": 1, "diagnostic_only": true,
                 "coordinate_space": "normalized_masked_source",
@@ -2933,7 +2934,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             grid_rows,
             states
         );
-        if let Ok(output) = std::env::var("AIFIX_COVERAGE_AUDIT_JSON") {
+        { let output = audit_output.clone();
             let path = format!("{output}.html-grids.json");
             let report = serde_json::json!({
                 "read_only": true,
@@ -2959,7 +2960,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             continuation_rows,
             logical_rows.len() - continuation_rows,
         );
-        if let Ok(output) = std::env::var("AIFIX_COVERAGE_AUDIT_JSON") {
+        { let output = audit_output.clone();
             let path = format!("{output}.logical-rows.json");
             let report = serde_json::json!({
                 "read_only": true,
@@ -2986,7 +2987,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 .filter(|group| group.physical_header_offsets.len() > 1)
                 .count(),
         );
-        if let Ok(output) = std::env::var("AIFIX_COVERAGE_AUDIT_JSON") {
+        { let output = audit_output.clone();
             let path = format!("{output}.enum-inventory.json");
             let report = serde_json::json!({
                 "read_only": true,
@@ -3100,9 +3101,9 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 "## [CHUNKED] PARAMETER UNCOVERED ROW: line={line} row_byte={row_start} kind={kind} (no ownership inferred)",
             );
         }
-        // Optional, read-only JSON summary; never modifies canonical facts or checkpoint.
-        // Set AIFIX_COVERAGE_AUDIT_JSON to an explicit output filename.
-        if let Ok(output) = std::env::var("AIFIX_COVERAGE_AUDIT_JSON") {
+        // Read-only JSON summary; never modifies canonical facts or checkpoint.
+        // AIFIX_COVERAGE_AUDIT_JSON overrides the default output filename.
+        { let output = audit_output.clone();
             let summary = coverage_audit::CoverageAudit::new(
                 candidate_facts,
                 distinct_candidate_facts,
@@ -3195,7 +3196,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 ),
             }
 
-            // Explicit opt-in, bounded, diagnostic-only LLM verification.
+            // Bounded, diagnostic-only LLM verification.
             if aifix_semantic_verify {
                 let limit = std::env::var("AIFIX_SEMANTIC_VERIFY_LIMIT")
                     .ok()
@@ -3807,8 +3808,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 let graph =
                     llm_structure::source_graph(&rows, &ranked, valid, &coverage.unmatched_rows);
                 let continuation_report = llm_structure::continuation_graph_report(&graph, &continuation_candidates);
-                if let Ok(output) = std::env::var("AIFIX_COVERAGE_AUDIT_JSON")
-                    && let Err(err) = fs::write(format!("{output}.continuation-graph.json"), continuation_report.to_string())
+                if let Err(err) = fs::write(format!("{audit_output}.continuation-graph.json"), continuation_report.to_string())
                 {
                     return WorkflowResult::Error(format!("Cannot write continuation graph: {err}"));
                 }
@@ -3844,7 +3844,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 }
                 // Enrich the diagnostic JSON only after the opt-in structure
                 // analysis has produced voted relations. This never changes facts.
-                if let Ok(output) = std::env::var("AIFIX_COVERAGE_AUDIT_JSON") {
+                { let output = audit_output.clone();
                     let model = protocol_model::stage(
                         &checkpoint.candidates,
                         &source_windows,
