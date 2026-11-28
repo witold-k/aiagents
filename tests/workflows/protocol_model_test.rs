@@ -467,6 +467,8 @@ fn source_entities_preserve_independent_definitions_and_enum_groups() {
             duplicate_value: false,
             conflicting_description: false,
             assertion_contexts: vec![],
+            overlapping_mapped_assertions: 0,
+            contained_mapped_assertions: 0,
         }],
     }];
     let groups = [LogicalEnumGroup {
