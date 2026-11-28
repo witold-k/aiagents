@@ -2231,6 +2231,21 @@ pub(super) fn parameter_definitions_from_analysis(
     parameter_definitions_with_columns(analysis, None)
 }
 
+#[cfg(test)]
+#[test]
+fn classified_parameter_columns_are_independent_of_header_names_and_order() {
+    let source = "| Meaning | Symbol |\n| --- | --- |\n| Velocity | speed |\n\nText.\n\n| Parameter | Description |\n| --- | --- |\n| legacy | Old |\n";
+    let analysis = simplelexer::tablelexer::DocumentAnalysis::parse(source);
+    let columns = std::collections::BTreeMap::from([(0, (1, 0))]);
+    let definitions = parameter_definitions_with_columns(&analysis, Some(&columns));
+    assert_eq!(definitions.len(), 1);
+    assert_eq!(definitions[0].parameter, "speed");
+    assert_eq!(definitions[0].description, "Velocity");
+    assert_eq!(definitions[0].row_line, 3);
+    assert!(parameter_definitions_with_columns(&analysis, Some(&std::collections::BTreeMap::new())).is_empty());
+    assert_eq!(parameter_definitions_from_analysis(&analysis)[0].parameter, "legacy");
+}
+
 pub(super) fn parameter_definitions_with_columns(
     analysis: &simplelexer::tablelexer::DocumentAnalysis<'_>,
     classified: Option<&std::collections::BTreeMap<usize, (usize, usize)>>,

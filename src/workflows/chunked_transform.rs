@@ -2633,7 +2633,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             "## [CHUNKED] STRUCTURAL ROLES: example={} declaration_context={} unknown={} invalid_evidence={} (candidate fact occurrences; assertion semantics unverified)",
             roles.example, roles.declaration_context, roles.unknown, roles.invalid_evidence,
         );
-        // Independent opt-in diagnostic: one bounded table sample per call.
+        // Opt-in table classification: one bounded table sample per call.
         let mut classified_inventory = None;
         let mut classified_parameter_definitions = None;
         if aifix_llm_table_roles {
@@ -2776,7 +2776,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                         member["original_source"] = mapped.unwrap_or(serde_json::Value::Null);
                     }
                 }
-                // Shadow projection: require both validated votes to agree on parameter columns.
+                // Require both validated votes to agree on parameter columns.
                 let columns = (|| {
                     if call_failed { return None; }
                     let accepted = report["accepted"].as_array()?;

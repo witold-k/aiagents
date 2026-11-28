@@ -78,3 +78,8 @@ G8: finish generic declaration/ownership discovery and retire active protocol-sh
 ## Documentation conventions
 
 Keep historical results distinct from current measurements. Label Rust validation, LLM proposals and future stages explicitly. Never infer semantic correctness from build success or a single replay.
+
+
+### 2026-11-28: active classified inventories
+
+With `AIFIX_LLM_TABLE_ROLES=1`, the resumed OpenAMIP replay reports 2 classified enum tables / 31 members and 57 classified parameter definitions, both without legacy fallback. The preceding shadow comparisons matched complete legacy inventories. After activation, 291 candidate facts, 201 parameter assertions, 78 linked assertions and 44 literal properties remain unchanged. This is checkpoint regression evidence, not a fresh extraction or independent-document validation. Enum assertion overlap remains zero; message ownership, fragmented rows and residual parameter assertion/property heuristics remain open. No additional LLM calls are required for inventory projection.

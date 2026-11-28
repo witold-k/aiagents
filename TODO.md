@@ -10,9 +10,16 @@ Build on the merged foundation. Improve completeness and structure before promot
 
 Baseline (2026-11-28, diagnostic replay): 31 enum members / 0 linked; 201 parameter assertions / 78 linked; 17 message candidates / 15 unresolved; 93 of 291 exact statement locators; 21 missing original mappings; 158 of 162 HTML rows structurally unresolved. Evidence coverage: 60 of 599 considered units, 215 skipped. These overlapping counts are not semantic completeness scores.
 
+### G8 inventory milestone (2026-11-28)
+
+- [x] Activate source-mapped enum and parameter-definition inventories under `AIFIX_LLM_TABLE_ROLES=1`, without legacy fallback.
+- [x] Replay: 31 enum members and 57 parameter definitions matched the legacy inventories; 78 parameter assertion links and 44 literal properties retained after activation.
+- [ ] Before merge: run `just rbuild` and a fresh extraction; verify inventories and inspect any differences. Independent-document validation remains open.
+- [ ] Next branch: generic message declarations, parameter assertion/property header dependencies, and logical row reconstruction. Do not treat source-backed definitions as semantically verified.
+
 ### Ordered work packages
 
-1. [ ] **Enum coverage and linking (first):** trace missing members through source inventory, extraction, rejection, grounding and linking. Distinguish absent assertions from failed associations. Preserve all 31 regression-input members; recover supported links without inventing facts or requiring fixed headers. Test unrelated enum layouts, duplicates, conflicts and ambiguous ownership.
+1. [ ] **Enum coverage and linking:** trace missing members through source inventory, extraction, rejection, grounding and linking. Distinguish absent assertions from failed associations. Preserve all 31 regression-input members; recover supported links without inventing facts or requiring fixed headers. Test unrelated enum layouts, duplicates, conflicts and ambiguous ownership.
 2. [ ] **Generic declaration discovery (G8):** identify entities and scope from source-backed table roles and declarations; retire active protocol-specific assumptions.
 3. [ ] **Logical document structure (G9):** reconstruct fragmented rows, multi-row chains and table continuations with original spans; keep ambiguous repairs hypothetical.
 4. [ ] **Extraction completeness:** classify uncovered and skipped units, rejected entries and missing locators; distinguish paraphrases from unsupported evidence; recover relevant missing facts with bounded calls.
@@ -31,7 +38,7 @@ Baseline (2026-11-28, diagnostic replay): 31 enum members / 0 linked; 201 parame
 
 ## When returning to this project
 
-1. Start with enum coverage and linking as specified in the current milestone; run `just rbuild` after code changes.
+1. Finish the G8 inventory milestone checks, then continue generic declarations and coverage work; run `just rbuild` after code changes.
 2. Triage missing exact statement locators from the supplied checkpoint by cause, without treating paraphrases as missing source evidence.
 3. Complete deterministic scoped-context transitions and document-wide definition ownership, retaining unresolved cases.
 4. Evaluate semantic field definitions against multiple independent documents before designing a verified semantic schema.
