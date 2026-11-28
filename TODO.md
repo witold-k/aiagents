@@ -4,22 +4,34 @@ This is a hobby project — the journey is the goal. This file is not intended a
 a strict roadmap. It is a reminder of interesting or necessary places to resume
 work after a pause.
 
-## Current milestone: stabilization before merge
+## Current milestone: semantic document model and coverage
 
-Feature freeze: finish validation and documentation before adding new semantic features. See [merge gates](docs/current_status.md#merge-gates).
+Build on the merged foundation. Improve completeness and structure before promoting semantic hypotheses to verified knowledge. Reuse existing artifacts and G8/G9/P6 work rather than creating parallel pipelines.
 
-- [ ] Audit all changed production paths and prompts, including stale diagnostic labels and optional failure handling.
-- [x] Relocate `tests/workflow_configuration.rs` into mirrored test locations.
-- [ ] Audit existing inline tests separately.
-- [ ] Run build, all-target tests and clippy on the final candidate; record results.
-- [ ] Run fresh comparable extraction on master and the candidate in separate output directories, with matched source/model/settings.
-- [x] Restore independent parameter inventory and validate coverage audit in checkpoint replay.
-- [ ] Record enum-link regression and evidence limitations in the merge decision; verify terminal failures and incompatible checkpoint preservation.
-- [ ] Record the merge decision and remaining limitations; no automatic PR or merge.
+Baseline (2026-11-28, diagnostic replay): 31 enum members / 0 linked; 201 parameter assertions / 78 linked; 17 message candidates / 15 unresolved; 93 of 291 exact statement locators; 21 missing original mappings; 158 of 162 HTML rows structurally unresolved. Evidence coverage: 60 of 599 considered units, 215 skipped. These overlapping counts are not semantic completeness scores.
+
+### Ordered work packages
+
+1. [ ] **Enum coverage and linking (first):** trace missing members through source inventory, extraction, rejection, grounding and linking. Distinguish absent assertions from failed associations. Preserve all 31 regression-input members; recover supported links without inventing facts or requiring fixed headers. Test unrelated enum layouts, duplicates, conflicts and ambiguous ownership.
+2. [ ] **Generic declaration discovery (G8):** identify entities and scope from source-backed table roles and declarations; retire active protocol-specific assumptions.
+3. [ ] **Logical document structure (G9):** reconstruct fragmented rows, multi-row chains and table continuations with original spans; keep ambiguous repairs hypothetical.
+4. [ ] **Extraction completeness:** classify uncovered and skipped units, rejected entries and missing locators; distinguish paraphrases from unsupported evidence; recover relevant missing facts with bounded calls.
+5. [ ] **Entity registry:** consolidate messages, parameters, enum groups and members with scoped case-sensitive identities, typed properties, units, ranges, cardinality, defaults and conditions. Preserve conflicting alternatives and provenance.
+6. [ ] **Semantic graph and references (P6.12):** resolve ownership, cross-entity references, behavior, examples and conditional/temporal relations; keep unresolved candidates explicit.
+7. [ ] **Semantic verification and IR (P6.13):** verify individual assertions against original evidence, audit coverage and conflicts, then expose a versioned consolidated model distinct from diagnostic hypotheses.
+
+### Acceptance and working rules
+
+- Use deterministic Rust for structural evidence and validation; LLMs for semantic interpretation. No corpus-specific production rules.
+- Establish comparable replay baselines; use fresh runs for extraction changes and independent documents for generality. Report counts and representative evidence, not just aggregate improvements.
+- Preserve existing facts, original spans, occurrence multiplicity, scope and uncertainty. Do not equate exact quotes or model agreement with semantic truth.
+- Never migrate checkpoints. Version incompatible changes and require a fresh run.
+- Keep changes incremental, with mirrored tests and `just rbuild` validation. Avoid unnecessary LLM calls and new standalone reports when existing models suffice.
+- Remaining stabilization checks (controlled comparison, practical failure/preservation checks, exhaustive code/prompt audit and inline-test cleanup) remain open; see [current status](docs/current_status.md).
 
 ## When returning to this project
 
-1. Run `just rbuild` and the Rust test/format/lint checks on the current branch; record any failures.
+1. Start with enum coverage and linking as specified in the current milestone; run `just rbuild` after code changes.
 2. Triage missing exact statement locators from the supplied checkpoint by cause, without treating paraphrases as missing source evidence.
 3. Complete deterministic scoped-context transitions and document-wide definition ownership, retaining unresolved cases.
 4. Evaluate semantic field definitions against multiple independent documents before designing a verified semantic schema.
