@@ -2637,6 +2637,8 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         let mut classified_inventory = None;
         if aifix_llm_table_roles {
             let mut reports = Vec::new();
+            let mut parameter_columns = std::collections::BTreeMap::new();
+            let mut contested_parameter_headers = std::collections::BTreeSet::new();
             let mut cache_hits = 0usize;
             let mut llm_calls = 0usize;
             let mut failed_calls = 0usize;
@@ -2773,6 +2775,46 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                         member["original_source"] = mapped.unwrap_or(serde_json::Value::Null);
                     }
                 }
+                // Shadow projection: require both validated votes to agree on parameter columns.
+                let columns = (|| {
+                    if call_failed { return None; }
+                    let accepted = report["accepted"].as_array()?;
+                    if accepted.len() != 2 { return None; }
+                    let mut agreed = None;
+                    for vote in accepted {
+                        let h = &vote["hypothesis"];
+                        if h["entity_kind"].as_str() != Some("parameter")
+                            || h["row_structure"].as_str() != Some("independent")
+                            || !matches!(h["role"].as_str(), Some("entity_declarations" | "properties"))
+                        { return None; }
+                        let unique = |role: &str| {
+                            let mut cols = h["columns"].as_array()?.iter().filter(|c| c["role"].as_str() == Some(role));
+                            let index = usize::try_from(cols.next()?["index"].as_u64()?).ok()?;
+                            cols.next().is_none().then_some(index)
+                        };
+                        let pair = (unique("identifier")?, unique("description")?);
+                        if pair.0 == pair.1 || agreed.is_some_and(|old| old != pair) { return None; }
+                        agreed = Some(pair);
+                    }
+                    let header = table.rows.first()?;
+                    let quote = masked_source.get(header.span.start..header.span.end)?;
+                    let (begin, end, _) = message_identity::original_source_span(
+                        &source_analysis, &normalized_tables, &pre_normalized, header.span.start, quote,
+                    ).ok()?;
+                    let (original_table, original_row) = source_analysis.source_row_at(begin)?;
+                    if original_table.rows.first()?.span.start != begin || original_row.span.end != end
+                        || !original_row.cells.iter().map(|c| c.text.as_ref()).eq(header.cells.iter().map(|c| c.text.as_ref()))
+                    { return None; }
+                    Some((begin, agreed?))
+                })();
+                if let Some((header, pair)) = columns
+                    && !contested_parameter_headers.contains(&header)
+                    && parameter_columns.insert(header, pair).is_some()
+                {
+                    parameter_columns.remove(&header);
+                    contested_parameter_headers.insert(header);
+                }
+                report["classified_parameter_columns"] = serde_json::json!(columns);
                 report["call_failed"] = serde_json::json!(call_failed);
                 report["call_error"] = serde_json::json!(call_error);
                 report["status"] = serde_json::json!(if call_failed { "call_failed" } else { "completed" });
@@ -2783,15 +2825,22 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             println!("## [CHUNKED] ENUM INVENTORY SOURCE: classified tables={} members={} (no legacy fallback)",
                 inventory.len(), inventory.iter().map(|table| table.members.len()).sum::<usize>());
             classified_inventory = Some(inventory);
+            let classified_parameters = message_identity::parameter_definitions_with_columns(&source_analysis, Some(&parameter_columns));
+            let legacy_parameters = message_identity::parameter_definitions_from_analysis(&source_analysis);
+            let missing: Vec<_> = legacy_parameters.iter().filter(|d| !classified_parameters.contains(d)).collect();
+            let added: Vec<_> = classified_parameters.iter().filter(|d| !legacy_parameters.contains(d)).collect();
+            println!("## [CHUNKED] PARAMETER CLASSIFICATION SHADOW: legacy={} classified={} missing={} added={}",
+                legacy_parameters.len(), classified_parameters.len(), missing.len(), added.len());
             let path = format!("{output}.table-roles.json");
-            let report = serde_json::json!({"schema_version": 1, "diagnostic_only": true,
+            let report = serde_json::json!({"schema_version": 1, "diagnostic_only": false,
+                "parameter_shadow": {"definitions": classified_parameters, "missing": missing, "added": added},
                 "coordinate_space": "normalized_masked_source", "sample_row_limit": 12,
                 "cache_hits": cache_hits, "llm_calls": llm_calls, "failed_calls": failed_calls,
                 "tables": reports});
             if let Err(err) = fs::write(&path, serde_json::to_vec_pretty(&report).expect("serialize table roles")) {
                 eprintln!("## [CHUNKED] TABLE ROLES: {err}");
             } else {
-                println!("## [CHUNKED] TABLE ROLES: wrote {path:?} (diagnostic only)");
+                println!("## [CHUNKED] TABLE ROLES: wrote {path:?} (enum active; parameter shadow)");
             }
             if let Some(err) = fatal_call_error {
                 return WorkflowResult::LlmCallResult(err);

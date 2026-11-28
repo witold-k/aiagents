@@ -2228,6 +2228,13 @@ pub(super) fn parameter_definitions(document: &str) -> Vec<ParameterDefinition> 
 pub(super) fn parameter_definitions_from_analysis(
     analysis: &simplelexer::tablelexer::DocumentAnalysis<'_>,
 ) -> Vec<ParameterDefinition> {
+    parameter_definitions_with_columns(analysis, None)
+}
+
+pub(super) fn parameter_definitions_with_columns(
+    analysis: &simplelexer::tablelexer::DocumentAnalysis<'_>,
+    classified: Option<&std::collections::BTreeMap<usize, (usize, usize)>>,
+) -> Vec<ParameterDefinition> {
     let document = analysis.source;
     let tree = super::source_tree::SourceTree::from_analysis(analysis);
     let lines: Vec<_> = document.lines().collect();
@@ -2254,11 +2261,12 @@ pub(super) fn parameter_definitions_from_analysis(
             let (index, _) = matches.next()?;
             matches.next().is_none().then_some(index)
         };
-        let (Some(name), Some(description)) =
-            (unique_column("parameter"), unique_column("description"))
-        else {
-            continue;
+        let columns = if let Some(classified) = classified {
+            classified.get(&offsets[header.line]).copied()
+        } else {
+            unique_column("parameter").zip(unique_column("description"))
         };
+        let Some((name, description)) = columns else { continue; };
         // Keep the conservative evidence policy. Do not interpret
         // escaped pipes or inline code containing pipes as verified columns.
         if lines[header.line].contains('\\') || lines[header.line].contains('`') {
