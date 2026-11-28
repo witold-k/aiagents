@@ -865,7 +865,16 @@ pub(super) fn classified_enum_rows(
     }
     let mut members = Vec::new();
     let mut unresolved = Vec::new();
-    for row in rows.iter().skip(1) {
+    for (index, row) in rows.iter().enumerate().skip(1) {
+        // A Markdown alignment separator belongs immediately after the header.
+        if index == 1 && row.cells.len() == width && row.cells.iter().all(|cell| {
+            let marker = cell.trim();
+            let marker = marker.strip_prefix(':').unwrap_or(marker);
+            let marker = marker.strip_suffix(':').unwrap_or(marker);
+            marker.len() >= 3 && marker.bytes().all(|byte| byte == b'-')
+        }) {
+            continue;
+        }
         if row.cells.len() != width || row.cells[value].trim().is_empty()
             || row.cells[description].trim().is_empty()
         {
