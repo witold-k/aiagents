@@ -2635,6 +2635,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         );
         // Independent opt-in diagnostic: one bounded table sample per call.
         let mut classified_inventory = None;
+        let mut classified_parameter_definitions = None;
         if aifix_llm_table_roles {
             let mut reports = Vec::new();
             let mut parameter_columns = std::collections::BTreeMap::new();
@@ -2826,21 +2827,19 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 inventory.len(), inventory.iter().map(|table| table.members.len()).sum::<usize>());
             classified_inventory = Some(inventory);
             let classified_parameters = message_identity::parameter_definitions_with_columns(&source_analysis, Some(&parameter_columns));
-            let legacy_parameters = message_identity::parameter_definitions_from_analysis(&source_analysis);
-            let missing: Vec<_> = legacy_parameters.iter().filter(|d| !classified_parameters.contains(d)).collect();
-            let added: Vec<_> = classified_parameters.iter().filter(|d| !legacy_parameters.contains(d)).collect();
-            println!("## [CHUNKED] PARAMETER CLASSIFICATION SHADOW: legacy={} classified={} missing={} added={}",
-                legacy_parameters.len(), classified_parameters.len(), missing.len(), added.len());
+            println!("## [CHUNKED] PARAMETER INVENTORY SOURCE: classified definitions={} (no legacy fallback)", classified_parameters.len());
             let path = format!("{output}.table-roles.json");
             let report = serde_json::json!({"schema_version": 1, "diagnostic_only": false,
-                "parameter_shadow": {"definitions": classified_parameters, "missing": missing, "added": added},
+                "parameter_inventory_source": "classified",
+                "parameter_definition_count": classified_parameters.len(),
                 "coordinate_space": "normalized_masked_source", "sample_row_limit": 12,
                 "cache_hits": cache_hits, "llm_calls": llm_calls, "failed_calls": failed_calls,
                 "tables": reports});
+            classified_parameter_definitions = Some(classified_parameters);
             if let Err(err) = fs::write(&path, serde_json::to_vec_pretty(&report).expect("serialize table roles")) {
                 eprintln!("## [CHUNKED] TABLE ROLES: {err}");
             } else {
-                println!("## [CHUNKED] TABLE ROLES: wrote {path:?} (enum active; parameter shadow)");
+                println!("## [CHUNKED] TABLE ROLES: wrote {path:?} (enum and parameter inventories active)");
             }
             if let Some(err) = fatal_call_error {
                 return WorkflowResult::LlmCallResult(err);
@@ -3044,8 +3043,10 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             "## [CHUNKED] P4 PARAMETER INVENTORY: {} distinct source-backed parameter assertions; separate from message identity, not published",
             parameter_inventory.len()
         );
-        let parameter_definitions =
-            message_identity::parameter_definitions_from_analysis(&source_analysis);
+        let parameter_definitions = classified_parameter_definitions.unwrap_or_else(|| {
+            println!("## [CHUNKED] PARAMETER INVENTORY SOURCE: legacy (table classification disabled)");
+            message_identity::parameter_definitions_from_analysis(&source_analysis)
+        });
         println!(
             "## [CHUNKED] PARAMETER DEFINITIONS: {} explicit original-source table rows (no message ownership inferred)",
             parameter_definitions.len()
