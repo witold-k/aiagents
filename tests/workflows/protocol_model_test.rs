@@ -511,6 +511,20 @@ fn source_entities_preserve_independent_definitions_and_enum_groups() {
     );
     assert_eq!(entities["enum_tables"][0]["members"][0]["value"], "1");
     assert_eq!(
+        entities["literal_enum_mappings"],
+        serde_json::json!([{
+            "member_id": "enum_member:100:120",
+            "table_header_offset": 100,
+            "row_start": 120,
+            "row_end": 130,
+            "value": "1",
+            "description": "Ready",
+            "duplicate_value": false,
+            "conflicting_description": false,
+            "status": "literal_source_mapping"
+        }])
+    );
+    assert_eq!(
         entities["logical_enum_groups"][0]["physical_header_offsets"][0],
         100
     );
