@@ -822,3 +822,65 @@ pub(super) fn agreed_message_declaration_column(
     }
     agreed
 }
+
+
+/// Project a complete physical table only when all attempts agree on the
+/// enumeration columns and independent rows. Keep literal cells unchanged.
+pub(super) fn classified_enum_rows(
+    table_start: usize,
+    sample: &[RowEvidence],
+    rows: &[RowEvidence],
+    responses: &[String],
+) -> Option<serde_json::Value> {
+    if responses.len() < 2 || sample.is_empty() || rows.len() < 2 {
+        return None;
+    }
+    let mut agreed = None;
+    for response in responses {
+        let proposal: TableRoleHypothesis = serde_json::from_str(
+            crate::utils::stringutils::strip_code_fences(response.trim()).trim(),
+        ).ok()?;
+        if !validate_table_role(&proposal, table_start, sample)
+            || proposal.role != "enumeration"
+            || proposal.row_structure.as_deref() != Some("independent")
+        {
+            return None;
+        }
+        let unique_column = |role: &str| {
+            let mut columns = proposal.columns.iter().filter(|c| c.role == role);
+            let index = columns.next()?.index;
+            columns.next().is_none().then_some(index)
+        };
+        let value = unique_column("identifier").or_else(|| unique_column("value"))?;
+        let description = unique_column("description")?;
+        if value == description || agreed.is_some_and(|previous| previous != (value, description)) {
+            return None;
+        }
+        agreed = Some((value, description));
+    }
+    let (value, description) = agreed?;
+    let width = rows.first()?.cells.len();
+    if value >= width || description >= width {
+        return None;
+    }
+    let mut members = Vec::new();
+    let mut unresolved = Vec::new();
+    for row in rows.iter().skip(1) {
+        if row.cells.len() != width || row.cells[value].trim().is_empty()
+            || row.cells[description].trim().is_empty()
+        {
+            unresolved.push(row.start);
+            continue;
+        }
+        members.push(serde_json::json!({
+            "row_start": row.start, "value": row.cells[value],
+            "description": row.cells[description], "cells": row.cells
+        }));
+    }
+    Some(serde_json::json!({
+        "table_start": table_start, "value_column": value,
+        "description_column": description, "members": members,
+        "unresolved_rows": unresolved, "status": "classified_literal_rows",
+        "semantic_verified": false, "coordinate_space": "normalized_masked_source"
+    }))
+}
