@@ -2687,6 +2687,13 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 .filter(|member| member.assertion_contexts.is_empty())
                 .count(),
         );
+        let enum_members = table_roles.enum_inventory.iter().flat_map(|table| &table.members);
+        println!(
+            "## [CHUNKED] ENUM COVERAGE: no_mapped_overlap={} overlap_without_containment={} contained_without_link={} (positional evidence only)",
+            enum_members.clone().filter(|member| member.overlapping_mapped_assertions == 0).count(),
+            enum_members.clone().filter(|member| member.overlapping_mapped_assertions > 0 && member.contained_mapped_assertions == 0).count(),
+            enum_members.filter(|member| member.contained_mapped_assertions > 0 && member.assertion_contexts.is_empty()).count(),
+        );
         let html_grids = message_identity::html_grid_inventory(&source_analysis);
         let mut states = std::collections::BTreeMap::<String, usize>::new();
         let mut grid_rows = 0;
