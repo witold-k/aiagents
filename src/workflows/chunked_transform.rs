@@ -3604,7 +3604,10 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 report["classified_enum_rows"] = llm_structure::classified_enum_rows(
                     table.span.start, &rows, &all_rows, &responses,
                 ).unwrap_or(serde_json::Value::Null);
-                if let Some(members) = report["classified_enum_rows"]["members"].as_array_mut() {
+                if let Some(members) = report.get_mut("classified_enum_rows")
+                    .and_then(|classified| classified.get_mut("members"))
+                    .and_then(serde_json::Value::as_array_mut)
+                {
                     for member in members {
                         let mapped = (|| {
                             let start = usize::try_from(member["row_start"].as_u64()?).ok()?;
