@@ -3604,6 +3604,35 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 report["classified_enum_rows"] = llm_structure::classified_enum_rows(
                     table.span.start, &rows, &all_rows, &responses,
                 ).unwrap_or(serde_json::Value::Null);
+                if let Some(members) = report["classified_enum_rows"]["members"].as_array_mut() {
+                    for member in members {
+                        let mapped = (|| {
+                            let start = usize::try_from(member["row_start"].as_u64()?).ok()?;
+                            let mut rows = table.rows.iter().filter(|row| row.span.start == start);
+                            let row = rows.next()?;
+                            if rows.next().is_some() { return None; }
+                            let quote = masked_source.get(row.span.clone())?;
+                            let (begin, end, _) = message_identity::original_source_span(
+                                &source_analysis, &normalized_tables, &pre_normalized, start, quote,
+                            ).ok()?;
+                            let (original_table, original_row) = source_analysis.source_row_at(begin)?;
+                            if original_row.span.start != begin || original_row.span.end != end {
+                                return None;
+                            }
+                            let cells: Vec<_> = original_row.cells.iter().map(|cell| cell.text.to_string()).collect();
+                            if serde_json::json!(cells) != member["cells"] {
+                                return None;
+                            }
+                            let header = original_table.rows.first()?.span.start;
+                            Some(serde_json::json!({
+                                "table_header_offset": header, "row_start": begin, "row_end": end,
+                                "member_id": format!("enum_member:{header}:{begin}"),
+                                "coordinate_space": "original_source_utf8_bytes"
+                            }))
+                        })();
+                        member["original_source"] = mapped.unwrap_or(serde_json::Value::Null);
+                    }
+                }
                 report["call_failed"] = serde_json::json!(call_failed);
                 report["call_error"] = serde_json::json!(call_error);
                 report["status"] = serde_json::json!(if call_failed { "call_failed" } else { "completed" });
