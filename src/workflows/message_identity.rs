@@ -1799,6 +1799,80 @@ fn table_context_kind(headers: &[&str], cells: &[&str]) -> &'static str {
     "other"
 }
 
+/// Use fully mapped classified tables while retaining the legacy inventory for
+/// tables without a complete, compatible classification.
+pub(super) fn classified_enum_inventory(
+    analysis: &simplelexer::tablelexer::DocumentAnalysis,
+    reports: &[serde_json::Value],
+) -> Vec<EnumTable> {
+    let mut inventory = enum_inventory(analysis);
+    for report in reports {
+        if report["status"].as_str() != Some("completed") {
+            continue;
+        }
+        let Some(rows) = report["classified_enum_rows"]["members"].as_array() else {
+            continue;
+        };
+        let mapped = (|| {
+            let mut members = Vec::new();
+            let mut header = None;
+            for row in rows {
+                let source = &row["original_source"];
+                let offset = usize::try_from(source["table_header_offset"].as_u64()?).ok()?;
+                let start = usize::try_from(source["row_start"].as_u64()?).ok()?;
+                let end = usize::try_from(source["row_end"].as_u64()?).ok()?;
+                if header.is_some_and(|previous| previous != offset) {
+                    return None;
+                }
+                header = Some(offset);
+                let (table, original) = analysis.source_row_at(start)?;
+                if table.rows.first()?.span.start != offset
+                    || original.span.start != start || original.span.end != end
+                    || members.iter().any(|m: &EnumMember| m.row_start == start)
+                {
+                    return None;
+                }
+                let value = row["value"].as_str()?.trim().to_owned();
+                let description = row["description"].as_str()?.trim().to_owned();
+                members.push(EnumMember {
+                    value, description, row_start: start, row_end: end,
+                    duplicate_value: false, conflicting_description: false,
+                    assertion_contexts: Vec::new(),
+                    overlapping_mapped_assertions: 0, contained_mapped_assertions: 0,
+                });
+            }
+            Some(EnumTable { header_offset: header?, members })
+        })();
+        let Some(mut table) = mapped else { continue; };
+        // Do not lose or change previously retained evidence during migration.
+        if let Some(old) = inventory.iter().find(|old| old.header_offset == table.header_offset)
+            && !old.members.iter().all(|old| table.members.iter().any(|new|
+                old.row_start == new.row_start && old.row_end == new.row_end
+                    && old.value == new.value && old.description == new.description))
+        {
+            continue;
+        }
+        let mut values = std::collections::BTreeMap::<String, (usize, String, bool)>::new();
+        for member in &table.members {
+            let entry = values.entry(member.value.trim_start_matches('0').to_owned())
+                .or_insert_with(|| (0, member.description.clone(), false));
+            entry.0 += 1;
+            entry.2 |= entry.1 != member.description;
+        }
+        for member in &mut table.members {
+            if let Some((count, _, conflict)) = values.get(member.value.trim_start_matches('0')) {
+                member.duplicate_value = *count > 1;
+                member.conflicting_description = *conflict;
+            }
+        }
+        table.members.sort_by_key(|member| member.row_start);
+        inventory.retain(|old| old.header_offset != table.header_offset);
+        inventory.push(table);
+    }
+    inventory.sort_by_key(|table| table.header_offset);
+    inventory
+}
+
 pub(super) fn original_table_role_stats(
     candidates: &[MessageCandidate],
     sources: &[&str],
@@ -1808,8 +1882,24 @@ pub(super) fn original_table_role_stats(
     analysis: &simplelexer::tablelexer::DocumentAnalysis,
     pre_normalized: &str,
 ) -> OriginalTableRoleStats {
+    original_table_role_stats_with_inventory(
+        candidates, sources, starts, document, normalized, analysis, pre_normalized,
+        enum_inventory(analysis),
+    )
+}
+
+pub(super) fn original_table_role_stats_with_inventory(
+    candidates: &[MessageCandidate],
+    sources: &[&str],
+    starts: &[usize],
+    document: &str,
+    normalized: &simplelexer::tablelexer::NormalizedTableText,
+    analysis: &simplelexer::tablelexer::DocumentAnalysis,
+    pre_normalized: &str,
+    enum_inventory: Vec<EnumTable>,
+) -> OriginalTableRoleStats {
     let mut stats = OriginalTableRoleStats {
-        enum_inventory: enum_inventory(analysis),
+        enum_inventory,
         ..Default::default()
     };
     for candidate in candidates {

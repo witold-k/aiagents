@@ -2634,6 +2634,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             roles.example, roles.declaration_context, roles.unknown, roles.invalid_evidence,
         );
         // Independent opt-in diagnostic: one bounded table sample per call.
+        let mut classified_inventory = None;
         if aifix_llm_table_roles {
             let mut reports = Vec::new();
             let mut cache_hits = 0usize;
@@ -2778,6 +2779,9 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 reports.push(report);
                 if call_failed { stopped = true; }
             }
+            classified_inventory = Some(message_identity::classified_enum_inventory(
+                &source_analysis, &reports,
+            ));
             let path = format!("{output}.table-roles.json");
             let report = serde_json::json!({"schema_version": 1, "diagnostic_only": true,
                 "coordinate_space": "normalized_masked_source", "sample_row_limit": 12,
@@ -2792,15 +2796,18 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 return WorkflowResult::LlmCallResult(err);
             }
         }
-        let table_roles = message_identity::original_table_role_stats(
-            &checkpoint.candidates,
-            &source_windows,
-            &source_starts,
-            &masked_source,
-            &normalized_tables,
-            &source_analysis,
-            &pre_normalized,
-        );
+        let table_roles = if let Some(inventory) = classified_inventory {
+            message_identity::original_table_role_stats_with_inventory(
+                &checkpoint.candidates, &source_windows, &source_starts,
+                &masked_source, &normalized_tables, &source_analysis, &pre_normalized,
+                inventory,
+            )
+        } else {
+            message_identity::original_table_role_stats(
+                &checkpoint.candidates, &source_windows, &source_starts,
+                &masked_source, &normalized_tables, &source_analysis, &pre_normalized,
+            )
+        };
         println!(
             "## [CHUNKED] ORIGINAL TABLE ROLES: parameter_row={} enum_member_candidate={} key_value_row={} other_table_row={} outside_table={} unmapped={} (candidate fact occurrences; context only)",
             table_roles.parameter_row,
