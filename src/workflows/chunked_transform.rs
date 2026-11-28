@@ -2633,6 +2633,165 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             "## [CHUNKED] STRUCTURAL ROLES: example={} declaration_context={} unknown={} invalid_evidence={} (candidate fact occurrences; assertion semantics unverified)",
             roles.example, roles.declaration_context, roles.unknown, roles.invalid_evidence,
         );
+        // Independent opt-in diagnostic: one bounded table sample per call.
+        if aifix_llm_table_roles {
+            let mut reports = Vec::new();
+            let mut cache_hits = 0usize;
+            let mut llm_calls = 0usize;
+            let mut failed_calls = 0usize;
+            let mut stopped = false;
+            let mut fatal_call_error = None;
+            let output = std::env::var("AIFIX_COVERAGE_AUDIT_JSON")
+                .unwrap_or_else(|_| "coverage-audit.json".to_owned());
+            let cache_dir = std::path::PathBuf::from(format!("{output}.table-role-cache"));
+            let cache_model = std::env::var("AIFIX_ASSERTION_CACHE_MODEL").ok()
+                .filter(|model| !model.trim().is_empty());
+            for block in &table_analysis.blocks {
+                let simplelexer::tablelexer::DocumentChunk::Table(table) = block else {
+                    continue;
+                };
+                if stopped {
+                    reports.push(serde_json::json!({"table_start": table.span.start, "status": "skipped_after_call_failure"}));
+                    continue;
+                }
+                let rows: Vec<_> = table.rows.iter().take(12).map(|row| llm_structure::RowEvidence {
+                    line: crate::utils::stringutils::line_index_at_byte_offset(&masked_source, row.span.start).unwrap_or(0) + 1,
+                    start: row.span.start,
+                    previous: None,
+                    next: None,
+                    cells: row.cells.iter().map(|cell| cell.text.to_string()).collect(),
+                }).collect();
+                if rows.is_empty() {
+                    reports.push(serde_json::json!({"table_start": table.span.start, "status": "empty_table"}));
+                    continue;
+                }
+                let context = masked_source[..table.span.start].lines().rev()
+                    .find(|line| line.trim_start().starts_with('#')).unwrap_or("");
+                let prompt = llm_structure::table_role_prompt(table.span.start, context, &rows);
+                if prompt.len() > 24000 {
+                    reports.push(serde_json::json!({"table_start": table.span.start, "status": "sample_too_large"}));
+                    continue;
+                }
+                let mut responses = Vec::new();
+                let mut call_failed = false;
+                let mut call_error = None;
+                for attempt in 0..2 {
+                    let cache_key = cache_model.as_ref().map(|model| serde_json::json!({
+                        "version": 1, "model": model, "prompt": prompt, "attempt": attempt,
+                        "temperature": 0.2, "max_tokens": self.llm_call.max_tokens().min(1024)
+                    }));
+                    let cache_path = cache_dir.join(format!("{}-{attempt}.json", table.span.start));
+                    if let Some(key) = &cache_key
+                        && let Ok(bytes) = fs::read(&cache_path)
+                        && let Ok(entry) = serde_json::from_slice::<serde_json::Value>(&bytes)
+                        && entry["key"] == *key
+                        && let Some(response) = entry["response"].as_str()
+                    {
+                        let check = llm_structure::table_role_report(table.span.start, &rows, &[response.to_owned()]);
+                        if check["accepted"].as_array().is_some_and(|items| !items.is_empty()) {
+                            cache_hits += 1;
+                            responses.push(response.to_owned());
+                            continue;
+                        }
+                    }
+                    llm_calls += 1;
+                    match self.llm_call.run_text_step_limited_with_temperature(
+                        &prompt, "Return only the requested JSON object.",
+                        self.llm_call.max_tokens().min(1024), 0.2,
+                    ) {
+                        Ok(response) => {
+                            let check = llm_structure::table_role_report(table.span.start, &rows, std::slice::from_ref(&response));
+                            if let Some(key) = cache_key
+                                && check["accepted"].as_array().is_some_and(|items| !items.is_empty())
+                            {
+                                let entry = serde_json::json!({"key": key, "response": response});
+                                let temp = cache_path.with_extension("tmp");
+                                if let Err(err) = fs::create_dir_all(&cache_dir)
+                                    .and_then(|_| fs::write(&temp, entry.to_string()))
+                                    .and_then(|_| fs::rename(&temp, &cache_path))
+                                {
+                                    eprintln!("## [CHUNKED] TABLE ROLE CACHE: {err}");
+                                }
+                            }
+                            responses.push(response);
+                        },
+                        Err(err) => {
+                            call_failed = true;
+                            failed_calls += 1;
+                            let detail = err.to_string();
+                            eprintln!("## [CHUNKED] TABLE ROLES: LLM call failed: {detail}");
+                            fatal_call_error = Some(err);
+                            call_error = Some(detail);
+                            break;
+                        }
+                    }
+                }
+                let mut report = llm_structure::table_role_report(table.span.start, &rows, &responses);
+                report["message_declaration_column_candidate"] = serde_json::json!(
+                    llm_structure::agreed_message_declaration_column(table.span.start, &rows, &responses)
+                );
+                let all_rows: Vec<_> = table.rows.iter().map(|row| llm_structure::RowEvidence {
+                    line: crate::utils::stringutils::line_index_at_byte_offset(&masked_source, row.span.start).unwrap_or(0) + 1,
+                    start: row.span.start,
+                    previous: None,
+                    next: None,
+                    cells: row.cells.iter().map(|cell| cell.text.to_string()).collect(),
+                }).collect();
+                report["classified_enum_rows"] = llm_structure::classified_enum_rows(
+                    table.span.start, &rows, &all_rows, &responses,
+                ).unwrap_or(serde_json::Value::Null);
+                if let Some(members) = report.get_mut("classified_enum_rows")
+                    .and_then(|classified| classified.get_mut("members"))
+                    .and_then(serde_json::Value::as_array_mut)
+                {
+                    for member in members {
+                        let mapped = (|| {
+                            let start = usize::try_from(member["row_start"].as_u64()?).ok()?;
+                            let mut rows = table.rows.iter().filter(|row| row.span.start == start);
+                            let row = rows.next()?;
+                            if rows.next().is_some() { return None; }
+                            let quote = masked_source.get(row.span.start..row.span.end)?;
+                            let (begin, end, _) = message_identity::original_source_span(
+                                &source_analysis, &normalized_tables, &pre_normalized, start, quote,
+                            ).ok()?;
+                            let (original_table, original_row) = source_analysis.source_row_at(begin)?;
+                            if original_row.span.start != begin || original_row.span.end != end {
+                                return None;
+                            }
+                            let cells: Vec<_> = original_row.cells.iter().map(|cell| cell.text.to_string()).collect();
+                            if serde_json::json!(cells) != member["cells"] {
+                                return None;
+                            }
+                            let header = original_table.rows.first()?.span.start;
+                            Some(serde_json::json!({
+                                "table_header_offset": header, "row_start": begin, "row_end": end,
+                                "member_id": format!("enum_member:{header}:{begin}"),
+                                "coordinate_space": "original_source_utf8_bytes"
+                            }))
+                        })();
+                        member["original_source"] = mapped.unwrap_or(serde_json::Value::Null);
+                    }
+                }
+                report["call_failed"] = serde_json::json!(call_failed);
+                report["call_error"] = serde_json::json!(call_error);
+                report["status"] = serde_json::json!(if call_failed { "call_failed" } else { "completed" });
+                reports.push(report);
+                if call_failed { stopped = true; }
+            }
+            let path = format!("{output}.table-roles.json");
+            let report = serde_json::json!({"schema_version": 1, "diagnostic_only": true,
+                "coordinate_space": "normalized_masked_source", "sample_row_limit": 12,
+                "cache_hits": cache_hits, "llm_calls": llm_calls, "failed_calls": failed_calls,
+                "tables": reports});
+            if let Err(err) = fs::write(&path, serde_json::to_vec_pretty(&report).expect("serialize table roles")) {
+                eprintln!("## [CHUNKED] TABLE ROLES: {err}");
+            } else {
+                println!("## [CHUNKED] TABLE ROLES: wrote {path:?} (diagnostic only)");
+            }
+            if let Some(err) = fatal_call_error {
+                return WorkflowResult::LlmCallResult(err);
+            }
+        }
         let table_roles = message_identity::original_table_role_stats(
             &checkpoint.candidates,
             &source_windows,
@@ -3496,165 +3655,6 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 "## [CHUNKED] REMAINING OUTSIDE LEXER TABLE: line={} (separate investigation; no table relation inferred)",
                 line,
             );
-        }
-        // Independent opt-in diagnostic: one bounded table sample per call.
-        if aifix_llm_table_roles {
-            let mut reports = Vec::new();
-            let mut cache_hits = 0usize;
-            let mut llm_calls = 0usize;
-            let mut failed_calls = 0usize;
-            let mut stopped = false;
-            let mut fatal_call_error = None;
-            let output = std::env::var("AIFIX_COVERAGE_AUDIT_JSON")
-                .unwrap_or_else(|_| "coverage-audit.json".to_owned());
-            let cache_dir = std::path::PathBuf::from(format!("{output}.table-role-cache"));
-            let cache_model = std::env::var("AIFIX_ASSERTION_CACHE_MODEL").ok()
-                .filter(|model| !model.trim().is_empty());
-            for block in &table_analysis.blocks {
-                let simplelexer::tablelexer::DocumentChunk::Table(table) = block else {
-                    continue;
-                };
-                if stopped {
-                    reports.push(serde_json::json!({"table_start": table.span.start, "status": "skipped_after_call_failure"}));
-                    continue;
-                }
-                let rows: Vec<_> = table.rows.iter().take(12).map(|row| llm_structure::RowEvidence {
-                    line: crate::utils::stringutils::line_index_at_byte_offset(&masked_source, row.span.start).unwrap_or(0) + 1,
-                    start: row.span.start,
-                    previous: None,
-                    next: None,
-                    cells: row.cells.iter().map(|cell| cell.text.to_string()).collect(),
-                }).collect();
-                if rows.is_empty() {
-                    reports.push(serde_json::json!({"table_start": table.span.start, "status": "empty_table"}));
-                    continue;
-                }
-                let context = masked_source[..table.span.start].lines().rev()
-                    .find(|line| line.trim_start().starts_with('#')).unwrap_or("");
-                let prompt = llm_structure::table_role_prompt(table.span.start, context, &rows);
-                if prompt.len() > 24000 {
-                    reports.push(serde_json::json!({"table_start": table.span.start, "status": "sample_too_large"}));
-                    continue;
-                }
-                let mut responses = Vec::new();
-                let mut call_failed = false;
-                let mut call_error = None;
-                for attempt in 0..2 {
-                    let cache_key = cache_model.as_ref().map(|model| serde_json::json!({
-                        "version": 1, "model": model, "prompt": prompt, "attempt": attempt,
-                        "temperature": 0.2, "max_tokens": self.llm_call.max_tokens().min(1024)
-                    }));
-                    let cache_path = cache_dir.join(format!("{}-{attempt}.json", table.span.start));
-                    if let Some(key) = &cache_key
-                        && let Ok(bytes) = fs::read(&cache_path)
-                        && let Ok(entry) = serde_json::from_slice::<serde_json::Value>(&bytes)
-                        && entry["key"] == *key
-                        && let Some(response) = entry["response"].as_str()
-                    {
-                        let check = llm_structure::table_role_report(table.span.start, &rows, &[response.to_owned()]);
-                        if check["accepted"].as_array().is_some_and(|items| !items.is_empty()) {
-                            cache_hits += 1;
-                            responses.push(response.to_owned());
-                            continue;
-                        }
-                    }
-                    llm_calls += 1;
-                    match self.llm_call.run_text_step_limited_with_temperature(
-                        &prompt, "Return only the requested JSON object.",
-                        self.llm_call.max_tokens().min(1024), 0.2,
-                    ) {
-                        Ok(response) => {
-                            let check = llm_structure::table_role_report(table.span.start, &rows, std::slice::from_ref(&response));
-                            if let Some(key) = cache_key
-                                && check["accepted"].as_array().is_some_and(|items| !items.is_empty())
-                            {
-                                let entry = serde_json::json!({"key": key, "response": response});
-                                let temp = cache_path.with_extension("tmp");
-                                if let Err(err) = fs::create_dir_all(&cache_dir)
-                                    .and_then(|_| fs::write(&temp, entry.to_string()))
-                                    .and_then(|_| fs::rename(&temp, &cache_path))
-                                {
-                                    eprintln!("## [CHUNKED] TABLE ROLE CACHE: {err}");
-                                }
-                            }
-                            responses.push(response);
-                        },
-                        Err(err) => {
-                            call_failed = true;
-                            failed_calls += 1;
-                            let detail = err.to_string();
-                            eprintln!("## [CHUNKED] TABLE ROLES: LLM call failed: {detail}");
-                            fatal_call_error = Some(err);
-                            call_error = Some(detail);
-                            break;
-                        }
-                    }
-                }
-                let mut report = llm_structure::table_role_report(table.span.start, &rows, &responses);
-                report["message_declaration_column_candidate"] = serde_json::json!(
-                    llm_structure::agreed_message_declaration_column(table.span.start, &rows, &responses)
-                );
-                let all_rows: Vec<_> = table.rows.iter().map(|row| llm_structure::RowEvidence {
-                    line: crate::utils::stringutils::line_index_at_byte_offset(&masked_source, row.span.start).unwrap_or(0) + 1,
-                    start: row.span.start,
-                    previous: None,
-                    next: None,
-                    cells: row.cells.iter().map(|cell| cell.text.to_string()).collect(),
-                }).collect();
-                report["classified_enum_rows"] = llm_structure::classified_enum_rows(
-                    table.span.start, &rows, &all_rows, &responses,
-                ).unwrap_or(serde_json::Value::Null);
-                if let Some(members) = report.get_mut("classified_enum_rows")
-                    .and_then(|classified| classified.get_mut("members"))
-                    .and_then(serde_json::Value::as_array_mut)
-                {
-                    for member in members {
-                        let mapped = (|| {
-                            let start = usize::try_from(member["row_start"].as_u64()?).ok()?;
-                            let mut rows = table.rows.iter().filter(|row| row.span.start == start);
-                            let row = rows.next()?;
-                            if rows.next().is_some() { return None; }
-                            let quote = masked_source.get(row.span.start..row.span.end)?;
-                            let (begin, end, _) = message_identity::original_source_span(
-                                &source_analysis, &normalized_tables, &pre_normalized, start, quote,
-                            ).ok()?;
-                            let (original_table, original_row) = source_analysis.source_row_at(begin)?;
-                            if original_row.span.start != begin || original_row.span.end != end {
-                                return None;
-                            }
-                            let cells: Vec<_> = original_row.cells.iter().map(|cell| cell.text.to_string()).collect();
-                            if serde_json::json!(cells) != member["cells"] {
-                                return None;
-                            }
-                            let header = original_table.rows.first()?.span.start;
-                            Some(serde_json::json!({
-                                "table_header_offset": header, "row_start": begin, "row_end": end,
-                                "member_id": format!("enum_member:{header}:{begin}"),
-                                "coordinate_space": "original_source_utf8_bytes"
-                            }))
-                        })();
-                        member["original_source"] = mapped.unwrap_or(serde_json::Value::Null);
-                    }
-                }
-                report["call_failed"] = serde_json::json!(call_failed);
-                report["call_error"] = serde_json::json!(call_error);
-                report["status"] = serde_json::json!(if call_failed { "call_failed" } else { "completed" });
-                reports.push(report);
-                if call_failed { stopped = true; }
-            }
-            let path = format!("{output}.table-roles.json");
-            let report = serde_json::json!({"schema_version": 1, "diagnostic_only": true,
-                "coordinate_space": "normalized_masked_source", "sample_row_limit": 12,
-                "cache_hits": cache_hits, "llm_calls": llm_calls, "failed_calls": failed_calls,
-                "tables": reports});
-            if let Err(err) = fs::write(&path, serde_json::to_vec_pretty(&report).expect("serialize table roles")) {
-                eprintln!("## [CHUNKED] TABLE ROLES: {err}");
-            } else {
-                println!("## [CHUNKED] TABLE ROLES: wrote {path:?} (diagnostic only)");
-            }
-            if let Some(err) = fatal_call_error {
-                return WorkflowResult::LlmCallResult(err);
-            }
         }
         // Opt-in shadow analysis: never changes the checkpoint, facts or identity projection.
         let llm_structure_enabled = aifix_llm_structure;
