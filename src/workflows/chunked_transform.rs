@@ -2779,9 +2779,10 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 reports.push(report);
                 if call_failed { stopped = true; }
             }
-            classified_inventory = Some(message_identity::classified_enum_inventory(
-                &source_analysis, &reports,
-            ));
+            let inventory = message_identity::classified_enum_inventory(&source_analysis, &reports);
+            println!("## [CHUNKED] ENUM INVENTORY SOURCE: classified tables={} members={} (no legacy fallback)",
+                inventory.len(), inventory.iter().map(|table| table.members.len()).sum::<usize>());
+            classified_inventory = Some(inventory);
             let path = format!("{output}.table-roles.json");
             let report = serde_json::json!({"schema_version": 1, "diagnostic_only": true,
                 "coordinate_space": "normalized_masked_source", "sample_row_limit": 12,
@@ -2803,6 +2804,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 inventory,
             )
         } else {
+            println!("## [CHUNKED] ENUM INVENTORY SOURCE: legacy (table classification disabled)");
             message_identity::original_table_role_stats(
                 &checkpoint.candidates, &source_windows, &source_starts,
                 &masked_source, &normalized_tables, &source_analysis, &pre_normalized,

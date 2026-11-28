@@ -1799,13 +1799,14 @@ fn table_context_kind(headers: &[&str], cells: &[&str]) -> &'static str {
     "other"
 }
 
-/// Use fully mapped classified tables while retaining the legacy inventory for
-/// tables without a complete, compatible classification.
+/// Build the active inventory exclusively from source-mapped classifications.
+/// Missing or conflicting classifications never fall back to lexical headers.
 pub(super) fn classified_enum_inventory(
     analysis: &simplelexer::tablelexer::DocumentAnalysis,
     reports: &[serde_json::Value],
 ) -> Vec<EnumTable> {
-    let mut inventory = enum_inventory(analysis);
+    let mut inventory = Vec::<EnumTable>::new();
+    let mut contested = std::collections::BTreeSet::new();
     for report in reports {
         if report["status"].as_str() != Some("completed") {
             continue;
@@ -1843,13 +1844,17 @@ pub(super) fn classified_enum_inventory(
             }
             Some(EnumTable { header_offset: header?, members })
         })();
-        let Some(mut table) = mapped else { continue; };
-        // Do not lose or change previously retained evidence during migration.
-        if let Some(old) = inventory.iter().find(|old| old.header_offset == table.header_offset)
-            && !old.members.iter().all(|old| table.members.iter().any(|new|
-                old.row_start == new.row_start && old.row_end == new.row_end
-                    && old.value == new.value && old.description == new.description))
-        {
+        let Some(mut table) = mapped else {
+            eprintln!("## [CHUNKED] ENUM CLASSIFICATION: rejected original mapping for table {}", report["table_start"]);
+            continue;
+        };
+        if contested.contains(&table.header_offset) {
+            continue;
+        }
+        if inventory.iter().any(|old| old.header_offset == table.header_offset) {
+            contested.insert(table.header_offset);
+            inventory.retain(|old| old.header_offset != table.header_offset);
+            eprintln!("## [CHUNKED] ENUM CLASSIFICATION: conflicting table mapping at {}", table.header_offset);
             continue;
         }
         let mut values = std::collections::BTreeMap::<String, (usize, String, bool)>::new();
@@ -1964,7 +1969,15 @@ pub(super) fn original_table_role_stats_with_inventory(
             }
             let headers: Vec<_> = header.cells.iter().map(|c| c.text.trim()).collect();
             let cells: Vec<_> = row.cells.iter().map(|c| c.text.trim()).collect();
-            match table_context_kind(&headers, &cells) {
+            let enum_row = stats.enum_inventory.iter().any(|table| table.members.iter().any(|member|
+                member.row_start == row.span.start && member.row_end == row.span.end));
+            let kind = if enum_row { "enum" } else {
+                match table_context_kind(&headers, &cells) {
+                    "enum" => "other",
+                    kind => kind,
+                }
+            };
+            match kind {
                 "parameter" => stats.parameter_row += 1,
                 "enum" => {
                     stats.enum_member_candidate += 1;
@@ -2026,6 +2039,29 @@ mod original_table_role_tests {
                 .all(|m| m.duplicate_value && m.conflicting_description)
         );
         assert!(!inventory[1].members[0].duplicate_value);
+    }
+
+    #[test]
+    fn classified_inventory_uses_arbitrary_headers_without_legacy_fallback() {
+        let source = "| Symbol | Meaning |\n| --- | --- |\n| X | Ready |\n\nText.\n\n| Code | Description |\n| --- | --- |\n| 1 | Busy |\n";
+        let analysis = simplelexer::tablelexer::DocumentAnalysis::parse(source);
+        let (table, row) = analysis.source_row_at(source.find("| X |").unwrap()).unwrap();
+        let report = serde_json::json!({
+            "status": "completed",
+            "classified_enum_rows": {"members": [{
+                "value": "X", "description": "Ready",
+                "original_source": {
+                    "table_header_offset": table.rows[0].span.start,
+                    "row_start": row.span.start, "row_end": row.span.end
+                }
+            }]}
+        });
+        assert_eq!(enum_inventory(&analysis).len(), 1);
+        assert!(classified_enum_inventory(&analysis, &[]).is_empty());
+        let inventory = classified_enum_inventory(&analysis, std::slice::from_ref(&report));
+        assert_eq!(inventory.len(), 1);
+        assert_eq!(inventory[0].members[0].value, "X");
+        assert!(classified_enum_inventory(&analysis, &[report.clone(), report]).is_empty());
     }
 
     #[test]
