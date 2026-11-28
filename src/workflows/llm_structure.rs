@@ -734,11 +734,63 @@ pub(super) fn table_role_prompt(table_start: usize, context: &str, rows: &[RowEv
     )
 }
 
+/// Recover only a missing, redundant column index from unique exact cell evidence.
+fn parse_table_role(response: &str, rows: &[RowEvidence]) -> Result<TableRoleHypothesis, serde_json::Error> {
+    let mut value: serde_json::Value = serde_json::from_str(
+        crate::utils::stringutils::strip_code_fences(response.trim()).trim(),
+    )?;
+    if let Some(object) = value.as_object_mut()
+        && !object.contains_key("evidence_column")
+    {
+        let column = (|| {
+            let start = usize::try_from(object.get("evidence_row")?.as_u64()?).ok()?;
+            let evidence = object.get("evidence_text")?.as_str()?;
+            if evidence.trim().is_empty() { return None; }
+            let mut matching = rows.iter().filter(|row| row.start == start);
+            let row = matching.next()?;
+            if matching.next().is_some() { return None; }
+            let mut cells = row.cells.iter().enumerate().filter(|(_, cell)| cell.as_str() == evidence);
+            let (index, _) = cells.next()?;
+            cells.next().is_none().then_some(index)
+        })();
+        if let Some(column) = column {
+            object.insert("evidence_column".into(), serde_json::json!(column));
+        }
+    }
+    serde_json::from_value(value)
+}
+
+#[test]
+fn missing_table_evidence_column_requires_unique_exact_cell() {
+    let row = RowEvidence {
+        line: 1, start: 10, previous: None, next: None,
+        cells: vec!["X".into(), "Ready".into()],
+    };
+    let mut response = serde_json::json!({
+        "table_start": 10, "role": "enumeration", "identifier_column": 0,
+        "evidence_row": 10, "evidence_text": "X"
+    });
+    let parsed = parse_table_role(&response.to_string(), std::slice::from_ref(&row)).unwrap();
+    assert_eq!(parsed.evidence_column, 0);
+    assert!(validate_table_role(&parsed, 10, std::slice::from_ref(&row)));
+    let mut ambiguous = row.clone();
+    ambiguous.cells.push("X".into());
+    assert!(parse_table_role(&response.to_string(), &[ambiguous]).is_err());
+    assert!(parse_table_role(&response.to_string(), &[row.clone(), row.clone()]).is_err());
+    assert!(parse_table_role(&response.to_string(), &[]).is_err());
+    response["evidence_text"] = serde_json::json!("x");
+    assert!(parse_table_role(&response.to_string(), std::slice::from_ref(&row)).is_err());
+    response["evidence_text"] = serde_json::json!("X");
+    response["evidence_column"] = serde_json::json!(1);
+    let parsed = parse_table_role(&response.to_string(), std::slice::from_ref(&row)).unwrap();
+    assert!(!validate_table_role(&parsed, 10, &[row]));
+}
+
 pub(super) fn table_role_report(table_start: usize, rows: &[RowEvidence], responses: &[String]) -> serde_json::Value {
     let mut accepted = Vec::new();
     let mut rejected = Vec::new();
     for (index, response) in responses.iter().enumerate() {
-        match serde_json::from_str::<TableRoleHypothesis>(crate::utils::stringutils::strip_code_fences(response.trim()).trim()) {
+        match parse_table_role(response, rows) {
             Ok(proposal) if validate_table_role(&proposal, table_start, rows) => {
                 accepted.push(serde_json::json!({"attempt": index + 1, "hypothesis": proposal}));
             }
@@ -804,9 +856,7 @@ pub(super) fn agreed_message_declaration_column(
     }
     let mut agreed = None;
     for response in responses {
-        let proposal: TableRoleHypothesis = serde_json::from_str(
-            crate::utils::stringutils::strip_code_fences(response.trim()).trim(),
-        ).ok()?;
+        let proposal = parse_table_role(response, rows).ok()?;
         if !validate_table_role(&proposal, table_start, rows)
             || proposal.role != "entity_declarations"
             || proposal.entity_kind.as_deref() != Some("message")
@@ -837,9 +887,7 @@ pub(super) fn classified_enum_rows(
     }
     let mut agreed = None;
     for response in responses {
-        let proposal: TableRoleHypothesis = serde_json::from_str(
-            crate::utils::stringutils::strip_code_fences(response.trim()).trim(),
-        ).ok()?;
+        let proposal = parse_table_role(response, sample).ok()?;
         if !validate_table_role(&proposal, table_start, sample)
             || proposal.role != "enumeration"
             || proposal.row_structure.as_deref() != Some("independent")
