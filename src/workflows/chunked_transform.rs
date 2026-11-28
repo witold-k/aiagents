@@ -2803,7 +2803,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                     ).ok()?;
                     let (original_table, original_row) = source_analysis.source_row_at(begin)?;
                     if original_table.rows.first()?.span.start != begin || original_row.span.end != end
-                        || !original_row.cells.iter().map(|c| c.text.as_ref()).eq(header.cells.iter().map(|c| c.text.as_ref()))
+                        || !original_row.cells.iter().map(|c| c.text).eq(header.cells.iter().map(|c| c.text))
                     { return None; }
                     Some((begin, agreed?))
                 })();
