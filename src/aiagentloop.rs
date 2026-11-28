@@ -39,7 +39,7 @@ impl<'a> AIAgentLoop<'a> {
         }
     }
 
-    pub fn run(&self) {
+    pub fn run(&self) -> bool {
         let mut okcount = INITIAL_SUCCESS_COUNT;
         let mut totalleft = self.config.max_try_count.max_workflow_fail as isize;
         while okcount < REQUIRED_CONSECUTIVE_SUCCESSES && totalleft > 0 {
@@ -47,9 +47,8 @@ impl<'a> AIAgentLoop<'a> {
             if !wr.success() {
                 okcount = 0;
                 eprintln!("FAIL: {}", wr);
-                if wr.request_failure() {
-                    println!("{}", wr);
-                    break;
+                if wr.is_terminal_failure() {
+                    return false;
                 }
             } else {
                 //println!("{}", wr);
@@ -57,5 +56,6 @@ impl<'a> AIAgentLoop<'a> {
             }
             totalleft -= 1;
         }
+        okcount >= REQUIRED_CONSECUTIVE_SUCCESSES
     }
 }

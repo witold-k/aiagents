@@ -289,17 +289,35 @@ fn assertion_context_restores_truncated_line_without_crossing_window() {
     let (start, excerpt) = assertion_context(window, offset, "default applies".len());
     assert_eq!(start, "heading\n".len());
     assert_eq!(excerpt, "α default applies to device 1 unless overridden.");
-    assert!(verbatim_match("default applies to device 1 unless overridden.", excerpt));
+    assert!(verbatim_match(
+        "default applies to device 1 unless overridden.",
+        excerpt
+    ));
     assert!(!verbatim_match("default applies to device 2", excerpt));
-    assert!(!verbatim_match("default applies to device 1 unless overridden.", "default applies to"));
+    assert!(!verbatim_match(
+        "default applies to device 1 unless overridden.",
+        "default applies to"
+    ));
     assert!(!verbatim_match("", excerpt));
 }
 
 #[test]
 fn assertion_validation_rejects_invented_or_missing_quotes() {
     use super::validate_assertion_judgment;
-    assert!(validate_assertion_judgment("device 1", r#"{"verdict":"supported","evidence_quote":"device 2","rationale":"match"}"#).is_none());
-    assert!(validate_assertion_judgment("device 1", r#"{"verdict":"contradicted","evidence_quote":"","rationale":"missing"}"#).is_none());
+    assert!(
+        validate_assertion_judgment(
+            "device 1",
+            r#"{"verdict":"supported","evidence_quote":"device 2","rationale":"match"}"#
+        )
+        .is_none()
+    );
+    assert!(
+        validate_assertion_judgment(
+            "device 1",
+            r#"{"verdict":"contradicted","evidence_quote":"","rationale":"missing"}"#
+        )
+        .is_none()
+    );
     assert!(validate_assertion_judgment("device 1", r#"{"verdict":"insufficient_evidence","evidence_quote":"","rationale":"condition missing"}"#).is_some());
 }
 
@@ -312,15 +330,20 @@ fn assertion_resolution_does_not_choose_repeated_alternatives() {
     assert_eq!(context, "Type: J | Reserved");
     assert_eq!(status, "unique_window_statement_match");
     let repeated = format!("{window}Type: J | Reserved\n");
-    assert_eq!(resolve_assertion_context(&repeated, 0, 9, "Type: J | Reserved").2,
-        "ambiguous_window_statement_match");
-    assert_eq!(resolve_assertion_context(window, 0, 9, "Type: K | Reserved").2,
-        "anchor_only_unresolved");
+    assert_eq!(
+        resolve_assertion_context(&repeated, 0, 9, "Type: J | Reserved").2,
+        "ambiguous_window_statement_match"
+    );
+    assert_eq!(
+        resolve_assertion_context(window, 0, 9, "Type: K | Reserved").2,
+        "anchor_only_unresolved"
+    );
 }
 
 #[test]
 fn original_anchor_context_preserves_row_and_header() {
-    let source = "# Section\n\n| Key | Value |\n| --- | --- |\n| mode | auto |\n| other | manual |\n";
+    let source =
+        "# Section\n\n| Key | Value |\n| --- | --- |\n| mode | auto |\n| other | manual |\n";
     let analysis = simplelexer::tablelexer::DocumentAnalysis::parse(source);
     let begin = source.find("mode").unwrap();
     let context = super::original_anchor_context(&analysis, begin, begin + 4, true).unwrap();
@@ -328,7 +351,9 @@ fn original_anchor_context_preserves_row_and_header() {
     assert!(context["table"]["row"].as_str().unwrap().contains("mode"));
     assert!(!context["table"]["row"].as_str().unwrap().contains("manual"));
     assert!(context["table"]["header"].as_str().unwrap().contains("Key"));
-    assert!(super::original_anchor_context(&analysis, source.len(), source.len()+1, true).is_none());
+    assert!(
+        super::original_anchor_context(&analysis, source.len(), source.len() + 1, true).is_none()
+    );
 }
 
 #[test]
@@ -338,7 +363,12 @@ fn original_context_keeps_heading_path_and_covered_cell_origin() {
     let begin = source.find("Second").unwrap();
     let context = super::original_anchor_context(&analysis, begin, begin + 6, true).unwrap();
     assert_eq!(context["heading_path"].as_array().unwrap().len(), 2);
-    assert!(context["heading_path"][1]["text"].as_str().unwrap().contains("Inner"));
+    assert!(
+        context["heading_path"][1]["text"]
+            .as_str()
+            .unwrap()
+            .contains("Inner")
+    );
     let slots = context["table"]["logical_cells"].as_array().unwrap();
     assert_eq!(slots[0]["state"], "covered");
     assert_eq!(slots[0]["text"], "Owner");
@@ -373,11 +403,15 @@ fn relation_signatures_reject_category_errors() {
         "object_kind": "count", "conditions": [], "scope": "message",
         "evidence_quote": excerpt
     });
-    let valid = |r: &serde_json::Value| super::validate_relations(excerpt, &serde_json::json!([r]).to_string()).is_some();
+    let valid = |r: &serde_json::Value| {
+        super::validate_relations(excerpt, &serde_json::json!([r]).to_string()).is_some()
+    };
     assert!(valid(&base));
     for (field, value) in [
-        ("predicate", "has_parameter"), ("object", "-1"),
-        ("scope", "original_source_utf8_bytes"), ("subject_kind", "text"),
+        ("predicate", "has_parameter"),
+        ("object", "-1"),
+        ("scope", "original_source_utf8_bytes"),
+        ("subject_kind", "text"),
     ] {
         let mut bad = base.clone();
         bad[field] = serde_json::json!(value);
@@ -406,7 +440,10 @@ fn relation_review_retains_valid_items_and_diagnoses_rejections() {
     bad["evidence_quote"] = serde_json::json!("fabricated");
     let mut wrong_kind = good.clone();
     wrong_kind["object_kind"] = serde_json::json!("text");
-    let review = super::review_relations(excerpt, &serde_json::json!([good, bad, wrong_kind, {}]).to_string());
+    let review = super::review_relations(
+        excerpt,
+        &serde_json::json!([good, bad, wrong_kind, {}]).to_string(),
+    );
     assert_eq!(review.status, "partial");
     assert_eq!(review.relations.len(), 1);
     let json = serde_json::to_value(&review).unwrap();
@@ -416,7 +453,10 @@ fn relation_review_retains_valid_items_and_diagnoses_rejections() {
     assert_eq!(json["rejected"][2]["reason"], "invalid_schema");
     let malformed = super::review_relations(excerpt, "[");
     assert_eq!(malformed.status, "invalid");
-    assert_eq!(serde_json::to_value(malformed).unwrap()["rejected"][0]["reason"], "invalid_json");
+    assert_eq!(
+        serde_json::to_value(malformed).unwrap()["rejected"][0]["reason"],
+        "invalid_json"
+    );
     assert_eq!(super::review_relations(excerpt, "[]").status, "valid");
 }
 
@@ -432,10 +472,21 @@ fn truncated_relation_array_recovers_only_complete_prefix() {
     let review = super::review_relations(excerpt, &raw);
     assert_eq!(review.status, "partial");
     assert_eq!(review.relations.len(), 1);
-    assert_eq!(serde_json::to_value(review).unwrap()["rejected"][0]["reason"], "truncated_json");
+    assert_eq!(
+        serde_json::to_value(review).unwrap()["rejected"][0]["reason"],
+        "truncated_json"
+    );
     let malformed = format!("[{}, !]", good);
-    assert!(super::review_relations(excerpt, &malformed).relations.is_empty());
-    assert!(super::review_relations(excerpt, "[{\"subject\":").relations.is_empty());
+    assert!(
+        super::review_relations(excerpt, &malformed)
+            .relations
+            .is_empty()
+    );
+    assert!(
+        super::review_relations(excerpt, "[{\"subject\":")
+            .relations
+            .is_empty()
+    );
 }
 
 #[test]
@@ -453,7 +504,10 @@ fn behavior_and_example_instances_are_separate_hypotheses() {
     });
     let mut invalid = behavior.clone();
     invalid["evidence_quote"] = serde_json::json!("invented");
-    let review = super::review_relations(excerpt, &serde_json::json!([behavior, instance, invalid]).to_string());
+    let review = super::review_relations(
+        excerpt,
+        &serde_json::json!([behavior, instance, invalid]).to_string(),
+    );
     assert_eq!(review.status, "partial");
     assert_eq!(review.behaviors.len(), 1);
     assert_eq!(review.instances.len(), 1);
@@ -463,7 +517,8 @@ fn behavior_and_example_instances_are_separate_hypotheses() {
 #[test]
 fn normalized_hypotheses_preserve_case_context_and_evidence() {
     use serde_json::json;
-    let a = json!({"subject":"G", "predicate":"has_default", "object":"1", "evidence_quote":"first"});
+    let a =
+        json!({"subject":"G", "predicate":"has_default", "object":"1", "evidence_quote":"first"});
     let mut b = a.clone();
     b["subject"] = json!(" G ");
     b["evidence_quote"] = json!("second");
@@ -480,8 +535,34 @@ fn normalized_hypotheses_preserve_case_context_and_evidence() {
     assert_eq!(result["unique_hypotheses"], 4);
     assert_eq!(result["duplicate_occurrences"], 1);
     assert_eq!(result["potential_conflicts"].as_array().unwrap().len(), 1);
-    let merged = result["groups"].as_array().unwrap().iter()
-        .find(|g| g["occurrences"].as_array().unwrap().len() == 2).unwrap();
+    let merged = result["groups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|g| g["occurrences"].as_array().unwrap().len() == 2)
+        .unwrap();
     assert_eq!(merged["occurrences"][0]["evidence_quote"], "first");
     assert_eq!(merged["occurrences"][1]["evidence_quote"], "second");
+}
+
+
+#[test]
+fn independent_parameter_inventory_does_not_require_equal_unresolved_coverage() {
+    let audit = CoverageAudit::new(
+        291, 289, 2, 15, 251, 291, 93, 198, 93, 0, 201, 102, 78, 6, 18,
+    );
+    assert!(audit.passed());
+    let json = serde_json::to_value(&audit).unwrap();
+    assert_eq!(json["schema_version"], 2);
+    assert_eq!(json["parameter_inventory_assertions"], 201);
+    assert_eq!(json["parameter_matched"], 78);
+    assert!(json.get("verified_parameter_assertions").is_none());
+}
+
+#[test]
+fn independent_parameter_inventory_cannot_exceed_candidate_occurrences() {
+    let audit = CoverageAudit::new(
+        291, 289, 2, 15, 251, 291, 93, 198, 93, 0, 292, 102, 78, 6, 18,
+    );
+    assert!(!audit.passed());
 }

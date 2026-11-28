@@ -151,7 +151,12 @@ fn layout_hypotheses_do_not_depend_on_parser_chunk_boundaries() {
 
 #[test]
 fn reused_analysis_matches_direct_parse() {
-    for doc in ["", "# A\r\n## B\r\nRésumé 🧪\r\n", "# A\n| Key | Value |\n| --- | --- |\n| x | y |\n~~~\n# hidden\n~~~\n", "# A\n```\nunfinished"] {
+    for doc in [
+        "",
+        "# A\r\n## B\r\nRésumé 🧪\r\n",
+        "# A\n| Key | Value |\n| --- | --- |\n| x | y |\n~~~\n# hidden\n~~~\n",
+        "# A\n```\nunfinished",
+    ] {
         let analysis = simplelexer::tablelexer::DocumentAnalysis::parse(doc);
         let reused = SourceTree::from_analysis(&analysis);
         let direct = SourceTree::parse(doc);

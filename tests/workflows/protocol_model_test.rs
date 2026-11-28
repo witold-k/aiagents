@@ -483,33 +483,81 @@ fn source_entities_preserve_independent_definitions_and_enum_groups() {
     let grids = [serde_json::json!({"rows": [{"slots": [{"state": "covered"}]}]})];
     let model = stage(&[], &[], &analysis);
     let baseline = serde_json::to_value(&model).unwrap();
-    let mut enriched = serde_json::to_value(
-        model.with_source_entities(&parameters, &tables, &groups, &rows, &grids),
-    ).unwrap();
-    let entities = enriched.as_object_mut().unwrap().remove("source_entities").unwrap();
+    let mut enriched = serde_json::to_value(model.with_source_entities(
+        &parameters,
+        &tables,
+        &groups,
+        &rows,
+        &grids,
+    ))
+    .unwrap();
+    let entities = enriched
+        .as_object_mut()
+        .unwrap()
+        .remove("source_entities")
+        .unwrap();
     assert_eq!(enriched, baseline);
     assert_eq!(entities["coordinate_space"], "original_source_utf8_bytes");
     assert_eq!(entities["assertion_semantics_verified"], false);
-    assert_eq!(entities["parameters"]["entities"].as_array().unwrap().len(), 1);
-    assert_eq!(entities["parameters"]["entities"][0]["definition"]["parameter"], "speed");
+    assert_eq!(
+        entities["parameters"]["entities"].as_array().unwrap().len(),
+        1
+    );
+    assert_eq!(
+        entities["parameters"]["entities"][0]["definition"]["parameter"],
+        "speed"
+    );
     assert_eq!(entities["enum_tables"][0]["members"][0]["value"], "1");
-    assert_eq!(entities["logical_enum_groups"][0]["physical_header_offsets"][0], 100);
-    assert_eq!(entities["logical_rows"], serde_json::to_value(&rows).unwrap());
-    assert_eq!(entities["html_grids"], serde_json::to_value(&grids).unwrap());
+    assert_eq!(
+        entities["logical_enum_groups"][0]["physical_header_offsets"][0],
+        100
+    );
+    assert_eq!(
+        entities["logical_rows"],
+        serde_json::to_value(&rows).unwrap()
+    );
+    assert_eq!(
+        entities["html_grids"],
+        serde_json::to_value(&grids).unwrap()
+    );
     assert_eq!(entities["relationships"].as_array().unwrap().len(), 2);
     assert_eq!(entities["relationships"][1]["member_row_start"], 120);
-    assert_eq!(entities["relationships"][1]["status"], "structural_hypothesis");
-    assert_eq!(entities["relationship_review"]["message_enum_status"], "requires_explicit_reference_evidence");
-    assert_eq!(entities["relationship_review"]["issues"], serde_json::json!([]));
-    assert_eq!(entities["entity_registry"]["entries"].as_array().unwrap().len(), 4);
-    assert_eq!(entities["entity_registry"]["ambiguous_ids"], serde_json::json!([]));
-    assert_eq!(entities["entity_registry"]["entries"][2]["id"], "enum_member:100:120");
+    assert_eq!(
+        entities["relationships"][1]["status"],
+        "structural_hypothesis"
+    );
+    assert_eq!(
+        entities["relationship_review"]["message_enum_status"],
+        "requires_explicit_reference_evidence"
+    );
+    assert_eq!(
+        entities["relationship_review"]["issues"],
+        serde_json::json!([])
+    );
+    assert_eq!(
+        entities["entity_registry"]["entries"]
+            .as_array()
+            .unwrap()
+            .len(),
+        4
+    );
+    assert_eq!(
+        entities["entity_registry"]["ambiguous_ids"],
+        serde_json::json!([])
+    );
+    assert_eq!(
+        entities["entity_registry"]["entries"][2]["id"],
+        "enum_member:100:120"
+    );
 }
 
 #[test]
 fn enum_relationships_require_unique_table_and_group_anchors() {
     use super::super::message_identity::{EnumTable, LogicalEnumGroup};
-    let table = || EnumTable { header_offset: 10, members: vec![] };
+    let table = || EnumTable {
+        header_offset: 10,
+        members: vec![],
+    };
     let group = |offsets| LogicalEnumGroup {
         caption: None,
         physical_header_offsets: offsets,
@@ -527,9 +575,14 @@ fn relationship_review_reports_missing_enum_anchor() {
     use super::super::message_identity::{LogicalEnumGroup, ParameterResolution};
     let analysis = simplelexer::tablelexer::DocumentAnalysis::parse("");
     let model = stage(&[], &[], &analysis);
-    let parameters = ParameterResolution { entities: vec![], unresolved_assertions: vec![] };
+    let parameters = ParameterResolution {
+        entities: vec![],
+        unresolved_assertions: vec![],
+    };
     let groups = [LogicalEnumGroup {
-        caption: None, physical_header_offsets: vec![99], member_count: 0,
+        caption: None,
+        physical_header_offsets: vec![99],
+        member_count: 0,
     }];
     let review = review_relationships(&model, &parameters, &[], &groups);
     assert_eq!(review.issues.len(), 1);
@@ -542,13 +595,105 @@ fn registry_preserves_duplicate_anchors_and_group_order_independence() {
     use super::super::message_identity::{EnumTable, LogicalEnumGroup, ParameterResolution};
     let analysis = simplelexer::tablelexer::DocumentAnalysis::parse("");
     let model = stage(&[], &[], &analysis);
-    let parameters = ParameterResolution { entities: vec![], unresolved_assertions: vec![] };
-    let tables = [EnumTable { header_offset: 10, members: vec![] },
-                  EnumTable { header_offset: 10, members: vec![] }];
-    let groups = [LogicalEnumGroup { caption: None, physical_header_offsets: vec![20, 10], member_count: 0 },
-                  LogicalEnumGroup { caption: None, physical_header_offsets: vec![10, 20], member_count: 0 }];
+    let parameters = ParameterResolution {
+        entities: vec![],
+        unresolved_assertions: vec![],
+    };
+    let tables = [
+        EnumTable {
+            header_offset: 10,
+            members: vec![],
+        },
+        EnumTable {
+            header_offset: 10,
+            members: vec![],
+        },
+    ];
+    let groups = [
+        LogicalEnumGroup {
+            caption: None,
+            physical_header_offsets: vec![20, 10],
+            member_count: 0,
+        },
+        LogicalEnumGroup {
+            caption: None,
+            physical_header_offsets: vec![10, 20],
+            member_count: 0,
+        },
+    ];
     let registry = entity_registry(&model, &parameters, &tables, &groups);
     assert_eq!(registry.entries.len(), 4);
-    assert_eq!(registry.ambiguous_ids, vec!["enum_group:10:20".to_owned(), "enum_table:10".to_owned()]);
+    assert_eq!(
+        registry.ambiguous_ids,
+        vec!["enum_group:10:20".to_owned(), "enum_table:10".to_owned()]
+    );
     assert_eq!(registry.entries[2].id, registry.entries[3].id);
+}
+
+
+#[test]
+fn candidate_equivalence_preserves_evidence_and_isolates_unknowns() {
+    use serde_json::json;
+    let make_group = |index: usize, status: &str, id: &str, condition: &str| {
+        json!({
+            "group_index": index,
+            "normalized_group": {
+                "kind": "relations",
+                "hypothesis": {
+                    "subject": "Field", "subject_kind": "parameter",
+                    "predicate": "has_default", "object": "42",
+                    "object_kind": "value", "conditions": [condition]
+                },
+                "occurrences": [{"evidence_quote": format!("source {index}")}]
+            },
+            "references": [
+                {"field": "subject", "name": "Field", "status": status,
+                 "candidates": [{"id": id, "entry_index": 1}]},
+                {"field": "object", "name": "42", "status": "literal", "term_kind": "value"}
+            ]
+        })
+    };
+    let input = json!({"groups": [
+        make_group(0, "unique_candidate", "a", "enabled"),
+        make_group(1, "unique_candidate", "a", "enabled"),
+        make_group(2, "unique_candidate", "b", "enabled"),
+        make_group(3, "unique_candidate", "a", "disabled"),
+        make_group(4, "unresolved", "a", "enabled"),
+        make_group(5, "unresolved", "a", "enabled"),
+        make_group(6, "ambiguous", "a", "enabled")
+    ]});
+    let report = candidate_equivalence_groups(&input);
+    assert_eq!(report["input_group_count"], 7);
+    assert_eq!(report["group_count"], 6);
+    assert_eq!(report["identity_verified"], false);
+    let groups = report["groups"].as_array().unwrap();
+    let merged = groups.iter().find(|g| g["members"].as_array().unwrap().len() == 2).unwrap();
+    assert_eq!(merged["members"][0], input["groups"][0]);
+    assert_eq!(merged["members"][1], input["groups"][1]);
+    assert_eq!(report, candidate_equivalence_groups(&input));
+}
+
+
+#[test]
+fn candidate_equivalence_isolates_missing_and_blank_names() {
+    use serde_json::json;
+    let group = |name: serde_json::Value| {
+        json!({
+            "normalized_group": {"kind": "relations", "hypothesis": {
+                "subject": "Field", "predicate": "has_default", "object": name
+            }},
+            "references": [
+                {"field": "subject", "name": "Field", "status": "unique_candidate",
+                 "candidates": [{"id": "a", "entry_index": 1}]},
+                {"field": "object", "name": name, "status": "literal", "term_kind": "value"}
+            ]
+        })
+    };
+    for name in [json!(null), json!(""), json!(" ")] {
+        let entry = group(name);
+        let report = candidate_equivalence_groups(&json!({"groups": [entry.clone(), entry]}));
+        assert_eq!(report["group_count"], 2);
+        assert!(report["groups"].as_array().unwrap().iter()
+            .all(|group| group["candidate_equivalence"] == false));
+    }
 }

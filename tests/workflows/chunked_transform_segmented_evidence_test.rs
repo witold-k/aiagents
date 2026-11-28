@@ -289,7 +289,7 @@ fn mixed_case_untyped_fact_is_not_guessed() {
 #[test]
 fn unrelated_lowercase_table_cell_does_not_override_uppercase_identity() {
     let source = "Type: A | Modem alive interval\n| a | unrelated parameter |\n";
-    assert_eq!(message_path_type("messages/a.md", source), Some(b'A'));
+    assert_eq!(message_path_type("messages/a.md", source), Some("A".to_owned()));
     let response = r#"{"files":[{"path":"messages/a.md","facts":[{"statement":"Type: A | Modem alive interval","segment_id":"S1"}]}]}"#;
     assert!(parse_segmented_window(response, source).is_ok());
 }
@@ -308,7 +308,7 @@ fn standalone_type_heading_owns_contiguous_evidence_lines() {
 #[test]
 fn blank_line_ends_standalone_type_ownership() {
     let source = "Type: A\nAlive interval\n\nUnrelated appendix parameter\nType: B\n";
-    assert_eq!(section_type_for_line(source, 1), Some(b'A'));
+    assert_eq!(section_type_for_line(source, 1), Some("A"));
     assert_eq!(section_type_for_line(source, 3), None);
 }
 
@@ -449,4 +449,49 @@ fn invalid_paths_are_rejected() {
     let response =
         r#"{"files":[{"path":"../escape.md","facts":[{"statement":"x","segment_id":"S1"}]}]}"#;
     assert!(parse_segmented_window(response, "source").is_err());
+}
+
+#[test]
+fn explicit_type_labels_preserve_identifier_length_and_case() {
+    assert_eq!(explicit_type_label("Type: CONNECT"), Some("CONNECT"));
+    assert_eq!(explicit_type_label("Type: connect"), Some("connect"));
+    assert_eq!(explicit_type_label("Type: 0x03 | Read"), Some("0x03"));
+    assert_eq!(explicit_type_label("Type: "), None);
+    assert_eq!(section_type_for_line("Type: getStatus\nDetails", 1), Some("getStatus"));
+    assert_eq!(section_type_for_line("Type: CONNECT | description\nDetails", 1), None);
+}
+
+#[test]
+fn encoded_message_paths_preserve_case_and_require_source_declaration() {
+    let source = "Type: CONNECT\nType: 0x03";
+    assert!(declared_message_identity("messages/id_434f4e4e454354.md", source));
+    assert!(!declared_message_identity("messages/id_636f6e6e656374.md", source));
+    assert!(declared_message_identity("messages/id_30783033.md", source));
+    assert!(!declared_message_identity("messages/id_ff.md", source));
+    assert_eq!(message_path_type("messages/id_434f4e4e454354.md", source), Some("CONNECT".to_owned()));
+}
+
+#[test]
+fn raw_message_identifier_is_encoded_by_parser() {
+    let source = "Type: CONNECT\nType: connect\n";
+    let response = r#"{"files":[{"path":"messages/","identifier":"CONNECT","facts":[{"statement":"Type: CONNECT","segment_id":"S1"}]},{"path":"messages/","identifier":"connect","facts":[{"statement":"Type: connect","segment_id":"S2"}]}]}"#;
+    let records = parse_segmented_window(response, source).unwrap();
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0].0, "messages/id_CONNECT_434f4e4e454354.md");
+    assert_eq!(records[1].0, "messages/id_connect_636f6e6e656374.md");
+    assert!(parse_segmented_window(&response.replace("\"identifier\":\"CONNECT\"", "\"identifier\":\"UNKNOWN\""), source).is_err());
+    assert!(parse_segmented_window(&response.replace("\"path\":\"messages/\"", "\"path\":\"general.md\""), source).is_err());
+}
+
+#[test]
+fn readable_message_paths_are_safe_and_reversible() {
+    for identifier in ["G", "g", "foo/bar", "a_b", "ä", "../x"] {
+        let path = encoded_message_path(identifier);
+        assert!(valid_spec_path(&path));
+        assert_eq!(encoded_message_identifier(&path).as_deref(), Some(identifier));
+    }
+    assert_eq!(encoded_message_path("G"), "messages/id_G_47.md");
+    assert_eq!(encoded_message_path("foo/bar"), "messages/id_foo-bar_666f6f2f626172.md");
+    assert!(!valid_spec_path("messages/id_wrong_47.md"));
+    assert_eq!(encoded_message_identifier("messages/id_47.md").as_deref(), Some("G"));
 }

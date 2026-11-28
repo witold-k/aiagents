@@ -26,8 +26,8 @@ fn preserves_heading_hierarchy_and_independent_table_rows() {
 fn flattened_table_continuation_inherits_only_explicit_row() {
     let source = "## Reserved\nType | Description | Parameters\nType: v | status | key\nContinuation one\nContinuation two\nType: V | request | key\nContinuation three\n## Semantics\nOrdinary prose";
     let tree = SourceTree::from_document(source);
-    assert_eq!(tree.flattened_table_owner(source, 4), Some(b'v'));
-    assert_eq!(tree.flattened_table_owner(source, 6), Some(b'V'));
+    assert_eq!(tree.flattened_table_owner(source, 4), Some("v".to_owned()));
+    assert_eq!(tree.flattened_table_owner(source, 6), Some("V".to_owned()));
     assert_eq!(tree.flattened_table_owner(source, 8), None);
 }
 
@@ -37,7 +37,7 @@ fn flattened_table_requires_header_and_valid_declaration() {
     let tree = SourceTree::from_document(source);
     assert_eq!(tree.flattened_table_owner(source, 2), None);
     assert_eq!(tree.flattened_table_owner(source, 5), None);
-    assert_eq!(tree.flattened_table_owner(source, 7), Some(b'v'));
+    assert_eq!(tree.flattened_table_owner(source, 7), Some("v".to_owned()));
 }
 
 #[test]

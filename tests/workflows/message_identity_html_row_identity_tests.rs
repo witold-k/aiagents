@@ -21,7 +21,7 @@ fn separate_messages_on_one_html_line_keep_case() {
         };
         assert_eq!(
             resolve_fact_type_with_flattened_tables(document, 0, document, &fact, true, &structure),
-            Ok(letter)
+            Ok(char::from(letter).to_string())
         );
     }
 }
@@ -44,7 +44,7 @@ fn normalized_rows_keep_original_case_and_table_free_fallback() {
         .with_original_table_rows(original, original, &original_analysis, &spans);
     for (letter, evidence) in [(b'B', "upper evidence"), (b'b', "lower evidence")] {
         let offset = normalized.find(evidence).unwrap();
-        assert_eq!(structure.table_row_type_at(offset), Some(letter));
+        assert_eq!(structure.table_row_type_at(offset), Some(char::from(letter).to_string()));
     }
     assert_eq!(
         structure.table_row_type_at(normalized.find("plain paragraph").unwrap()),
@@ -84,7 +84,7 @@ fn fabricated_partial_source_row_mapping_cannot_claim_identity() {
     // partial mapping must not introduce a second row or owner.
     assert_eq!(structure.table_row_ranges.len(), 2);
     assert_eq!(structure.table_row_owners.len(), 1);
-    assert_eq!(structure.table_row_type_at(start), Some(b'B'));
+    assert_eq!(structure.table_row_type_at(start), Some("B".to_owned()));
 }
 
 #[test]
@@ -164,7 +164,7 @@ fn adjacent_html_tables_do_not_share_row_ownership() {
     let typed = document.find("first message").unwrap();
     let untyped = document.find("second untyped").unwrap();
     let prose = document.find("ordinary prose").unwrap();
-    assert_eq!(structure.table_row_type_at(typed), Some(b'B'));
+    assert_eq!(structure.table_row_type_at(typed), Some("B".to_owned()));
     assert!(structure.is_message_table_row_at(untyped));
     assert_eq!(structure.table_row_type_at(untyped), None);
     assert!(!structure.is_message_table_row_at(prose));
@@ -209,7 +209,7 @@ fn description_rowspan_never_inherits_message_type() {
     let structure = SourceStructure::from_document(document);
     assert_eq!(
         structure.table_row_type_at(document.find("typed response").unwrap()),
-        Some(b'y')
+        Some("y".to_owned())
     );
     for evidence in ["first detail", "second detail", "third detail"] {
         let offset = document.find(evidence).unwrap();
@@ -238,4 +238,22 @@ fn unrelated_html_tables_do_not_declare_message_types() {
         structure.table_row_type_at(document.find("ordinary").unwrap()),
         None
     );
+}
+
+#[test]
+fn explicit_html_rows_preserve_long_and_numeric_identifiers() {
+    let document = concat!(
+        "## Message Types\n",
+        "<table><tr><td>Type</td><td>Description</td></tr>",
+        "<tr><td>CONNECT</td><td>upper evidence</td></tr>",
+        "<tr><td>connect</td><td>lower evidence</td></tr>",
+        "<tr><td>0x03</td><td>numeric evidence</td></tr>",
+        "<tr><td>not an id</td><td>prose evidence</td></tr></table>"
+    );
+    let structure = SourceStructure::from_document(document);
+    for (label, evidence) in [("CONNECT", "upper evidence"), ("connect", "lower evidence"), ("0x03", "numeric evidence")] {
+        assert_eq!(structure.table_row_type_at(document.find(evidence).unwrap()), Some(label.to_owned()));
+    }
+    assert_eq!(structure.table_row_type_at(document.find("prose evidence").unwrap()), None);
+    assert_eq!(structure.table_row_type_at(document.find("Description").unwrap()), None);
 }

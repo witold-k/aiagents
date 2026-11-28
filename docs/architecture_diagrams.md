@@ -43,8 +43,7 @@ flowchart TD
     A --> O["Unverified or reviewed JSON publication"]
 ```
 
-The current resolver is **window-local** despite the document-wide goal. It does not
-yet construct a generic document-wide definition index. An explicit type signal
+The resolver combines window-local evidence with document-wide structural context. A generic verified declaration index is still missing. An explicit type signal
 does not by itself prove that a message is defined rather than reserved or only
 mentioned in examples. The diagnostic replay is read-only and stops before
 audit/publication.
@@ -53,13 +52,17 @@ audit/publication.
 
 ```mermaid
 flowchart TD
-    X["Existing completed checkpoint"] --> Q{"Replay requested?"}
+    X["Existing checkpoint"] --> V{"Compatible schema and fingerprint?"}
+    V -->|no| F["Fatal error; preserve checkpoint; fresh run required"]
+    V -->|yes| Q{"Replay requested?"}
     Q -->|yes| I["Read-only identity projection"]
-    I --> D["Diagnostic counters; no write or model call"]
+    I --> D["Diagnostic reports; optional configured LLM stages"]
     Q -->|no| P{"Output already published?"}
     P -->|yes| Z["Return without overwrite"]
     P -->|no| A["Normal workflow / audit / publication"]
 ```
+
+Checkpoint schema 17 is required for this milestone. No checkpoint migration is permitted. Optional diagnostic stages can write reports and make model calls when enabled; replay does not publish new canonical facts.
 
 Replay example:
 
@@ -73,7 +76,7 @@ AIFIX_IDENTITY_REPLAY=1 aifix -t extract_message_tables -a document.md
 flowchart LR
     Q["Exact source quotation"] --> S["Quote-supported fact"]
     S --> M["Semantic / identity review still required"]
-    M --> V["Only independently validated specifications should drive code generation"]
+    M --> V["Independently validated semantic model"]
 ```
 
 A byte-for-byte matching quotation is **not** semantic verification.
@@ -124,7 +127,7 @@ flowchart TD
 
 The diagnostic model does not infer missing table cells, canonical owners, or complete wire types. `reconstructed_table_entries` retain observed fragments in order; `assembled_parameters` are syntax-based, explicitly **unverified**. The former bare-column layout repair heuristic was removed because its assumptions were too document-shaped.
 
-## 8. Evidence quality and generation gate
+## 8. Evidence quality and verification gate
 
 ```mermaid
 flowchart LR
@@ -137,7 +140,28 @@ flowchart LR
     G --> H{"Complete and independently verified?"}
     H -->|no| I["Unknown / competing evidence retained"]
     H -->|yes, future| J["Versioned verified schema"]
-    J --> K["Separate code generator"]
 ```
 
-This is a **readiness gate**, not a claim that independent verification or the generator already exists. See [current status](current_status.md) for measured counts and remaining gaps.
+This is a **verification gate**, not a claim that independent verification already exists. See [current status](current_status.md) for measured counts and remaining gaps.
+
+## 9. Semantic reference and declaration foundations
+
+```mermaid
+flowchart TD
+    S["Rust: source cells and anchored facts"] --> R["Rust: document-scoped entity registry"]
+    S --> L["LLM: relation and assertion hypotheses"]
+    L --> N["Rust: conservative normalization"]
+    N --> C["Rust: reference candidates"]
+    R --> C
+    C --> E["Rust: candidate equivalence and gap diagnostics"]
+    E -. future verification .-> V["Verified semantic IR — not implemented"]
+    S --> T["LLM: table role hypotheses"]
+    T --> A["Rust: exact cell validation and agreement"]
+    A --> D["Diagnostic declaration-column candidate"]
+    D -. future row validation .-> R
+    S --> I["Rust: delimiter integrity and continuation evidence"]
+    I --> G["Diagnostic continuation graph"]
+    G -. future reconstruction .-> R
+```
+
+Agreement is not proof. No diagnostic column, continuation or reference candidate automatically becomes a verified entity. Active legacy declaration and ownership heuristics remain until G8 is complete.

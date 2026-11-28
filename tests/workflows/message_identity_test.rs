@@ -15,7 +15,7 @@ fn document_context_resolves_table_type_across_chunk_boundary() {
     };
     assert_eq!(
         resolve_fact_type_in_document(window, start, document, &fact),
-        Ok(b'G')
+        Ok("G".to_owned())
     );
     assert_eq!(
         resolve_fact_type(window, &fact),
@@ -94,14 +94,14 @@ fn flattened_message_table_history_tracks_rows_but_stops_at_next_type() {
             document,
             document[..first].bytes().filter(|b| *b == b'\n').count()
         ),
-        Some(b'N')
+        Some("N".to_owned())
     );
     assert_eq!(
         flattened_message_table_type(
             document,
             document[..second].bytes().filter(|b| *b == b'\n').count()
         ),
-        Some(b'W')
+        Some("W".to_owned())
     );
 }
 
@@ -116,7 +116,7 @@ fn flattened_history_never_claims_semantics_or_appendix() {
 fn flattened_table_detection_is_independent_of_section_number() {
     let document =
         "# Protocol\n## 7.8 Message Types, Sender (Device)\nType: Q | Query\nA continuation line\n";
-    assert_eq!(flattened_message_table_type(document, 3), Some(b'Q'));
+    assert_eq!(flattened_message_table_type(document, 3), Some("Q".to_owned()));
 }
 
 #[test]
@@ -140,7 +140,7 @@ fn document_identity_agrees_with_local_explicit_declaration() {
     };
     assert_eq!(
         resolve_fact_type_in_document(window, start, document, &candidate),
-        Ok(b'B')
+        Ok("B".to_owned())
     );
 }
 
@@ -179,7 +179,7 @@ fn long_table_inherits_explicit_type_beyond_twelve_rows() {
     for _ in 0..20 {
         source.push_str("| parameter | value |\n");
     }
-    assert_eq!(table_block_type_for_line(&source, 20), Some(b'A'));
+    assert_eq!(table_block_type_for_line(&source, 20), Some("A".to_owned()));
 }
 
 #[test]
@@ -201,8 +201,8 @@ fn table_type_does_not_cross_section_or_prose_boundaries() {
 #[test]
 fn table_type_uses_nearest_explicit_declaration_preserving_case() {
     let source = "Type: A | command\n| one | value |\nType: a | response\n| two | value |";
-    assert_eq!(table_block_type_for_line(source, 1), Some(b'A'));
-    assert_eq!(table_block_type_for_line(source, 3), Some(b'a'));
+    assert_eq!(table_block_type_for_line(source, 1), Some("A".to_owned()));
+    assert_eq!(table_block_type_for_line(source, 3), Some("a".to_owned()));
 }
 
 #[test]
@@ -228,7 +228,7 @@ fn resolves_fact_from_long_table_with_exact_offset() {
     };
     let (groups, unresolved) = resolved_source_facts(&[candidate], &[&source]);
     assert_eq!(unresolved, 0);
-    assert_eq!(groups["messages/upper_a.md"].len(), 1);
+    assert_eq!(groups["messages/id_A_41.md"].len(), 1);
 }
 
 #[test]
@@ -248,7 +248,7 @@ fn nearest_table_declaration_overrides_distant_section_heading() {
     };
     let (groups, unresolved) = resolved_source_facts(&[candidate], &[source]);
     assert_eq!(unresolved, 0);
-    assert_eq!(groups["messages/upper_b.md"].len(), 1);
+    assert_eq!(groups["messages/id_B_42.md"].len(), 1);
 }
 
 #[test]
@@ -344,9 +344,9 @@ fn consolidates_explicit_source_type_across_different_proposed_names() {
         ],
     );
     assert_eq!(unresolved, 0);
-    assert_eq!(groups["messages/upper_a.md"].len(), 2);
-    assert_eq!(groups["messages/upper_a.md"][0].0, 2);
-    assert_eq!(groups["messages/upper_a.md"][1].0, 3);
+    assert_eq!(groups["messages/id_A_41.md"].len(), 2);
+    assert_eq!(groups["messages/id_A_41.md"][0].0, 2);
+    assert_eq!(groups["messages/id_A_41.md"][1].0, 3);
 }
 
 #[test]
@@ -386,8 +386,8 @@ fn never_merges_upper_and_lower_or_untyped_candidates() {
         &candidates,
         &["Type: A | command\nType: a | report\n\nsource excerpt"],
     );
-    assert_eq!(groups["messages/upper_a.md"].len(), 1);
-    assert_eq!(groups["messages/a.md"].len(), 1);
+    assert_eq!(groups["messages/id_A_41.md"].len(), 1);
+    assert_eq!(groups["messages/id_a_61.md"].len(), 1);
     assert_eq!(unresolved, 1);
 }
 
@@ -419,8 +419,8 @@ fn source_section_resolves_untyped_fact_independently_of_candidate_name() {
     }];
     let (groups, unresolved) = resolved_source_facts(&candidates, &[source]);
     assert_eq!(unresolved, 0);
-    assert_eq!(groups["messages/upper_a.md"].len(), 1);
-    assert_eq!(groups["messages/a.md"].len(), 1);
+    assert_eq!(groups["messages/id_A_41.md"].len(), 1);
+    assert_eq!(groups["messages/id_a_61.md"].len(), 1);
 }
 
 #[test]
@@ -436,7 +436,7 @@ fn recovery_window_stores_parent_byte_offset() {
     assert!(!fact.source_locator_ambiguous);
     let (groups, unresolved) = resolved_source_facts(&candidates, &[parent]);
     assert_eq!(unresolved, 0);
-    assert_eq!(groups["messages/a.md"].len(), 1);
+    assert_eq!(groups["messages/id_a_61.md"].len(), 1);
 }
 
 #[test]
@@ -479,8 +479,8 @@ fn segment_locator_disambiguates_repeated_source_text() {
     }];
     let (groups, unresolved) = resolved_source_facts(&candidates, &[source]);
     assert_eq!(unresolved, 0);
-    assert_eq!(groups["messages/upper_a.md"].len(), 1);
-    assert_eq!(groups["messages/a.md"].len(), 1);
+    assert_eq!(groups["messages/id_A_41.md"].len(), 1);
+    assert_eq!(groups["messages/id_a_61.md"].len(), 1);
 }
 
 #[test]
@@ -586,7 +586,7 @@ fn classification_never_trusts_proposed_filename() {
     };
     assert_eq!(
         classify_candidate(&candidate),
-        CandidateIdentity::Resolved("messages/upper_b.md".into())
+        CandidateIdentity::Resolved("messages/id_B_42.md".into())
     );
 }
 
@@ -758,4 +758,67 @@ fn parameter_structure_audit_is_empty_without_tables() {
     let analysis = simplelexer::tablelexer::DocumentAnalysis::parse(source);
     let audit = parameter_structure_audit(&[], &[source], &[0], &analysis, &normalized, source);
     assert_eq!(audit, ParameterStructureAudit::default());
+}
+
+#[test]
+fn multi_character_table_labels_preserve_case() {
+    let source = "Type: CONNECT | description\n| details |\nType: connect | description\n| details |";
+    assert_eq!(table_block_type_for_line(source, 1), Some("CONNECT".to_owned()));
+    assert_eq!(table_block_type_for_line(source, 3), Some("connect".to_owned()));
+    assert_ne!(canonical_type_path("CONNECT".to_owned()), canonical_type_path("connect".to_owned()));
+}
+
+
+#[test]
+fn stages_explicit_identifier_without_promoting_ownership() {
+    let source = "A field contains a status value.";
+    let response = r#"{"files":[{"path":"messages/","identifier":"StatusValue","facts":[{"statement":"Contains a status value","segment_id":"S1"}]},{"path":"messages/","identifier":"statusValue","facts":[{"statement":"Contains a status value","segment_id":"S1"}]}]}"#;
+    let candidates = parse_candidates(response, source, 1, 0);
+    assert_eq!(candidates.len(), 2);
+    assert_eq!(candidates[0].proposed_name, "messages/id_StatusValue_53746174757356616c7565.md");
+    assert_ne!(candidates[0].proposed_name, candidates[1].proposed_name);
+    for candidate in candidates {
+        assert_eq!(candidate.facts[0].evidence_quote.as_deref(), Some(source));
+        assert_eq!(classify_candidate(&candidate), CandidateIdentity::Unresolved);
+    }
+}
+
+#[test]
+fn rejects_invalid_explicit_candidate_destinations() {
+    let source = "A field contains a status value.";
+    for response in [
+        r#"{"files":[{"path":"messages/","identifier":"","facts":[{"statement":"Status","segment_id":"S1"}]}]}"#,
+        r#"{"files":[{"path":"general.md","identifier":"Status","facts":[{"statement":"Status","segment_id":"S1"}]}]}"#,
+        r#"{"files":[{"path":"messages/","facts":[{"statement":"Status","segment_id":"S1"}]}]}"#,
+    ] {
+        assert!(parse_candidates(response, source, 1, 0).is_empty());
+    }
+}
+
+
+#[test]
+fn redundant_destination_must_match_explicit_identifier() {
+    let source = "Status information.";
+    for (path, identifier, accepted) in [
+        ("messages/StatusValue.md", "StatusValue", true),
+        ("messages/statusValue.md", "StatusValue", false),
+        ("messages/other.md", "StatusValue", false),
+        ("messages/../StatusValue.md", "StatusValue", false),
+    ] {
+        let response = serde_json::json!({"files":[{"path":path,"identifier":identifier,
+            "facts":[{"statement":"Status information","segment_id":"S1"}]}]});
+        let candidates = parse_candidates(&response.to_string(), source, 1, 0);
+        assert_eq!(!candidates.is_empty(), accepted);
+        if accepted {
+            assert_eq!(classify_candidate(&candidates[0]), CandidateIdentity::Unresolved);
+        }
+    }
+}
+
+#[test]
+fn mixed_case_legacy_path_is_retained_only_as_candidate() {
+    let response = r#"{"files":[{"path":"messages/StatusValue.md","facts":[{"statement":"Status information","segment_id":"S1"}]}]}"#;
+    let candidates = parse_candidates(response, "Status information.", 1, 0);
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(classify_candidate(&candidates[0]), CandidateIdentity::Unresolved);
 }

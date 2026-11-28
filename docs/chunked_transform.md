@@ -116,19 +116,6 @@ The audit files use the base name `coverage-audit.json`:
 | `coverage-audit.json.evidence-coverage.json` | Deduplicated source-line evidence coverage |
 | `coverage-audit.json.semantic-review.json` | Pending, heuristic review queue |
 | `coverage-audit.json.semantic-verification.json` | Optional LLM review judgments |
-| `coverage-audit.json.codegen-readiness.json` | Code-generation prerequisite inventory (not a schema) |
-
-## Code-generation readiness: a diagnostic, not a generator
-
-`src/workflows/codegen_readiness.rs` inventories each staged candidate and its facts, counting exact source-anchored evidence quotes and ambiguous/missing anchors. It labels identities as unverified candidates and field schemas as not derived. The output is intentionally conservative: a correct source quote is not a verified type, field, or message definition.
-
-The current report explicitly leaves these prerequisites unestablished:
-
-- Canonical message identities and wire discriminators/encoding.
-- Field names, types, cardinality, constraints, defaults, and optionality.
-- Conditional relationships, protocol state, and parser/serializer error behavior.
-
-These are **questions for subsequent source-backed model construction**, not assertions that the original document lacks this information. The audit neither modifies published JSON nor generates C++ or Rust. The intended consumer is a separate language-specific generator after a sufficiently verified, language-independent model exists.
 
 ## Parameter rows, structure proposals and remaining uncertainty
 
@@ -151,7 +138,6 @@ Publication is staged and does not silently overwrite an existing output directo
 - [Implementation](../src/workflows/chunked_transform.rs)
 - [Identity and source-locator implementation](../src/workflows/message_identity.rs)
 - [Evidence coverage and semantic review](../src/workflows/coverage_audit.rs)
-- [Codegen readiness inventory](../src/workflows/codegen_readiness.rs)
 - [Task contract](../task_descriptions/tasks/extract_message_tables.md)
 - [Task overview](tasks/extract_message_tables/README.md)
 - [Architecture diagrams](architecture_diagrams.md)
@@ -162,7 +148,7 @@ Historical checkpoint schemas, Markdown-output stages and older the reference pr
 
 ## Diagnostic protocol model — implemented boundaries (2026-11-12)
 
-`coverage-audit.json.protocol-model.json` is an **unverified diagnostic projection**, not a generator input. Its current collections include:
+`coverage-audit.json.protocol-model.json` is an **unverified diagnostic projection**. Its current collections include:
 
 | Field | Meaning | Not guaranteed |
 | --- | --- | --- |

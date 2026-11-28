@@ -4,8 +4,8 @@ use super::SourceStructure;
 fn table_tree_owns_flattened_rows_and_respects_next_declaration() {
     let source = "## Message Types\nType: v | status | value\ncontinuation\nmore details\nType: V | request | key\nmore details\n## Semantics\nnot a row";
     let tree = SourceStructure::from_document(source);
-    assert_eq!(tree.table_type(3), Some(b'v'));
-    assert_eq!(tree.table_type(5), Some(b'V'));
+    assert_eq!(tree.table_type(3), Some("v".to_owned()));
+    assert_eq!(tree.table_type(5), Some("V".to_owned()));
     assert_eq!(tree.table_type(7), None);
 }
 
@@ -13,7 +13,7 @@ fn table_tree_owns_flattened_rows_and_respects_next_declaration() {
 fn table_tree_does_not_inherit_malformed_declarations_or_pipe_prose() {
     let source = "## Message Types\nType: v | status\nType: ?? | unknown\ncontinuation\n## Other\n| ordinary | prose |";
     let tree = SourceStructure::from_document(source);
-    assert_eq!(tree.table_type(1), Some(b'v'));
+    assert_eq!(tree.table_type(1), Some("v".to_owned()));
     assert_eq!(tree.table_type(3), None);
     assert_eq!(tree.table_type(5), None);
 }
@@ -22,8 +22,8 @@ fn table_tree_does_not_inherit_malformed_declarations_or_pipe_prose() {
 fn owns_immediate_continuation_of_fenced_command() {
     let source = "## Messages from Modem to Antenna\n```txt\nB 100 200 rx2=300\ntx3=400 # additional frequency\n```";
     let structure = SourceStructure::from_document(source);
-    assert_eq!(structure.example_type(2), Some(b'B'));
-    assert_eq!(structure.example_type(3), Some(b'B'));
+    assert_eq!(structure.example_type(2), Some("B".to_owned()));
+    assert_eq!(structure.example_type(3), Some("B".to_owned()));
 }
 
 #[test]
@@ -38,7 +38,7 @@ fn never_inherits_across_blank_lines_fences_or_sections() {
 fn preserves_case_and_does_not_claim_arbitrary_prose() {
     let source = "## Messages from Modem to Antenna\n```txt\nb 100 # command\nplain prose # comment\nQ 20 # different command\n```";
     let structure = SourceStructure::from_document(source);
-    assert_eq!(structure.example_type(2), Some(b'b'));
+    assert_eq!(structure.example_type(2), Some("b".to_owned()));
     assert_eq!(structure.example_type(3), None);
-    assert_eq!(structure.example_type(4), Some(b'Q'));
+    assert_eq!(structure.example_type(4), Some("Q".to_owned()));
 }

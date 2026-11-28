@@ -64,9 +64,15 @@ pub(super) struct SourceParser {
 
 #[cfg(test)]
 impl SourceParser {
-    pub fn new() -> Self { Self::default() }
-    pub fn push_chunk(&mut self, chunk: &str) { self.push_bytes(chunk.as_bytes()); }
-    pub fn push_bytes(&mut self, chunk: &[u8]) { self.input.push_bytes(chunk); }
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn push_chunk(&mut self, chunk: &str) {
+        self.push_bytes(chunk.as_bytes());
+    }
+    pub fn push_bytes(&mut self, chunk: &[u8]) {
+        self.input.push_bytes(chunk);
+    }
     pub fn finish(self) -> SourceTree {
         let source = self.input.finish().expect("source document must be UTF-8");
         SourceTree::from_analysis(&simplelexer::tablelexer::DocumentAnalysis::parse(&source))
@@ -147,11 +153,16 @@ impl SourceTree {
             starts.push(offset);
             offset += line.len();
         }
-        let line_at = |byte: usize| starts.partition_point(|&start| start <= byte).saturating_sub(1);
+        let line_at = |byte: usize| {
+            starts
+                .partition_point(|&start| start <= byte)
+                .saturating_sub(1)
+        };
         let mut tree = Self::default();
         for (index, heading) in analysis.headings.iter().enumerate() {
             let path = analysis.heading_path_at(heading.span.start);
-            let end_line = analysis.headings[index + 1..].iter()
+            let end_line = analysis.headings[index + 1..]
+                .iter()
                 .find(|next| next.level <= heading.level)
                 .map_or(starts.len(), |next| line_at(next.span.start));
             tree.sections.push(Section {
@@ -162,8 +173,12 @@ impl SourceTree {
             });
         }
         for line in 0..starts.len() {
-            let end = starts.get(line + 1).copied().unwrap_or(analysis.source.len());
-            tree.section_at_line.push(analysis.heading_path_at(end - 1).last().copied());
+            let end = starts
+                .get(line + 1)
+                .copied()
+                .unwrap_or(analysis.source.len());
+            tree.section_at_line
+                .push(analysis.heading_path_at(end - 1).last().copied());
         }
         for item in &analysis.tables {
             let table = analysis.table(item);
@@ -172,28 +187,63 @@ impl SourceTree {
             let section = item.heading_indices.last().copied();
             let index = tree.tables.len();
             tree.tables.push(Table {
-                section, start_line, end_line,
-                rows: table.rows.iter().filter(|row| row.kind != RowKind::Separator)
-                    .map(|row| Row { line: line_at(row.span.start), cells: row.cells.iter().map(|cell| cell.text.trim().to_owned()).collect() }).collect(),
+                section,
+                start_line,
+                end_line,
+                rows: table
+                    .rows
+                    .iter()
+                    .filter(|row| row.kind != RowKind::Separator)
+                    .map(|row| Row {
+                        line: line_at(row.span.start),
+                        cells: row
+                            .cells
+                            .iter()
+                            .map(|cell| cell.text.trim().to_owned())
+                            .collect(),
+                    })
+                    .collect(),
             });
-            tree.blocks.push(Block { start_line, end_line, section, kind: BlockKind::Table(index) });
+            tree.blocks.push(Block {
+                start_line,
+                end_line,
+                section,
+                kind: BlockKind::Table(index),
+            });
         }
         for span in &analysis.fences {
             let start_line = line_at(span.start);
-            tree.blocks.push(Block { start_line, end_line: line_at(span.end - 1) + 1,
-                section: tree.section_at_line[start_line], kind: BlockKind::FencedCode });
+            tree.blocks.push(Block {
+                start_line,
+                end_line: line_at(span.end - 1) + 1,
+                section: tree.section_at_line[start_line],
+                kind: BlockKind::FencedCode,
+            });
         }
         for (line, text) in analysis.source.lines().enumerate() {
-            if text.trim().is_empty() || tree.sections.iter().any(|s| s.heading_line == line)
-                || tree.blocks.iter().any(|b| b.start_line <= line && line < b.end_line) {
+            if text.trim().is_empty()
+                || tree.sections.iter().any(|s| s.heading_line == line)
+                || tree
+                    .blocks
+                    .iter()
+                    .any(|b| b.start_line <= line && line < b.end_line)
+            {
                 continue;
             }
             let section = tree.section_at_line[line];
             if let Some(block) = tree.blocks.last_mut()
-                && block.kind == BlockKind::Prose && block.end_line == line && block.section == section {
+                && block.kind == BlockKind::Prose
+                && block.end_line == line
+                && block.section == section
+            {
                 block.end_line += 1;
             } else {
-                tree.blocks.push(Block { start_line: line, end_line: line + 1, section, kind: BlockKind::Prose });
+                tree.blocks.push(Block {
+                    start_line: line,
+                    end_line: line + 1,
+                    section,
+                    kind: BlockKind::Prose,
+                });
             }
         }
         tree.blocks.sort_by_key(|block| block.start_line);

@@ -205,7 +205,7 @@ fn outside_rows_keep_headings_separate_from_reserved_boundaries() {
     let unmatched = vec![
         (2, 20, "unclassified_row".to_owned()),
         (3, 30, "possible_continuation".to_owned()),
-        (4, 40, "reserved_message_type".to_owned()),
+        (4, 40, "reserved_marker_candidate".to_owned()),
     ];
     assert_eq!(
         outside_unit_evidence(&graph, &[], &unmatched),
@@ -239,7 +239,7 @@ fn hypothetical_entry_requires_heading_and_continuation_without_ownership() {
             cells: cells[i].iter().map(|s| (*s).to_owned()).collect(),
         })
         .collect();
-    let uncovered = vec![(6, 60, "reserved_message_type".to_owned())];
+    let uncovered = vec![(6, 60, "reserved_marker_candidate".to_owned())];
     let graph = source_graph(
         &rows,
         &[
@@ -327,7 +327,7 @@ fn remaining_evidence_distinguishes_headings_and_reserved_boundaries() {
         .collect();
     let unmatched = vec![
         (1, 10, "possible_continuation".to_owned()),
-        (3, 30, "reserved_message_type".to_owned()),
+        (3, 30, "reserved_marker_candidate".to_owned()),
         (4, 40, "unclassified_row".to_owned()),
     ];
     let graph = source_graph(
@@ -442,4 +442,149 @@ fn uncertainty_is_valid_but_does_not_imply_ownership() {
     let result = validate(uncertain, &rows()).unwrap();
     assert_eq!(result.accepted.len(), 1);
     assert!(result.rejected.is_empty());
+}
+
+#[test]
+fn table_role_hypothesis_requires_exact_source_cell() {
+    let rows = vec![RowEvidence {
+        line: 1, start: 20, previous: None, next: None,
+        cells: vec!["Meaning".into(), "Opcode".into()],
+    }];
+    let mut proposal = TableRoleHypothesis {
+        table_start: 10, role: "entity_declarations".into(),
+        functions: vec![], columns: vec![],
+        entity_kind: Some("message".into()), row_structure: Some("independent".into()), scope: Some("unknown".into()),
+        identifier_column: Some(1), evidence_row: 20, evidence_column: 1,
+        evidence_text: "Opcode".into(),
+    };
+    assert!(validate_table_role(&proposal, 10, &rows));
+    proposal.entity_kind = Some("invented".into());
+    assert!(!validate_table_role(&proposal, 10, &rows));
+    proposal.entity_kind = Some("message".into());
+    assert!(!validate_table_role(&proposal, 11, &rows));
+    proposal.identifier_column = Some(0);
+    assert!(!validate_table_role(&proposal, 10, &rows));
+    proposal.identifier_column = Some(1);
+    proposal.evidence_text = "Invented".into();
+    assert!(!validate_table_role(&proposal, 10, &rows));
+    proposal.evidence_text = "Opcode".into();
+    proposal.role = "uncertain".into();
+    assert!(!validate_table_role(&proposal, 10, &rows));
+    proposal.identifier_column = None;
+    assert!(validate_table_role(&proposal, 10, &rows));
+}
+
+#[test]
+fn table_role_report_preserves_competing_hypotheses() {
+    let rows = rows();
+    let proposal = |role: &str| serde_json::json!({
+        "table_start": 10, "role": role, "identifier_column": null,
+        "evidence_row": 10, "evidence_column": 0, "evidence_text": "first"
+    }).to_string();
+    let report = table_role_report(10, &rows, &[proposal("properties"), proposal("enumeration"), "invalid".into()]);
+    assert_eq!(report["accepted"].as_array().unwrap().len(), 2);
+    assert_eq!(report["rejected"].as_array().unwrap().len(), 1);
+    assert_eq!(report["semantic_verified"], false);
+}
+
+#[test]
+fn table_role_report_handles_fences_and_distinguishes_rejections() {
+    let rows = vec![RowEvidence {
+        line: 1, start: 20, previous: None, next: None,
+        cells: vec!["Opcode".into()],
+    }];
+    let response = serde_json::json!({
+        "table_start": 10, "role": "entity_declarations",
+        "identifier_column": 0, "evidence_row": 20,
+        "evidence_column": 0, "evidence_text": "Opcode"
+    }).to_string();
+    let fenced = format!("\x60\x60\x60json\n{response}\n\x60\x60\x60");
+    let bad = response.replace("Opcode", "Invented");
+    let report = table_role_report(10, &rows, &[fenced, bad, "invalid".into()]);
+    assert_eq!(report["accepted"].as_array().unwrap().len(), 1);
+    assert_eq!(report["rejected"][0]["reason"], "invalid_source_evidence_or_role");
+    assert_eq!(report["rejected"][1]["reason"], "invalid_json_or_schema");
+}
+
+#[test]
+fn enumeration_and_multiple_functions_require_grounded_columns() {
+    let rows = vec![RowEvidence {
+        line: 1, start: 20, previous: None, next: None,
+        cells: vec!["Symbol".into(), "Meaning".into()],
+    }];
+    let mut proposal: TableRoleHypothesis = serde_json::from_value(serde_json::json!({
+        "table_start": 10, "role": "enumeration", "entity_kind": "enum_value",
+        "identifier_column": 0, "evidence_row": 20, "evidence_column": 0,
+        "evidence_text": "Symbol", "functions": ["declaration", "value_mapping"],
+        "columns": [
+            {"index": 0, "role": "identifier", "evidence_row": 20, "evidence_text": "Symbol"},
+            {"index": 1, "role": "description", "evidence_row": 20, "evidence_text": "Meaning"}
+        ]
+    })).unwrap();
+    assert!(validate_table_role(&proposal, 10, &rows));
+    proposal.columns[1].evidence_row = 999;
+    assert!(!validate_table_role(&proposal, 10, &rows));
+    proposal.columns[1].evidence_row = 20;
+    proposal.columns[1].evidence_text = "invented".into();
+    assert!(!validate_table_role(&proposal, 10, &rows));
+    proposal.columns[1].evidence_text = "Meaning".into();
+    proposal.columns[0].role = "description".into();
+    assert!(!validate_table_role(&proposal, 10, &rows));
+    proposal.columns[0].role = "identifier".into();
+    proposal.functions.push("declaration".into());
+    assert!(!validate_table_role(&proposal, 10, &rows));
+}
+
+#[test]
+fn delimiter_graph_preserves_syntax_and_competing_votes() {
+    let rows = vec![
+        RowEvidence { line: 1, start: 10, previous: None, next: Some(20), cells: vec!["&lt;number".into()] },
+        RowEvidence { line: 2, start: 20, previous: Some(10), next: None, cells: vec!["units>".into()] },
+    ];
+    let evidence = serde_json::json!({"earlier_row":10,"later_row":20,"column":0,
+        "earlier_cell":"&lt;number","later_cell":"units>"});
+    let graph = source_graph(&rows, &[], 0, &[]);
+    let report = continuation_graph_report(&graph, std::slice::from_ref(&evidence));
+    assert_eq!(report["candidates"][0]["decoded_fragment"], "<number units>");
+    assert_eq!(report["candidates"][0]["status"], "proposed");
+    assert_eq!(report["candidates"][0]["llm_relations"], serde_json::json!([]));
+    let graph = source_graph(&rows, &[(10,20,"independent".into(),2)], 3, &[]);
+    let report = continuation_graph_report(&graph, std::slice::from_ref(&evidence));
+    assert_eq!(report["candidates"][0]["status"], "contested");
+    assert_eq!(report["candidates"][0]["llm_relations"][0]["votes"], 2);
+    let mut invalid = evidence;
+    invalid["later_cell"] = serde_json::json!("wrong");
+    assert_eq!(continuation_graph_report(&graph, &[invalid])["candidates"], serde_json::json!([]));
+}
+
+
+#[test]
+fn declaration_column_requires_agreement_and_exact_evidence() {
+    let rows = vec![RowEvidence {
+        line: 1, start: 100, previous: None, next: None,
+        cells: vec!["Opcode".into(), "Meaning".into()],
+    }];
+    let proposal = serde_json::json!({
+        "table_start": 100, "role": "entity_declarations",
+        "entity_kind": "message", "row_structure": "independent",
+        "identifier_column": 0, "evidence_row": 100,
+        "evidence_column": 0, "evidence_text": "Opcode"
+    });
+    let valid = proposal.to_string();
+    assert_eq!(agreed_message_declaration_column(100, &rows, &[valid.clone(), valid.clone()]), Some(0));
+    assert_eq!(agreed_message_declaration_column(100, &rows, std::slice::from_ref(&valid)), None);
+    for (field, value) in [
+        ("entity_kind", serde_json::json!("parameter")),
+        ("row_structure", serde_json::json!("mixed")),
+        ("evidence_text", serde_json::json!("Invented")),
+    ] {
+        let mut other = proposal.clone();
+        other[field] = value;
+        assert_eq!(agreed_message_declaration_column(100, &rows, &[valid.clone(), other.to_string()]), None);
+    }
+    let mut other = proposal.clone();
+    other["identifier_column"] = serde_json::json!(1);
+    other["evidence_column"] = serde_json::json!(1);
+    other["evidence_text"] = serde_json::json!("Meaning");
+    assert_eq!(agreed_message_declaration_column(100, &rows, &[valid, other.to_string()]), None);
 }

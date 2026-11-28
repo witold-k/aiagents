@@ -96,25 +96,7 @@ pub fn resolve_source_quote(source: &str, quote: &str) -> Option<String> {
         let mut position = 0;
         while position < text.len() {
             let tail = &text[position..];
-            let entity = [
-                ("&lt;", '<'),
-                ("&gt;", '>'),
-                ("&amp;", '&'),
-                ("&#60;", '<'),
-                ("&#62;", '>'),
-                ("&#38;", '&'),
-                ("&#x3c;", '<'),
-                ("&#x3e;", '>'),
-                ("&#x26;", '&'),
-            ]
-            .into_iter()
-            .find(|(encoded, _)| tail.starts_with(encoded));
-            let (ch, length) = if let Some((encoded, decoded)) = entity {
-                (decoded, encoded.len())
-            } else {
-                let ch = tail.chars().next().expect("nonempty tail");
-                (ch, ch.len_utf8())
-            };
+            let (ch, length) = decode_entity_char(tail);
             if ch.is_whitespace() {
                 if !normalized.is_empty() && whitespace_start.is_none() {
                     whitespace_start = Some(position);
@@ -361,4 +343,87 @@ pub fn mask_opaque_lines(source: &str) -> String {
     }
     flush(&mut run, &mut result);
     result
+}
+
+/// Observe mixed or unmatched encoded angle delimiters on physical lines.
+/// These are advisory syntax findings, not proof of conversion damage.
+pub fn encoded_angle_issues(source: &str) -> Vec<(usize, usize, &'static str)> {
+    let mut issues = Vec::new();
+    let mut offset = 0;
+    for line in source.split_inclusive('\n') {
+        for (start, _) in line.match_indices("&lt;") {
+            let tail = &line[start + 4..];
+            let end = tail.find(['<', '>']).unwrap_or(tail.len());
+            let encoded_end = tail.find("&gt;");
+            let next_open = tail.find("&lt;").unwrap_or(tail.len());
+            if encoded_end.is_some_and(|pos| pos < end && pos < next_open) {
+                continue;
+            }
+            let boundary = end.min(next_open);
+            let mixed = boundary == end && tail.as_bytes().get(end) == Some(&b'>');
+            let stop = start + 4 + boundary + usize::from(mixed);
+            issues.push((offset + start, offset + stop, if mixed {
+                "mixed_angle_encoding"
+            } else {
+                "unmatched_encoded_open"
+            }));
+        }
+        offset += line.len();
+    }
+    issues
+}
+
+/// Decode one character, recognizing the same entity subset as quote matching.
+fn decode_entity_char(tail: &str) -> (char, usize) {
+    for (encoded, decoded) in [
+        ("&lt;", '<'), ("&gt;", '>'), ("&amp;", '&'),
+        ("&#60;", '<'), ("&#62;", '>'), ("&#38;", '&'),
+        ("&#x3c;", '<'), ("&#x3e;", '>'), ("&#x26;", '&'),
+    ] {
+        if tail.starts_with(encoded) {
+            return (decoded, encoded.len());
+        }
+    }
+    let ch = tail.chars().next().expect("nonempty tail");
+    (ch, ch.len_utf8())
+}
+
+/// Single-pass analysis view; one original byte span per decoded character.
+pub fn decoded_entity_view(source: &str) -> (String, Vec<(usize, usize)>) {
+    let mut text = String::new();
+    let mut spans = Vec::new();
+    let mut offset = 0;
+    while offset < source.len() {
+        let (ch, len) = decode_entity_char(&source[offset..]);
+        text.push(ch);
+        spans.push((offset, offset + len));
+        offset += len;
+    }
+    (text, spans)
+}
+
+/// Candidate only: an unmatched encoded opening delimiter at the end of
+/// one cell and its closing delimiter in the immediately following cell.
+pub fn encoded_angle_continuation(first: &str, second: &str) -> Option<String> {
+    let (start, _, _) = encoded_angle_issues(first).into_iter()
+        .rfind(|(_, _, kind)| *kind == "unmatched_encoded_open")?;
+    let (left, _) = decoded_entity_view(&first[start..]);
+    let (right, _) = decoded_entity_view(second);
+    let left = left.trim_end();
+    let right = right.trim();
+    let body = left.strip_prefix('<')?;
+    if body.is_empty() || body.contains(['<', '>']) || !right.ends_with('>')
+        || right[..right.len()-1].contains(['<', '>']) || right == ">" {
+        return None;
+    }
+    Some(format!("{left} {right}"))
+}
+
+/// Parse an optional boolean configuration value without treating presence as truth.
+pub fn parse_optional_bool(value: Option<&str>) -> Result<bool, String> {
+    match value {
+        None | Some("0" | "false") => Ok(false),
+        Some("1" | "true") => Ok(true),
+        Some(value) => Err(format!("Invalid boolean value {value:?}; expected 0, 1, false or true")),
+    }
 }

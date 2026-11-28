@@ -353,3 +353,43 @@ mod tests {
         );
     }
 }
+
+#[test]
+fn encoded_angle_issues_preserve_utf8_offsets_and_source() {
+    use aiagents::utils::stringutils::encoded_angle_issues;
+    let source = "ä &lt;number>\n&lt;word\n&lt;valid&gt;\n<plain>";
+    let issues = encoded_angle_issues(source);
+    assert_eq!(issues.len(), 2);
+    assert_eq!(&source[issues[0].0..issues[0].1], "&lt;number>");
+    assert_eq!(issues[0].2, "mixed_angle_encoding");
+    assert_eq!(issues[1].2, "unmatched_encoded_open");
+    assert!(encoded_angle_issues("&lt;a&gt; &lt;b&gt;").is_empty());
+}
+
+#[test]
+fn entity_view_and_continuation_keep_source_evidence() {
+    use aiagents::utils::stringutils::{decoded_entity_view, encoded_angle_continuation};
+    let (decoded, spans) = decoded_entity_view("ä&lt;x&gt;");
+    assert_eq!(decoded, "ä<x>");
+    assert_eq!(spans, vec![(0, 2), (2, 6), (6, 7), (7, 11)]);
+    assert_eq!(encoded_angle_continuation("key=&lt;number", "units>"), Some("<number units>".into()));
+    assert_eq!(encoded_angle_continuation("&lt;number", "units&gt;"), Some("<number units>".into()));
+    assert_eq!(encoded_angle_continuation("&lt;number&gt;", "units>"), None);
+    assert_eq!(encoded_angle_continuation("&lt;number", "<other>"), None);
+    assert_eq!(encoded_angle_continuation("&lt;number", "unclosed"), None);
+}
+
+#[test]
+fn optional_boolean_configuration_is_strict() {
+    use aiagents::utils::stringutils::parse_optional_bool;
+    for value in [None, Some("0"), Some("false")] {
+        assert_eq!(parse_optional_bool(value), Ok(false));
+    }
+    for value in ["1", "true"] {
+        assert_eq!(parse_optional_bool(Some(value)), Ok(true));
+    }
+    for value in ["", "yes", "2", "FALSE", " 1"] {
+        assert!(parse_optional_bool(Some(value)).is_err());
+    }
+}
+

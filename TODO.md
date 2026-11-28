@@ -4,12 +4,25 @@ This is a hobby project — the journey is the goal. This file is not intended a
 a strict roadmap. It is a reminder of interesting or necessary places to resume
 work after a pause.
 
+## Current milestone: stabilization before merge
+
+Feature freeze: finish validation and documentation before adding new semantic features. See [merge gates](docs/current_status.md#merge-gates).
+
+- [ ] Audit all changed production paths and prompts, including stale diagnostic labels and optional failure handling.
+- [x] Relocate `tests/workflow_configuration.rs` into mirrored test locations.
+- [ ] Audit existing inline tests separately.
+- [ ] Run build, all-target tests and clippy on the final candidate; record results.
+- [ ] Run fresh comparable extraction on master and the candidate in separate output directories, with matched source/model/settings.
+- [x] Restore independent parameter inventory and validate coverage audit in checkpoint replay.
+- [ ] Record enum-link regression and evidence limitations in the merge decision; verify terminal failures and incompatible checkpoint preservation.
+- [ ] Record the merge decision and remaining limitations; no automatic PR or merge.
+
 ## When returning to this project
 
 1. Run `just rbuild` and the Rust test/format/lint checks on the current branch; record any failures.
-2. Triage 114 missing exact statement locators from the supplied checkpoint by cause, without treating paraphrases as missing source evidence.
+2. Triage missing exact statement locators from the supplied checkpoint by cause, without treating paraphrases as missing source evidence.
 3. Complete deterministic scoped-context transitions and document-wide definition ownership, retaining unresolved cases.
-4. Evaluate semantic field definitions against multiple independent documents before designing a verified generator input.
+4. Evaluate semantic field definitions against multiple independent documents before designing a verified semantic schema.
 5. Continue standalone BLT design, release-document quality, or indexing experiments as time permits.
 
 See [current status](docs/current_status.md) for a dated checkpoint snapshot and [architecture](docs/architecture_diagrams.md) for trust boundaries.
@@ -18,7 +31,11 @@ See [current status](docs/current_status.md) for a dated checkpoint snapshot and
 
 # Protocol extraction: current state and next steps
 
-The supplied checkpoint replay reports **25 message candidates**, **238 source-attributed facts**, **124 exact statement locators**, **114 missing exact statement locators**, and **78 source-backed parameter assertions**. It is not a fresh run of the latest branch. These metrics are diagnostic, not semantic correctness or completeness scores.
+An older checkpoint replay reports **25 message candidates**, **238 source-attributed facts**, **124 exact statement locators**, **114 missing exact statement locators**, and **78 source-backed parameter assertions**. It is not a fresh run of the latest branch. These metrics are diagnostic, not semantic correctness or completeness scores.
+
+The 2026-11-27 checkpoint replay reports 18 candidates, 226 facts, 96 exact statement locators, 130 missing exact locators, 57 parameter entities, 78 linked assertions and 109 unresolved ownership occurrences. This is a resumed replay, not a fresh extraction or a semantic correctness score.
+
+The 2026-11-28 replay retains 291 candidate facts, 289 distinct statement/evidence pairs, 201 parameter assertions (78 linked, 123 unresolved), and 31 enum members without linked contexts. Coverage audit schema 2 passes without the previous count warning. See the current status for limitations.
 
 Implemented diagnostic foundations:
 - [x] Retain source-grounded facts, unresolved case-sensitive message identities and statement-locator diagnostics.
@@ -26,8 +43,36 @@ Implemented diagnostic foundations:
 - [x] Preserve LLM-voted row-continuation units and separate hypothetical units without assigning owners.
 - [x] Recognize explicit lexical parameter declarations separately from example assignments.
 - [x] Export unverified lexical assemblies, uninterpreted reconstructed table entries and unassembled semantic rows.
-- [x] Export evidence-coverage, semantic-review and codegen-readiness diagnostics.
+- [x] Export evidence-coverage and semantic-review diagnostics.
 - [x] Remove the protocol-shaped bare-column repair heuristic; keep the extractor generic.
+
+G8 domain independence (migration scope only):
+- [x] Internal case-sensitive string identifiers in deferred identity resolution.
+- [x] Shared readable UTF-8 hex path encoding; no single-letter exceptions in new deferred projections.
+- [x] Explicit extraction identifier validation independent of output filenames.
+- [x] Diagnostic declaration-column consensus with exact cell evidence; no row-level promotion.
+- [x] Diagnostic table-role hypotheses with source-cell validation and bounded sampling.
+- [ ] Audit production code and generic prompts for remaining document-specific assumptions.
+- [ ] Replace fixed table headers and section-name/example heuristics with source-backed role evidence; preserve unresolved cases.
+- [ ] Retire remaining active single-letter legacy path and identity adapters; reject incompatible checkpoints without migration.
+- [ ] Validate case-sensitive arbitrary identifiers and unrelated document structures in synthetic tests and independent document runs.
+- [ ] Complete migration only after remaining active assumptions are removed and regression checks pass.
+
+G9 generic document reconstruction (separate from migration):
+- [x] Diagnostic delimiter integrity and continuation-graph evidence, separate from LLM votes.
+- [ ] Integrate table roles, identifier boundaries and structural relation hypotheses.
+- [ ] Reconstruct logical rows with original-source provenance, conflict handling and multi-row chains.
+- [ ] Evaluate damaged conversion cases and expose validated units to semantic extraction.
+
+Separate infrastructure and semantic work:
+- [x] Stop retries on explicit workflow errors and propagate failure exit status.
+- [x] Validate eight extraction workflow boolean flags before processing.
+- [x] Remove checkpoint identity migration and reject old checkpoint schemas (v17).
+- [ ] Verify table-role call failure propagation and audit remaining LLM call sites and boolean flags outside the extraction workflow.
+- [x] Restore parameter assertion linking in the supplied replay (78 linked).
+- [ ] Investigate missing enum assertion coverage and linking in the next development cycle; retain structural inventory.
+- [x] Diagnostic reference-gap classification and conservative candidate equivalence grouping.
+- [ ] Complete reference-gap resolution and candidate equivalence verification before promoting a verified semantic IR.
 
 Next, in priority order:
 - [ ] Verify the current branch build, formatting, tests and clippy; record actual outcomes.
@@ -36,7 +81,7 @@ Next, in priority order:
 - [ ] Separate source-verified names, types, units, ranges, optionality and conditions from competing or incomplete evidence.
 - [ ] Resolve message/parameter ownership only from explicit source support; preserve unknowns and contradictions.
 - [ ] Benchmark table, prose, conditional and damaged-conversion cases from multiple unrelated documents.
-- [ ] Define a stable versioned **verified** schema, distinct from the current diagnostic `protocol-model.json`; only then consider a separate C++/Rust generator.
+- [ ] Define a stable versioned **verified** schema, distinct from the current diagnostic `protocol-model.json`..
 
 Keep document-administration filtering lower priority unless it demonstrably changes semantic quality. Do not convert a vote or an exact quotation into a verified definition.
 
@@ -162,3 +207,9 @@ can indicate that the user's request is complete and should be processed.
 
 This keeps interactive mode consistent with the project's goal of using
 simple existing mechanisms rather than adding another tooling layer.
+
+- [ ] Extend document integrity diagnostics with mapped original/normalized cell comparisons, cross-row delimiter analysis, additional entity encodings and explicit provenance for any lossless repairs. Keep suspected damage separate from proven conversion loss.
+
+- [ ] Integrate delimiter continuation evidence into the existing structural relation graph without counting deterministic observations as LLM votes. Validate logical column alignment, map both cells to original source, and test reconstruction across unrelated tables before promoting any candidates.
+
+- [ ] Extend the continuation graph projection to complete logical rows with original-source cell spans, multi-row chains and explicit conflict resolution; only then expose validated units to entity extraction.

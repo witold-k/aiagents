@@ -18,7 +18,7 @@ pub(super) struct CoverageAudit {
     statement_missing: usize,
     statement_exact_match: usize,
     statement_mismatch: usize,
-    verified_parameter_assertions: usize,
+    parameter_inventory_assertions: usize,
     parameter_matched: usize,
     parameter_unmatched: usize,
     parameter_other: usize,
@@ -80,8 +80,8 @@ impl CoverageAudit {
                     == Some(parameter_unresolved),
             },
             CoverageCheck {
-                name: "parameter_inventory_matches_coverage",
-                passed: parameter_inventory == matched,
+                name: "parameter_inventory_within_candidate_facts",
+                passed: parameter_inventory <= candidate_facts,
             },
             CoverageCheck {
                 name: "unresolved_facts_within_candidates",
@@ -89,7 +89,7 @@ impl CoverageAudit {
             },
         ];
         Self {
-            schema_version: 1,
+            schema_version: 2,
             candidate_facts,
             distinct_statement_evidence_pairs: distinct_pairs,
             explicitly_typed_candidates: typed,
@@ -99,7 +99,7 @@ impl CoverageAudit {
             statement_missing: missing,
             statement_exact_match: exact,
             statement_mismatch: mismatch,
-            verified_parameter_assertions: parameter_inventory,
+            parameter_inventory_assertions: parameter_inventory,
             parameter_matched: matched,
             parameter_unmatched: unmatched,
             parameter_other: other,
@@ -109,6 +109,7 @@ impl CoverageAudit {
                 "Exact source location does not establish semantic correctness.",
                 "This audit does not compare staged facts with published JSON.",
                 "Unresolved identity does not imply an extraction error.",
+                "Parameter inventory counts distinct assertions independently of message identity; parameter coverage counts unresolved message fact occurrences.",
             ],
         }
     }
@@ -572,15 +573,8 @@ fn technical_priority(line: &str) -> u8 {
         " message",
         " interval",
         " value",
-        " seconds",
-        " degrees",
-        " db",
-        " end=",
         " type:",
         " format",
-        " transceiver",
-        " antenna",
-        " modem",
         " supported",
         " report",
         " if ",
@@ -1079,7 +1073,6 @@ impl SemanticVerificationReport {
 
 pub(super) const SEMANTIC_VERIFIER_PROMPT: &str = r#"Compare a technical source excerpt to extracted statements. Judge full technical equivalence including case-sensitive identifiers, roles, conditions, units, ranges and values. Ignore mere lexical similarity. Headings and metadata are uncertain, not missing. Return ONLY JSON with verdict (covered|partially_covered|missing|uncertain), matched_candidate_indices (zero-based integer array), rationale (short string). Covered requires a matching candidate; missing requires an empty array. Never invent facts."#;
 
-
 #[derive(Debug, serde::Serialize)]
 pub(super) struct AssertionReviewTask<'a> {
     pub candidate_id: &'a str,
@@ -1104,20 +1097,36 @@ pub(super) fn assertion_review_tasks<'a>(
         let Some(window_index) = super::message_identity::source_window_index(&candidate.id) else {
             continue;
         };
-        let Some(window) = windows.get(window_index) else { continue };
+        let Some(window) = windows.get(window_index) else {
+            continue;
+        };
         for (fact_index, fact) in candidate.facts.iter().enumerate() {
-            if fact.source_locator_ambiguous { continue; }
-            let (Some(quote), Some(offset)) = (&fact.evidence_quote, fact.source_byte_offset) else {
-                continue;
-            };
-            if quote.trim().is_empty() || window.get(offset..offset.saturating_add(quote.len())) != Some(quote.as_str()) {
+            if fact.source_locator_ambiguous {
                 continue;
             }
-            let (start, context, resolution) = resolve_assertion_context(window, offset, quote.len(), &fact.statement);
+            let (Some(quote), Some(offset)) = (&fact.evidence_quote, fact.source_byte_offset)
+            else {
+                continue;
+            };
+            if quote.trim().is_empty()
+                || window.get(offset..offset.saturating_add(quote.len())) != Some(quote.as_str())
+            {
+                continue;
+            }
+            let (start, context, resolution) =
+                resolve_assertion_context(window, offset, quote.len(), &fact.statement);
             tasks.push(AssertionReviewTask {
-                candidate_id: &candidate.id, fact_index, statement: &fact.statement,
-                source_excerpt: context, anchor_quote: quote, evidence_resolution: resolution, context_byte_offset: start,
-                window_index, window_byte_offset: offset, original_context: None, relocated_original_context: None,
+                candidate_id: &candidate.id,
+                fact_index,
+                statement: &fact.statement,
+                source_excerpt: context,
+                anchor_quote: quote,
+                evidence_resolution: resolution,
+                context_byte_offset: start,
+                window_index,
+                window_byte_offset: offset,
+                original_context: None,
+                relocated_original_context: None,
             });
         }
     }
@@ -1135,17 +1144,32 @@ pub(super) fn attach_original_context(
     pre_normalized: &str,
 ) {
     for task in tasks {
-        if let Some(&(begin, end, exact)) = roles.assertion_spans.get(&(task.candidate_id.to_owned(), task.fact_index)) {
+        if let Some(&(begin, end, exact)) = roles
+            .assertion_spans
+            .get(&(task.candidate_id.to_owned(), task.fact_index))
+        {
             task.original_context = original_anchor_context(analysis, begin, end, exact);
         }
         if task.evidence_resolution == "unique_window_statement_match" {
             task.relocated_original_context = (|| {
                 let statement = task.statement.trim();
                 let relative = task.source_excerpt.find(statement)?;
-                let absolute = starts.get(task.window_index)?.checked_add(task.context_byte_offset)?.checked_add(relative)?;
+                let absolute = starts
+                    .get(task.window_index)?
+                    .checked_add(task.context_byte_offset)?
+                    .checked_add(relative)?;
                 let end = absolute.checked_add(statement.len())?;
-                if document.get(absolute..end) != Some(statement) { return None; }
-                let (begin, end, exact) = super::message_identity::original_source_span(analysis, normalized, pre_normalized, absolute, statement).ok()?;
+                if document.get(absolute..end) != Some(statement) {
+                    return None;
+                }
+                let (begin, end, exact) = super::message_identity::original_source_span(
+                    analysis,
+                    normalized,
+                    pre_normalized,
+                    absolute,
+                    statement,
+                )
+                .ok()?;
                 let mut context = original_anchor_context(analysis, begin, end, exact)?;
                 context["anchor_role"] = serde_json::json!("relocated_statement");
                 Some(context)
@@ -1156,30 +1180,46 @@ pub(super) fn attach_original_context(
 
 pub(super) fn original_anchor_context(
     analysis: &simplelexer::tablelexer::DocumentAnalysis<'_>,
-    begin: usize, end: usize, exact: bool,
+    begin: usize,
+    end: usize,
+    exact: bool,
 ) -> Option<serde_json::Value> {
     let source = analysis.source;
     let anchor = source.get(begin..end)?;
-    if anchor.is_empty() { return None; }
+    if anchor.is_empty() {
+        return None;
+    }
     let bounded = |text: &str| text.len() <= 8192;
     let row_context = analysis.source_row_at(begin).and_then(|(table, row)| {
-        if end > row.span.end { return None; }
+        if end > row.span.end {
+            return None;
+        }
         let header = table.rows.first()?;
         let row_text = source.get(row.span.start..row.span.end)?;
         let header_text = source.get(header.span.start..header.span.end)?;
-        if !bounded(row_text) || !bounded(header_text) { return None; }
-        let logical_cells = analysis.tables.iter()
+        if !bounded(row_text) || !bounded(header_text) {
+            return None;
+        }
+        let logical_cells = analysis
+            .tables
+            .iter()
             .find(|item| analysis.table(item).span == table.span)
             .and_then(|item| {
                 use simplelexer::tablelexer::GridSlot;
                 let index = table.rows.iter().position(|r| r.span == row.span)?;
-                if item.grid.width > 128 { return None; }
+                if item.grid.width > 128 {
+                    return None;
+                }
                 let mut slots = Vec::new();
                 for column in 0..item.grid.width {
                     let slot = item.grid.cell_at(index, column);
                     let value = match slot {
-                        GridSlot::Missing => serde_json::json!({"column": column, "state": "missing"}),
-                        GridSlot::Conflict => serde_json::json!({"column": column, "state": "conflict"}),
+                        GridSlot::Missing => {
+                            serde_json::json!({"column": column, "state": "missing"})
+                        }
+                        GridSlot::Conflict => {
+                            serde_json::json!({"column": column, "state": "conflict"})
+                        }
                         GridSlot::Origin(p) | GridSlot::Covered(p) => {
                             let cell = table.rows.get(p.row)?.cells.get(p.cell)?;
                             let text = cell.text.trim();
@@ -1235,7 +1275,10 @@ pub(super) fn assertion_context(window: &str, offset: usize, len: usize) -> (usi
 
 // Relocation is lexical evidence only. Never choose between repeated matches.
 pub(super) fn resolve_assertion_context<'a>(
-    window: &'a str, offset: usize, len: usize, statement: &str,
+    window: &'a str,
+    offset: usize,
+    len: usize,
+    statement: &str,
 ) -> (usize, &'a str, &'static str) {
     let (start, context) = assertion_context(window, offset, len);
     if verbatim_match(statement, context) {
@@ -1274,18 +1317,29 @@ pub(super) fn validate_assertion_judgment(
     let cleaned = cleaned.strip_prefix("json").unwrap_or(cleaned).trim();
     let value: serde_json::Value = serde_json::from_str(cleaned).ok()?;
     let verdict = value.get("verdict")?.as_str()?;
-    if !["supported", "contradicted", "insufficient_evidence", "uncertain"].contains(&verdict) {
+    if ![
+        "supported",
+        "contradicted",
+        "insufficient_evidence",
+        "uncertain",
+    ]
+    .contains(&verdict)
+    {
         return None;
     }
     let quote = value.get("evidence_quote")?.as_str()?;
     let rationale = value.get("rationale")?.as_str()?.trim();
-    if rationale.is_empty() || rationale.len() > 2000
+    if rationale.is_empty()
+        || rationale.len() > 2000
         || (!quote.is_empty() && (quote.trim().is_empty() || !excerpt.contains(quote)))
-        || (matches!(verdict, "supported" | "contradicted") && quote.is_empty()) {
+        || (matches!(verdict, "supported" | "contradicted") && quote.is_empty())
+    {
         return None;
     }
     Some(AssertionJudgment {
-        verdict: verdict.to_owned(), evidence_quote: quote.to_owned(), rationale: rationale.to_owned(),
+        verdict: verdict.to_owned(),
+        evidence_quote: quote.to_owned(),
+        rationale: rationale.to_owned(),
     })
 }
 
@@ -1294,23 +1348,53 @@ pub(super) const ASSERTION_VERIFIER_PROMPT: &str = r#"Assess whether the supplie
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum RelationTermKind {
-    Message, Parameter, Entity, DataType, Identifier, Value, Unit, Range,
-    Count, Boolean, Text, Example,
+    Message,
+    Parameter,
+    Entity,
+    DataType,
+    Identifier,
+    Value,
+    Unit,
+    Range,
+    Count,
+    Boolean,
+    Text,
+    Example,
 }
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum RelationPredicate {
-    HasParameter, HasType, HasIdentifier, HasUnit, HasRange, HasDefault,
-    HasAllowedValue, HasRequiredValue, HasMinimumParameterCount,
-    HasResolution, IsOptional, RespondsWith, DependsOn, References,
-    Configures, Requires, Describes, ExampleOf,
+    HasParameter,
+    HasType,
+    HasIdentifier,
+    HasUnit,
+    HasRange,
+    HasDefault,
+    HasAllowedValue,
+    HasRequiredValue,
+    HasMinimumParameterCount,
+    HasResolution,
+    IsOptional,
+    RespondsWith,
+    DependsOn,
+    References,
+    Configures,
+    Requires,
+    Describes,
+    ExampleOf,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum RelationScope {
-    Document, Section, Entity, Message, Parameter, Conditional, Unknown,
+    Document,
+    Section,
+    Entity,
+    Message,
+    Parameter,
+    Conditional,
+    Unknown,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -1333,16 +1417,27 @@ impl SemanticRelation {
         let entity = matches!(self.subject_kind, K::Message | K::Parameter | K::Entity);
         let object_entity = matches!(self.object_kind, K::Message | K::Parameter | K::Entity);
         match self.predicate {
-            P::HasParameter => matches!(self.subject_kind, K::Message | K::Entity) && self.object_kind == K::Parameter,
+            P::HasParameter => {
+                matches!(self.subject_kind, K::Message | K::Entity)
+                    && self.object_kind == K::Parameter
+            }
             P::HasType => self.subject_kind == K::Parameter && self.object_kind == K::DataType,
             P::HasIdentifier => entity && self.object_kind == K::Identifier,
             P::HasUnit => self.subject_kind == K::Parameter && self.object_kind == K::Unit,
             P::HasRange => self.subject_kind == K::Parameter && self.object_kind == K::Range,
-            P::HasDefault | P::HasAllowedValue | P::HasRequiredValue | P::HasResolution =>
-                self.subject_kind == K::Parameter && self.object_kind == K::Value,
-            P::HasMinimumParameterCount => matches!(self.subject_kind, K::Message | K::Entity)
-                && self.object_kind == K::Count && self.object.parse::<u64>().is_ok(),
-            P::IsOptional => entity && self.object_kind == K::Boolean && matches!(self.object.as_str(), "true" | "false"),
+            P::HasDefault | P::HasAllowedValue | P::HasRequiredValue | P::HasResolution => {
+                self.subject_kind == K::Parameter && self.object_kind == K::Value
+            }
+            P::HasMinimumParameterCount => {
+                matches!(self.subject_kind, K::Message | K::Entity)
+                    && self.object_kind == K::Count
+                    && self.object.parse::<u64>().is_ok()
+            }
+            P::IsOptional => {
+                entity
+                    && self.object_kind == K::Boolean
+                    && matches!(self.object.as_str(), "true" | "false")
+            }
             P::RespondsWith => self.subject_kind == K::Message && self.object_kind == K::Message,
             P::DependsOn | P::References | P::Configures => entity && object_entity,
             P::Requires => entity && (object_entity || self.object_kind == K::Text),
@@ -1358,11 +1453,20 @@ Each array item must use kind: relation, behavior, or instance. For kind relatio
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
-enum Modality { Required, Permitted, Recommended, Descriptive, Unknown }
+enum Modality {
+    Required,
+    Permitted,
+    Recommended,
+    Descriptive,
+    Unknown,
+}
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
-enum Polarity { Positive, Negative }
+enum Polarity {
+    Positive,
+    Negative,
+}
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1406,84 +1510,157 @@ pub(super) struct RelationReview {
 
 // Recover only a contiguous prefix of complete JSON objects after an EOF error.
 fn complete_relation_prefix(input: &str) -> Vec<serde_json::Value> {
-    let Some(mut rest) = input.trim_start().strip_prefix('[') else { return Vec::new(); };
+    let Some(mut rest) = input.trim_start().strip_prefix('[') else {
+        return Vec::new();
+    };
     let mut values = Vec::new();
     while values.len() < 16 {
         rest = rest.trim_start();
-        if !rest.starts_with('{') { break; }
+        if !rest.starts_with('{') {
+            break;
+        }
         let mut stream = serde_json::Deserializer::from_str(rest).into_iter::<serde_json::Value>();
-        let Some(Ok(value)) = stream.next() else { break; };
+        let Some(Ok(value)) = stream.next() else {
+            break;
+        };
         let tail = rest[stream.byte_offset()..].trim_start();
-        if !tail.is_empty() && !tail.starts_with(',') && !tail.starts_with(']') { break; }
+        if !tail.is_empty() && !tail.starts_with(',') && !tail.starts_with(']') {
+            break;
+        }
         values.push(value);
-        let Some(next) = tail.strip_prefix(',') else { break; };
+        let Some(next) = tail.strip_prefix(',') else {
+            break;
+        };
         rest = next;
     }
     values
 }
 
 pub(super) fn review_relations(excerpt: &str, response: &str) -> RelationReview {
-    let mut review = RelationReview { relations: Vec::new(), behaviors: Vec::new(), instances: Vec::new(), rejected: Vec::new(), status: "invalid" };
+    let mut review = RelationReview {
+        relations: Vec::new(),
+        behaviors: Vec::new(),
+        instances: Vec::new(),
+        rejected: Vec::new(),
+        status: "invalid",
+    };
     let cleaned = response.trim().trim_matches('`').trim();
     let cleaned = cleaned.strip_prefix("json").unwrap_or(cleaned).trim();
     let values = match serde_json::from_str::<serde_json::Value>(cleaned) {
         Ok(serde_json::Value::Array(values)) => values,
         Ok(_) => {
-            review.rejected.push(RelationRejection { index: None, reason: "invalid_schema", detail: "Expected JSON array".into() });
+            review.rejected.push(RelationRejection {
+                index: None,
+                reason: "invalid_schema",
+                detail: "Expected JSON array".into(),
+            });
             return review;
         }
         Err(err) => {
-            let recovered = if err.is_eof() { complete_relation_prefix(cleaned) } else { Vec::new() };
-            let reason = if recovered.is_empty() { "invalid_json" } else { "truncated_json" };
-            review.rejected.push(RelationRejection { index: None, reason, detail: format!("{err}; recovered {} complete objects", recovered.len()) });
+            let recovered = if err.is_eof() {
+                complete_relation_prefix(cleaned)
+            } else {
+                Vec::new()
+            };
+            let reason = if recovered.is_empty() {
+                "invalid_json"
+            } else {
+                "truncated_json"
+            };
+            review.rejected.push(RelationRejection {
+                index: None,
+                reason,
+                detail: format!("{err}; recovered {} complete objects", recovered.len()),
+            });
             recovered
         }
     };
     if values.len() > 16 {
-        review.rejected.push(RelationRejection { index: None, reason: "limit_exceeded", detail: format!("{} relations; maximum 16", values.len()) });
+        review.rejected.push(RelationRejection {
+            index: None,
+            reason: "limit_exceeded",
+            detail: format!("{} relations; maximum 16", values.len()),
+        });
     }
     let valid_text = |s: &str| !s.trim().is_empty() && s.len() <= 2048;
     for (index, mut value) in values.into_iter().take(16).enumerate() {
         let kind = value.as_object_mut().and_then(|obj| obj.remove("kind"));
-        let reject = |reason, detail: String| RelationRejection { index: Some(index), reason, detail };
+        let reject = |reason, detail: String| RelationRejection {
+            index: Some(index),
+            reason,
+            detail,
+        };
         let evidence_valid = |quote: &str| valid_text(quote) && excerpt.contains(quote);
         match kind.as_ref().and_then(serde_json::Value::as_str) {
             Some("behavior") => {
                 match serde_json::from_value::<BehaviorHypothesis>(value) {
-                    Ok(item) if valid_text(&item.actor) && valid_text(&item.action)
-                        && [&item.target, &item.trigger, &item.timing].into_iter().all(|v| v.as_deref().is_none_or(valid_text))
-                        && item.conditions.len() <= 16 && item.conditions.iter().all(|v| valid_text(v))
-                        && evidence_valid(&item.evidence_quote) => review.behaviors.push(item),
-                    Ok(_) => review.rejected.push(reject("invalid_behavior", "Invalid fields or evidence".into())),
-                    Err(err) => review.rejected.push(reject("invalid_schema", err.to_string())),
+                    Ok(item)
+                        if valid_text(&item.actor)
+                            && valid_text(&item.action)
+                            && [&item.target, &item.trigger, &item.timing]
+                                .into_iter()
+                                .all(|v| v.as_deref().is_none_or(valid_text))
+                            && item.conditions.len() <= 16
+                            && item.conditions.iter().all(|v| valid_text(v))
+                            && evidence_valid(&item.evidence_quote) =>
+                    {
+                        review.behaviors.push(item)
+                    }
+                    Ok(_) => review.rejected.push(reject(
+                        "invalid_behavior",
+                        "Invalid fields or evidence".into(),
+                    )),
+                    Err(err) => review
+                        .rejected
+                        .push(reject("invalid_schema", err.to_string())),
                 }
                 continue;
             }
             Some("instance") => {
                 match serde_json::from_value::<InstanceHypothesis>(value) {
-                    Ok(item) if [&item.example, &item.entity, &item.property, &item.value].into_iter().all(|v| valid_text(v))
-                        && evidence_valid(&item.evidence_quote) => review.instances.push(item),
-                    Ok(_) => review.rejected.push(reject("invalid_instance", "Invalid fields or evidence".into())),
-                    Err(err) => review.rejected.push(reject("invalid_schema", err.to_string())),
+                    Ok(item)
+                        if [&item.example, &item.entity, &item.property, &item.value]
+                            .into_iter()
+                            .all(|v| valid_text(v))
+                            && evidence_valid(&item.evidence_quote) =>
+                    {
+                        review.instances.push(item)
+                    }
+                    Ok(_) => review.rejected.push(reject(
+                        "invalid_instance",
+                        "Invalid fields or evidence".into(),
+                    )),
+                    Err(err) => review
+                        .rejected
+                        .push(reject("invalid_schema", err.to_string())),
                 }
                 continue;
             }
             Some("relation") => {}
             None if kind.is_none() => {}
             _ => {
-                review.rejected.push(reject("invalid_schema", "Unknown hypothesis kind".into()));
+                review
+                    .rejected
+                    .push(reject("invalid_schema", "Unknown hypothesis kind".into()));
                 continue;
             }
         }
         let relation: SemanticRelation = match serde_json::from_value(value) {
             Ok(relation) => relation,
             Err(err) => {
-                review.rejected.push(RelationRejection { index: Some(index), reason: "invalid_schema", detail: err.to_string() });
+                review.rejected.push(RelationRejection {
+                    index: Some(index),
+                    reason: "invalid_schema",
+                    detail: err.to_string(),
+                });
                 continue;
             }
         };
-        let reason = if !valid_text(&relation.subject) || !valid_text(&relation.object)
-            || relation.conditions.len() > 16 || relation.conditions.iter().any(|c| !valid_text(c)) {
+        let reason = if !valid_text(&relation.subject)
+            || !valid_text(&relation.object)
+            || relation.conditions.len() > 16
+            || relation.conditions.iter().any(|c| !valid_text(c))
+        {
             Some("invalid_value")
         } else if !relation.valid_signature() {
             Some("invalid_signature")
@@ -1491,15 +1668,29 @@ pub(super) fn review_relations(excerpt: &str, response: &str) -> RelationReview 
             Some("invalid_evidence")
         } else if !excerpt.contains(&relation.evidence_quote) {
             Some("evidence_not_found")
-        } else { None };
+        } else {
+            None
+        };
         if let Some(reason) = reason {
-            review.rejected.push(RelationRejection { index: Some(index), reason, detail: format!("{:?}", relation.predicate) });
+            review.rejected.push(RelationRejection {
+                index: Some(index),
+                reason,
+                detail: format!("{:?}", relation.predicate),
+            });
         } else {
             review.relations.push(relation);
         }
     }
-    review.status = if review.rejected.is_empty() { "valid" }
-        else if review.relations.is_empty() && review.behaviors.is_empty() && review.instances.is_empty() { "invalid" } else { "partial" };
+    review.status = if review.rejected.is_empty() {
+        "valid"
+    } else if review.relations.is_empty()
+        && review.behaviors.is_empty()
+        && review.instances.is_empty()
+    {
+        "invalid"
+    } else {
+        "partial"
+    };
     review
 }
 
@@ -1522,9 +1713,13 @@ pub(super) fn normalized_hypotheses(reviews: &[serde_json::Value]) -> serde_json
     for (review_index, review) in reviews.iter().enumerate() {
         for (origin, result) in [("primary", review), ("retry", &review["retry"]["review"])] {
             for kind in ["relations", "behaviors", "instances"] {
-                let Some(items) = result[kind].as_array() else { continue; };
+                let Some(items) = result[kind].as_array() else {
+                    continue;
+                };
                 for (item_index, item) in items.iter().enumerate() {
-                    let Some(mut fields) = item.as_object().cloned() else { continue; };
+                    let Some(mut fields) = item.as_object().cloned() else {
+                        continue;
+                    };
                     let evidence = fields.remove("evidence_quote").unwrap_or(Value::Null);
                     // Trim only outer whitespace; preserve case, internal whitespace,
                     // condition ordering, modality and polarity.
@@ -1535,10 +1730,12 @@ pub(super) fn normalized_hypotheses(reviews: &[serde_json::Value]) -> serde_json
                     }
                     let hypothesis = Value::Object(fields);
                     let key = json!([review_index, kind, hypothesis]).to_string();
-                    let entry = groups.entry(key).or_insert_with(|| json!({
-                        "review_index": review_index, "kind": kind,
-                        "hypothesis": hypothesis, "occurrences": []
-                    }));
+                    let entry = groups.entry(key).or_insert_with(|| {
+                        json!({
+                            "review_index": review_index, "kind": kind,
+                            "hypothesis": hypothesis, "occurrences": []
+                        })
+                    });
                     if let Some(items) = entry["occurrences"].as_array_mut() {
                         items.push(json!({"origin": origin, "item_index": item_index, "evidence_quote": evidence}));
                         occurrences += 1;
@@ -1553,10 +1750,16 @@ pub(super) fn normalized_hypotheses(reviews: &[serde_json::Value]) -> serde_json
     let mut variants: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     for (index, group) in groups.iter().enumerate() {
         let mut hypothesis = group["hypothesis"].clone();
-        let Some(fields) = hypothesis.as_object_mut() else { continue; };
+        let Some(fields) = hypothesis.as_object_mut() else {
+            continue;
+        };
         let dimension = match group["kind"].as_str() {
             Some("behaviors") => "modality",
-            Some("relations") if fields.get("predicate").and_then(Value::as_str) == Some("has_default") => "object",
+            Some("relations")
+                if fields.get("predicate").and_then(Value::as_str) == Some("has_default") =>
+            {
+                "object"
+            }
             _ => continue,
         };
         fields.remove(dimension);

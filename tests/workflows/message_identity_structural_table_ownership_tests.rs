@@ -8,14 +8,14 @@ fn long_converted_table_row_keeps_its_explicit_identity() {
     ];
     lines.extend((0..25).map(|n| format!("Continuation of parameter {n}")));
     let document = lines.join("\n");
-    assert_eq!(flattened_message_table_type(&document, 26), Some(b'q'));
+    assert_eq!(flattened_message_table_type(&document, 26), Some("q".to_owned()));
 }
 
 #[test]
 fn new_row_and_heading_are_hard_boundaries() {
     let source = "## Message Types\nType: Q | description\ncontinuation\nType: q | response\ncontinuation\n## Appendix\nother prose";
-    assert_eq!(flattened_message_table_type(source, 2), Some(b'Q'));
-    assert_eq!(flattened_message_table_type(source, 4), Some(b'q'));
+    assert_eq!(flattened_message_table_type(source, 2), Some("Q".to_owned()));
+    assert_eq!(flattened_message_table_type(source, 4), Some("q".to_owned()));
     assert_eq!(flattened_message_table_type(source, 6), None);
 }
 

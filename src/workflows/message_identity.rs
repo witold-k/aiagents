@@ -144,9 +144,18 @@ pub(super) fn parse_candidates_in_parent(
         .into_iter()
         .enumerate()
         .filter_map(|(index, file)| {
-            if !super::valid_spec_path(&file.path) {
-                return None;
-            }
+            // A proposed identifier is a candidate label, never ownership evidence.
+            let proposed_name = match file.identifier.as_deref() {
+                Some(identifier) => super::explicit_message_destination(&file.path, identifier)?,
+                None if super::valid_spec_path(&file.path) => file.path.clone(),
+                None => {
+                    let name = file.path.strip_prefix("messages/")?.strip_suffix(".md")?;
+                    if name.is_empty() || name.starts_with("id_") || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
+                        return None;
+                    }
+                    super::encoded_message_path(name)
+                }
+            };
             let facts: Vec<CandidateFact> = file
                 .facts
                 .into_iter()
@@ -161,10 +170,10 @@ pub(super) fn parse_candidates_in_parent(
                     if segment.text.trim().is_empty() {
                         return None;
                     }
-                    let evidence_type = super::explicit_type_label(&segment.text)
-                        .or_else(|| super::section_type_for_line(source, segment.line_index));
+                    let evidence_type = explicit_identity_label(&segment.text)
+                        .or_else(|| section_identity_label(source, segment.line_index));
                     if let (Some(stated), Some(evidenced)) =
-                        (super::explicit_type_label(statement), evidence_type)
+                        (explicit_identity_label(statement), evidence_type)
                         && stated != evidenced
                     {
                         return None;
@@ -188,7 +197,7 @@ pub(super) fn parse_candidates_in_parent(
             }
             Some(MessageCandidate {
                 id: format!("window-{source_window}-candidate-{}", offset + index),
-                proposed_name: file.path,
+                proposed_name,
                 facts,
             })
         })
@@ -204,27 +213,27 @@ pub(super) enum CandidateIdentity {
     Unresolved,
 }
 
-pub(super) fn classify_candidate(candidate: &MessageCandidate) -> CandidateIdentity {
+pub(super) fn declared_candidate_type(candidate: &MessageCandidate) -> Option<String> {
     let mut declared = None;
     for fact in &candidate.facts {
         let Some(quote) = fact.evidence_quote.as_deref() else {
             continue;
         };
-        let Some(letter) = super::explicit_type_label(quote.trim().trim_start_matches('#').trim())
+        let Some(letter) = explicit_identity_label(quote.trim().trim_start_matches('#').trim())
         else {
             continue;
         };
-        if declared.is_some_and(|previous| previous != letter) {
-            return CandidateIdentity::Unresolved;
+        if declared.as_ref().is_some_and(|previous| previous != &letter) {
+            return None;
         }
         declared = Some(letter);
     }
-    match declared {
-        Some(letter) if letter.is_ascii_uppercase() => CandidateIdentity::Resolved(format!(
-            "messages/upper_{}.md",
-            (letter as char).to_ascii_lowercase()
-        )),
-        Some(letter) => CandidateIdentity::Resolved(format!("messages/{}.md", letter as char)),
+    declared
+}
+
+pub(super) fn classify_candidate(candidate: &MessageCandidate) -> CandidateIdentity {
+    match declared_candidate_type(candidate) {
+        Some(letter) => CandidateIdentity::Resolved(canonical_type_path(letter)),
         None => CandidateIdentity::Unresolved,
     }
 }
@@ -275,7 +284,7 @@ pub(super) fn source_window_index(id: &str) -> Option<usize> {
 /// Unlike the legacy twelve-line lookback, a long table may carry its
 /// declaration across arbitrarily many rows. A blank line, heading or
 /// non-table prose is a hard boundary; never inherit across sections.
-fn table_block_type_for_line(source: &str, line_index: usize) -> Option<u8> {
+fn table_block_type_for_line(source: &str, line_index: usize) -> Option<String> {
     let lines: Vec<&str> = source.lines().collect();
     let current = lines.get(line_index)?.trim();
     if !current.contains('|') {
@@ -289,7 +298,7 @@ fn table_block_type_for_line(source: &str, line_index: usize) -> Option<u8> {
         if !line.contains('|') {
             break;
         }
-        if let Some(letter) = super::explicit_type_label(line) {
+        if let Some(letter) = explicit_identity_label(line) {
             return Some(letter);
         }
     }
@@ -318,7 +327,7 @@ fn is_table_caption(line: &str) -> bool {
 /// declaration, heading or table boundary. Blank lines alone are not
 /// sufficient boundaries in these converted tables.
 #[cfg(test)]
-fn flattened_message_table_type(source: &str, line_index: usize) -> Option<u8> {
+fn flattened_message_table_type(source: &str, line_index: usize) -> Option<String> {
     let lines: Vec<&str> = source.lines().collect();
     let mut in_message_table = false;
     for line in lines.iter().take(line_index + 1) {
@@ -350,7 +359,7 @@ fn flattened_message_table_type(source: &str, line_index: usize) -> Option<u8> {
         {
             break;
         }
-        if let Some(letter) = super::explicit_type_label(line) {
+        if let Some(letter) = explicit_identity_label(line) {
             return line.contains('|').then_some(letter);
         }
         if line.starts_with("Type:") || line.starts_with("| Type:") {
@@ -367,7 +376,7 @@ mod structural_table_ownership_tests;
 /// A single-letter command is evidence only inside a fenced example under
 /// an explicit message-example section. Neither prose nor arbitrary code
 /// blocks establish message identity.
-fn message_example_type_for_line(document: &str, line_index: usize) -> Option<u8> {
+fn message_example_type_for_line(document: &str, line_index: usize) -> Option<String> {
     let mut heading_is_messages = false;
     let mut in_fence = false;
     let mut fence_is_example = false;
@@ -403,7 +412,7 @@ fn message_example_type_for_line(document: &str, line_index: usize) -> Option<u8
             {
                 return None;
             }
-            return Some(bytes[0]);
+            return Some(char::from(bytes[0]).to_string());
         }
     }
     None
@@ -457,13 +466,16 @@ impl SourceTree {
             section_at_line.push(analysis.heading_path_at(end - 1).last().copied());
             offset = end;
         }
-        Self { sections, section_at_line }
+        Self {
+            sections,
+            section_at_line,
+        }
     }
 
     /// A flattened table may have lost its pipe delimiters on continuation
     /// lines. Require a real table header and an explicit one-letter Type row;
     /// never infer ownership from prose or from a section heading alone.
-    fn flattened_table_owner(&self, document: &str, line_index: usize) -> Option<u8> {
+    fn flattened_table_owner(&self, document: &str, line_index: usize) -> Option<String> {
         let lines: Vec<&str> = document.lines().collect();
         let mut header_seen = false;
         let mut owner = None;
@@ -487,7 +499,7 @@ impl SourceTree {
                 header_seen = true;
                 owner = None;
             } else if header_seen && (line.starts_with("Type:") || line.starts_with("| Type:")) {
-                owner = super::explicit_type_label(line).filter(|_| line.contains('|'));
+                owner = explicit_identity_label(line).filter(|_| line.contains('|'));
             }
             if index == line_index {
                 return if self.section_at_line.get(index).is_some() {
@@ -520,10 +532,10 @@ mod parameter_row_audit_tests;
 /// No ownership is inferred from candidate filenames or semantic keywords.
 struct SourceStructure {
     tree: SourceTree,
-    table_owners: Vec<Option<u8>>,
-    example_owners: Vec<Option<u8>>,
-    explicit_table_owners: Vec<Option<u8>>,
-    table_row_owners: Vec<(std::ops::Range<usize>, u8)>,
+    table_owners: Vec<Option<String>>,
+    example_owners: Vec<Option<String>>,
+    explicit_table_owners: Vec<Option<String>>,
+    table_row_owners: Vec<(std::ops::Range<usize>, String)>,
     // Every observed message-table row, including rows without a declared type.
     // An untyped row is a boundary, not permission to use line-based fallback.
     table_row_ranges: Vec<std::ops::Range<usize>>,
@@ -546,7 +558,7 @@ impl SourceStructure {
         let mut in_examples_section = false;
         let mut in_fence = false;
         let mut example_fence = false;
-        let mut previous_command: Option<u8> = None;
+        let mut previous_command: Option<String> = None;
 
         let lines: Vec<&str> = document.lines().collect();
         // Prefilter explicit tables once with simplelexer. Keep pipe-bearing
@@ -583,8 +595,12 @@ impl SourceStructure {
                     table_row_ranges.push(row.span.start..row.span.end);
                     let declared = cell_at(row_index, 0).and_then(|cell| {
                         let text = cell.text.trim();
-                        (text.len() == 1 && text.as_bytes()[0].is_ascii_alphabetic())
-                            .then(|| text.as_bytes()[0])
+                        // The existing table-role recognizer is still a legacy policy.
+                        // Do not interpret its header or multi-word prose as an identifier.
+                        (!text.is_empty()
+                            && text != "Type"
+                            && text.chars().all(|ch| ch.is_alphanumeric() || ch == '_'))
+                            .then(|| text.to_owned())
                     });
                     if let Some(letter) = declared {
                         table_row_owners.push((row.span.start..row.span.end, letter));
@@ -607,12 +623,12 @@ impl SourceStructure {
             let mut owner = None;
             for line in start..end.min(lines.len()) {
                 let raw = lines[line].trim();
-                if let Some(letter) = super::explicit_type_label(raw) {
+                if let Some(letter) = explicit_identity_label(raw) {
                     owner = Some(letter);
                 }
                 potential_table_lines[line] = true;
                 explicit_table_lines[line] = true;
-                explicit_table_owners[line] = owner;
+                explicit_table_owners[line] = owner.clone();
             }
         }
         for (index, raw) in lines.iter().enumerate() {
@@ -659,13 +675,13 @@ impl SourceStructure {
                     table_owner = None;
                     in_pipe_table = line.starts_with('|');
                 } else if line.starts_with("Type:") || line.starts_with("| Type:") {
-                    table_owner = super::explicit_type_label(line).filter(|_| line.contains('|'));
+                    table_owner = explicit_identity_label(line).filter(|_| line.contains('|'));
                     in_pipe_table = line.starts_with('|');
                 } else if in_pipe_table && !line.starts_with('|') && !line.is_empty() {
                     table_owner = None;
                     in_pipe_table = false;
                 }
-                table_owners.push(table_owner);
+                table_owners.push(table_owner.clone());
             } else {
                 table_owners.push(None);
             }
@@ -685,7 +701,7 @@ impl SourceStructure {
                             && next.as_bytes().first().is_some_and(u8::is_ascii_alphabetic)
                             && !next.as_bytes().get(1).is_some_and(u8::is_ascii_whitespace)
                     })) {
-                Some(bytes[0])
+                Some(char::from(bytes[0]).to_string())
             } else {
                 None
             };
@@ -703,11 +719,11 @@ impl SourceStructure {
                 && parameter
                 && line.contains('#')
             {
-                previous_command
+                previous_command.clone()
             } else {
                 None
             };
-            owners.push(command.or(continuation));
+            owners.push(command.clone().or(continuation));
             previous_command = command;
         }
         Self {
@@ -761,7 +777,7 @@ impl SourceStructure {
                 .find(|(range, _)| range.start == source_span.start && range.end == source_span.end)
             {
                 self.table_row_owners
-                    .push((normalized_span.clone(), *owner));
+                    .push((normalized_span.clone(), owner.clone()));
             }
         }
         self
@@ -773,11 +789,11 @@ impl SourceStructure {
             .any(|range| range.contains(&byte_offset))
     }
 
-    fn table_row_type_at(&self, byte_offset: usize) -> Option<u8> {
+    fn table_row_type_at(&self, byte_offset: usize) -> Option<String> {
         self.table_row_owners
             .iter()
             .find(|(range, _)| range.contains(&byte_offset))
-            .map(|(_, letter)| *letter)
+            .map(|(_, letter)| letter.clone())
     }
 
     fn is_explicit_table_line(&self, line_index: usize) -> bool {
@@ -787,10 +803,10 @@ impl SourceStructure {
             .unwrap_or(false)
     }
 
-    fn explicit_table_type(&self, line_index: usize) -> Option<u8> {
+    fn explicit_table_type(&self, line_index: usize) -> Option<String> {
         self.explicit_table_owners
             .get(line_index)
-            .copied()
+            .cloned()
             .flatten()
     }
 
@@ -801,14 +817,14 @@ impl SourceStructure {
             .unwrap_or(false)
     }
 
-    fn table_type(&self, line_index: usize) -> Option<u8> {
+    fn table_type(&self, line_index: usize) -> Option<String> {
         // Section boundaries are independent of message ownership.
         let _structural_section = self.tree.section(line_index);
-        self.table_owners.get(line_index).copied().flatten()
+        self.table_owners.get(line_index).cloned().flatten()
     }
 
-    fn example_type(&self, line_index: usize) -> Option<u8> {
-        self.example_owners.get(line_index).copied().flatten()
+    fn example_type(&self, line_index: usize) -> Option<String> {
+        self.example_owners.get(line_index).cloned().flatten()
     }
 }
 
@@ -826,7 +842,7 @@ enum ResolutionFailure {
     ConflictingType,
 }
 
-fn resolve_fact_type(source: &str, fact: &CandidateFact) -> Result<u8, ResolutionFailure> {
+fn resolve_fact_type(source: &str, fact: &CandidateFact) -> Result<String, ResolutionFailure> {
     use ResolutionFailure as Failure;
     if fact.source_locator_ambiguous {
         return Err(Failure::AmbiguousLocator);
@@ -876,19 +892,19 @@ fn resolve_fact_type(source: &str, fact: &CandidateFact) -> Result<u8, Resolutio
         .trim_start_matches('#')
         .trim();
     let signals = [
-        super::explicit_type_label(line),
-        super::section_type_for_line(source, line_index),
+        explicit_identity_label(line),
+        section_identity_label(source, line_index),
         table_block_type_for_line(source, line_index),
     ];
     let mut declared = None;
     for signal in signals.into_iter().flatten() {
-        if declared.is_some_and(|previous| previous != signal) {
+        if declared.as_ref().is_some_and(|previous| previous != &signal) {
             return Err(Failure::ConflictingType);
         }
         declared = Some(signal);
     }
     let source_type = declared.ok_or(Failure::NoSourceType)?;
-    if let Some(stated) = super::explicit_type_label(&fact.statement)
+    if let Some(stated) = explicit_identity_label(&fact.statement)
         && stated != source_type
     {
         return Err(Failure::ConflictingType);
@@ -905,7 +921,7 @@ fn resolve_fact_type_in_document(
     window_start: usize,
     document: &str,
     fact: &CandidateFact,
-) -> Result<u8, ResolutionFailure> {
+) -> Result<String, ResolutionFailure> {
     let structure = SourceStructure::from_document(document);
     resolve_fact_type_with_flattened_tables(window, window_start, document, fact, true, &structure)
 }
@@ -917,7 +933,7 @@ fn resolve_fact_type_with_flattened_tables(
     fact: &CandidateFact,
     include_flattened_tables: bool,
     structure: &SourceStructure,
-) -> Result<u8, ResolutionFailure> {
+) -> Result<String, ResolutionFailure> {
     let local = resolve_fact_type(window, fact);
     if matches!(
         local,
@@ -947,7 +963,7 @@ fn resolve_fact_type_with_flattened_tables(
     // The HTML row is a stronger source locator than its physical line:
     // PDF conversions frequently put an entire multi-message table on one line.
     if let Some(letter) = structure.table_row_type_at(absolute) {
-        if super::explicit_type_label(&fact.statement).is_some_and(|stated| stated != letter) {
+        if explicit_identity_label(&fact.statement).is_some_and(|stated| stated != letter) {
             return Err(ResolutionFailure::ConflictingType);
         }
         if let Ok(local_letter) = local
@@ -970,8 +986,8 @@ fn resolve_fact_type_with_flattened_tables(
         .ok_or(ResolutionFailure::InvalidLocator)?;
     let mut declared = None;
     for signal in [
-        super::explicit_type_label(source_line),
-        super::section_type_for_line(document, line),
+        explicit_identity_label(source_line),
+        section_identity_label(document, line),
         structure.explicit_table_type(line).or_else(|| {
             (structure.is_potential_table_line(line) && !structure.is_explicit_table_line(line))
                 .then(|| table_block_type_for_line(document, line))
@@ -987,20 +1003,20 @@ fn resolve_fact_type_with_flattened_tables(
     .into_iter()
     .flatten()
     {
-        if declared.is_some_and(|old| old != signal) {
+        if declared.as_ref().is_some_and(|old| old != &signal) {
             return Err(ResolutionFailure::ConflictingType);
         }
         declared = Some(signal);
     }
-    if let (Ok(local_letter), Some(document_letter)) = (&local, declared)
-        && *local_letter != document_letter
+    if let (Ok(local_letter), Some(document_letter)) = (&local, declared.as_ref())
+        && local_letter != document_letter
     {
         return Err(ResolutionFailure::ConflictingType);
     }
     let letter = declared
         .or_else(|| local.ok())
         .ok_or(ResolutionFailure::NoSourceType)?;
-    if super::explicit_type_label(&fact.statement).is_some_and(|stated| stated != letter) {
+    if explicit_identity_label(&fact.statement).is_some_and(|stated| stated != letter) {
         return Err(ResolutionFailure::ConflictingType);
     }
     Ok(letter)
@@ -1081,7 +1097,7 @@ pub(super) fn unresolved_history_samples(
             // Inline table references and examples are not active headings.
             let heading = trimmed.trim_start_matches('#').trim();
             if heading.starts_with("Type:")
-                && super::explicit_type_label(heading).is_some()
+                && explicit_identity_label(heading).is_some()
                 && heading
                     .strip_prefix("Type:")
                     .is_some_and(|rest| rest.trim().len() == 1)
@@ -1217,6 +1233,38 @@ pub(super) struct StructuralRoleStats {
     pub invalid_evidence: usize,
 }
 
+/// Advisory source roles using the existing message-context classifier.
+pub(super) fn original_context_roles(
+    analysis: &simplelexer::tablelexer::DocumentAnalysis<'_>,
+    offsets: &[usize],
+) -> std::collections::BTreeMap<usize, &'static str> {
+    let structure = SourceStructure::from_analysis(analysis.source, analysis);
+    offsets
+        .iter()
+        .copied()
+        .map(|offset| {
+            let role = if offset >= analysis.source.len() {
+                "unknown"
+            } else if let Some(line) =
+                crate::utils::stringutils::line_index_at_byte_offset(analysis.source, offset)
+            {
+                if structure.example_type(line).is_some() {
+                    "example"
+                } else if structure.table_row_type_at(offset).is_some()
+                    || structure.explicit_table_type(line).is_some()
+                {
+                    "declaration_context"
+                } else {
+                    "unknown"
+                }
+            } else {
+                "unknown"
+            };
+            (offset, role)
+        })
+        .collect()
+}
+
 pub(super) fn structural_role_stats(
     candidates: &[MessageCandidate],
     sources: &[&str],
@@ -1228,21 +1276,30 @@ pub(super) fn structural_role_stats(
     for candidate in candidates {
         for fact in &candidate.facts {
             let anchor = (|| {
-                if fact.source_locator_ambiguous { return None; }
+                if fact.source_locator_ambiguous {
+                    return None;
+                }
                 let index = source_window_index(&candidate.id)?;
                 let window = sources.get(index)?;
                 let start = *starts.get(index)?;
                 let offset = fact.source_byte_offset?;
                 let quote = fact.evidence_quote.as_deref()?;
-                if quote.trim().is_empty() || window.get(offset..offset.checked_add(quote.len())?) != Some(quote) {
+                if quote.trim().is_empty()
+                    || window.get(offset..offset.checked_add(quote.len())?) != Some(quote)
+                {
                     return None;
                 }
                 let absolute = start.checked_add(offset)?;
                 if document.get(absolute..absolute.checked_add(quote.len())?) != Some(quote) {
                     return None;
                 }
-                let line = crate::utils::stringutils::line_index_at_byte_offset(document, absolute)?;
-                let last = crate::utils::stringutils::line_index_at_byte_offset(document, absolute.checked_add(quote.trim_end_matches(['\r', '\n']).len().checked_sub(1)?)?)?;
+                let line =
+                    crate::utils::stringutils::line_index_at_byte_offset(document, absolute)?;
+                let last = crate::utils::stringutils::line_index_at_byte_offset(
+                    document,
+                    absolute
+                        .checked_add(quote.trim_end_matches(['\r', '\n']).len().checked_sub(1)?)?,
+                )?;
                 Some((absolute, line, last))
             })();
             let Some((absolute, line, last)) = anchor else {
@@ -1284,7 +1341,14 @@ mod structural_role_tests {
         invalid.source_locator_ambiguous = true;
         let candidates = collect_candidates(0, [("test".into(), vec![fact, invalid])]);
         let stats = structural_role_stats(&candidates, &[source], &[0], source);
-        assert_eq!(stats, StructuralRoleStats { unknown: 1, invalid_evidence: 1, ..Default::default() });
+        assert_eq!(
+            stats,
+            StructuralRoleStats {
+                unknown: 1,
+                invalid_evidence: 1,
+                ..Default::default()
+            }
+        );
     }
 }
 
@@ -1336,15 +1400,28 @@ pub(super) struct EnumAssertionContext {
 fn enum_inventory(analysis: &simplelexer::tablelexer::DocumentAnalysis) -> Vec<EnumTable> {
     let mut inventory = Vec::new();
     for block in &analysis.blocks {
-        let simplelexer::tablelexer::DocumentChunk::Table(table) = block else { continue };
-        let Some(header) = table.rows.first() else { continue };
+        let simplelexer::tablelexer::DocumentChunk::Table(table) = block else {
+            continue;
+        };
+        let Some(header) = table.rows.first() else {
+            continue;
+        };
         let headers: Vec<_> = header.cells.iter().map(|c| c.text.trim()).collect();
         let mut members = Vec::new();
         for row in table.rows.iter().skip(1) {
             let cells: Vec<_> = row.cells.iter().map(|c| c.text.trim()).collect();
-            if table_context_kind(&headers, &cells) != "enum" { continue; }
-            let Some(code) = headers.iter().position(|h| h.eq_ignore_ascii_case("code")) else { continue };
-            let Some(description) = headers.iter().position(|h| h.eq_ignore_ascii_case("description")) else { continue };
+            if table_context_kind(&headers, &cells) != "enum" {
+                continue;
+            }
+            let Some(code) = headers.iter().position(|h| h.eq_ignore_ascii_case("code")) else {
+                continue;
+            };
+            let Some(description) = headers
+                .iter()
+                .position(|h| h.eq_ignore_ascii_case("description"))
+            else {
+                continue;
+            };
             members.push(EnumMember {
                 value: cells[code].to_owned(),
                 description: cells[description].to_owned(),
@@ -1358,7 +1435,9 @@ fn enum_inventory(analysis: &simplelexer::tablelexer::DocumentAnalysis) -> Vec<E
         let mut values = std::collections::BTreeMap::<String, (usize, String, bool)>::new();
         for member in &members {
             let key = member.value.trim_start_matches('0');
-            let entry = values.entry(key.to_owned()).or_insert_with(|| (0, member.description.clone(), false));
+            let entry = values
+                .entry(key.to_owned())
+                .or_insert_with(|| (0, member.description.clone(), false));
             entry.0 += 1;
             entry.2 |= entry.1 != member.description;
         }
@@ -1369,12 +1448,14 @@ fn enum_inventory(analysis: &simplelexer::tablelexer::DocumentAnalysis) -> Vec<E
             }
         }
         if !members.is_empty() {
-            inventory.push(EnumTable { header_offset: header.span.start, members });
+            inventory.push(EnumTable {
+                header_offset: header.span.start,
+                members,
+            });
         }
     }
     inventory
 }
-
 
 /// Advisory logical groups; physical tables and member provenance remain intact.
 #[derive(Debug, Serialize)]
@@ -1389,8 +1470,11 @@ fn enum_caption(document: &str, offset: usize) -> Option<(usize, String)> {
     let line = prefix.trim_end().lines().next_back()?.trim();
     let rest = line.strip_prefix("Table ")?;
     let (number, title) = rest.split_once(". ")?;
-    if number.is_empty() || title.trim().is_empty()
-        || !number.bytes().all(|b| b.is_ascii_digit() || b == b'-' || b == b'.')
+    if number.is_empty()
+        || title.trim().is_empty()
+        || !number
+            .bytes()
+            .all(|b| b.is_ascii_digit() || b == b'-' || b == b'.')
     {
         return None;
     }
@@ -1402,35 +1486,38 @@ pub(super) fn logical_enum_groups(document: &str, tables: &[EnumTable]) -> Vec<L
     let mut groups: Vec<LogicalEnumGroup> = Vec::new();
     for (index, table) in tables.iter().enumerate() {
         let caption = enum_caption(document, table.header_offset);
-        let continuation = index.checked_sub(1).and_then(|i| {
-            let previous = &tables[i];
-            let (position, label) = caption.as_ref()?;
-            let (_, previous_label) = enum_caption(document, previous.header_offset)?;
-            let last = previous.members.last()?;
-            let first = table.members.first()?;
-            let gap = document.get(last.row_end..*position)?;
-            if *label != previous_label || !gap.trim().is_empty() {
-                return None;
-            }
-            // Require identical physical header text and a consecutive numeric boundary.
-            let header = |offset| document.get(offset..)?.lines().next();
-            if header(previous.header_offset)? != header(table.header_offset)? {
-                return None;
-            }
-            let mut values = std::collections::BTreeSet::new();
-            for member in previous.members.iter().chain(&table.members) {
-                if !values.insert(member.value.parse::<u64>().ok()?) {
+        let continuation = index
+            .checked_sub(1)
+            .and_then(|i| {
+                let previous = &tables[i];
+                let (position, label) = caption.as_ref()?;
+                let (_, previous_label) = enum_caption(document, previous.header_offset)?;
+                let last = previous.members.last()?;
+                let first = table.members.first()?;
+                let gap = document.get(last.row_end..*position)?;
+                if *label != previous_label || !gap.trim().is_empty() {
                     return None;
                 }
-            }
-            if last.value.parse::<u64>().ok()?.checked_add(1)? != first.value.parse::<u64>().ok()? {
-                return None;
-            }
-            Some(())
-        }).is_some();
-        if continuation
-            && let Some(group) = groups.last_mut()
-        {
+                // Require identical physical header text and a consecutive numeric boundary.
+                let header = |offset| document.get(offset..)?.lines().next();
+                if header(previous.header_offset)? != header(table.header_offset)? {
+                    return None;
+                }
+                let mut values = std::collections::BTreeSet::new();
+                for member in previous.members.iter().chain(&table.members) {
+                    if !values.insert(member.value.parse::<u64>().ok()?) {
+                        return None;
+                    }
+                }
+                if last.value.parse::<u64>().ok()?.checked_add(1)?
+                    != first.value.parse::<u64>().ok()?
+                {
+                    return None;
+                }
+                Some(())
+            })
+            .is_some();
+        if continuation && let Some(group) = groups.last_mut() {
             group.physical_header_offsets.push(table.header_offset);
             group.member_count += table.members.len();
         } else {
@@ -1456,7 +1543,10 @@ mod logical_enum_tests {
         let groups = logical_enum_groups(source, &tables);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].member_count, 2);
-        let separate = source.replace("Table 1. Status\n\n| Code | Description |\n| --- | --- |\n| 1", "Table 2. Status\n\n| Code | Description |\n| --- | --- |\n| 1");
+        let separate = source.replace(
+            "Table 1. Status\n\n| Code | Description |\n| --- | --- |\n| 1",
+            "Table 2. Status\n\n| Code | Description |\n| --- | --- |\n| 1",
+        );
         let tables = enum_inventory(&simplelexer::tablelexer::DocumentAnalysis::parse(&separate));
         assert_eq!(logical_enum_groups(&separate, &tables).len(), 2);
     }
@@ -1472,7 +1562,9 @@ pub(super) struct LogicalRowCandidate {
 }
 
 /// Materialize the upstream lexer grid without inferring semantic ownership.
-pub(super) fn html_grid_inventory(analysis: &simplelexer::tablelexer::DocumentAnalysis) -> Vec<serde_json::Value> {
+pub(super) fn html_grid_inventory(
+    analysis: &simplelexer::tablelexer::DocumentAnalysis,
+) -> Vec<serde_json::Value> {
     use simplelexer::tablelexer::{GridSlot, TableType};
     let mut inventory = Vec::new();
     for item in &analysis.tables {
@@ -1505,10 +1597,16 @@ pub(super) fn html_grid_inventory(analysis: &simplelexer::tablelexer::DocumentAn
             }).collect();
             serde_json::json!({"row": index, "source_span": [row.span.start, row.span.end], "slots": slots})
         }).collect();
-        let issues: Vec<_> = grid.issues.iter().map(|issue| serde_json::json!({
-            "kind": format!("{:?}", issue.kind), "row": issue.row,
-            "source_span": [issue.span.start, issue.span.end],
-        })).collect();
+        let issues: Vec<_> = grid
+            .issues
+            .iter()
+            .map(|issue| {
+                serde_json::json!({
+                    "kind": format!("{:?}", issue.kind), "row": issue.row,
+                    "source_span": [issue.span.start, issue.span.end],
+                })
+            })
+            .collect();
         inventory.push(serde_json::json!({
             "source_span": [table.span.start, table.span.end],
             "width": grid.width, "rows": rows, "issues": issues,
@@ -1530,26 +1628,46 @@ mod html_grid_inventory_tests {
         let rows = &tables[0]["rows"];
         assert_eq!(rows[0]["slots"][2]["state"], "covered");
         assert_eq!(rows[1]["slots"][0]["state"], "covered");
-        assert_eq!(rows[1]["slots"][0]["source_span"], rows[0]["slots"][0]["source_span"]);
+        assert_eq!(
+            rows[1]["slots"][0]["source_span"],
+            rows[0]["slots"][0]["source_span"]
+        );
         assert_eq!(rows[1]["slots"][1]["state"], "empty");
         assert_eq!(rows[1]["slots"][2]["state"], "missing");
     }
 }
 
-pub(super) fn logical_row_candidates(analysis: &simplelexer::tablelexer::DocumentAnalysis) -> Vec<LogicalRowCandidate> {
+pub(super) fn logical_row_candidates(
+    analysis: &simplelexer::tablelexer::DocumentAnalysis,
+) -> Vec<LogicalRowCandidate> {
     let document = analysis.source;
     let mut result = Vec::new();
     for block in &analysis.blocks {
-        let simplelexer::tablelexer::DocumentChunk::Table(table) = block else { continue };
-        let Some(header) = table.rows.first() else { continue };
+        let simplelexer::tablelexer::DocumentChunk::Table(table) = block else {
+            continue;
+        };
+        let Some(header) = table.rows.first() else {
+            continue;
+        };
         let headers: Vec<_> = header.cells.iter().map(|cell| cell.text.trim()).collect();
-        let keys: Vec<_> = headers.iter().enumerate().filter(|(_, h)| {
-            ["parameter", "code", "key", "type"].iter().any(|name| h.eq_ignore_ascii_case(name))
-        }).map(|(index, _)| index).collect();
+        let keys: Vec<_> = headers
+            .iter()
+            .enumerate()
+            .filter(|(_, h)| {
+                ["parameter", "code", "key", "type"]
+                    .iter()
+                    .any(|name| h.eq_ignore_ascii_case(name))
+            })
+            .map(|(index, _)| index)
+            .collect();
         let key = if keys.len() == 1 { Some(keys[0]) } else { None };
         let mut pending: Option<LogicalRowCandidate> = None;
         for row in table.rows.iter().skip(1) {
-            let cells: Vec<_> = row.cells.iter().map(|cell| cell.text.trim().to_owned()).collect();
+            let cells: Vec<_> = row
+                .cells
+                .iter()
+                .map(|cell| cell.text.trim().to_owned())
+                .collect();
             // Markdown alignment separators are syntax, not data rows.
             if row.span.start >= header.span.end
                 && cells.len() == headers.len()
@@ -1558,20 +1676,27 @@ pub(super) fn logical_row_candidates(analysis: &simplelexer::tablelexer::Documen
                     let dashes = cell.trim_matches(':');
                     dashes.len() >= 3 && dashes.bytes().all(|b| b == b'-')
                 })
-                && document.get(header.span.end..row.span.start).is_some_and(|gap| gap.trim().is_empty())
-                && document.get(row.span.start..row.span.end).is_some_and(|raw| !raw.trim_start().starts_with('<'))
+                && document
+                    .get(header.span.end..row.span.start)
+                    .is_some_and(|gap| gap.trim().is_empty())
+                && document
+                    .get(row.span.start..row.span.end)
+                    .is_some_and(|raw| !raw.trim_start().starts_with('<'))
             {
                 continue;
             }
             let span = (row.span.start, row.span.end);
             let continuation = key.is_some_and(|k| {
-                cells.len() == headers.len() && cells[k].is_empty()
+                cells.len() == headers.len()
+                    && cells[k].is_empty()
                     && cells.iter().any(|cell| !cell.is_empty())
             });
             if continuation
                 && let Some(previous) = pending.as_mut()
                 && previous.source_rows.last().is_some_and(|(_, end)| {
-                    document.get(*end..span.0).is_some_and(|gap| gap.trim().is_empty())
+                    document
+                        .get(*end..span.0)
+                        .is_some_and(|gap| gap.trim().is_empty())
                 })
             {
                 previous.source_rows.push(span);
@@ -1643,7 +1768,10 @@ fn table_context_kind(headers: &[&str], cells: &[&str]) -> &'static str {
         return "other";
     }
     let unique = |name: &str| {
-        let mut matches = headers.iter().enumerate().filter(|(_, h)| h.eq_ignore_ascii_case(name));
+        let mut matches = headers
+            .iter()
+            .enumerate()
+            .filter(|(_, h)| h.eq_ignore_ascii_case(name));
         let (index, _) = matches.next()?;
         matches.next().is_none().then_some(index)
     };
@@ -1654,7 +1782,8 @@ fn table_context_kind(headers: &[&str], cells: &[&str]) -> &'static str {
         return "parameter";
     }
     if let (Some(a), Some(b)) = (unique("code"), unique("description"))
-        && populated(a, b) && cells[a].bytes().all(|c| c.is_ascii_digit())
+        && populated(a, b)
+        && cells[a].bytes().all(|c| c.is_ascii_digit())
     {
         return "enum";
     }
@@ -1675,16 +1804,23 @@ pub(super) fn original_table_role_stats(
     analysis: &simplelexer::tablelexer::DocumentAnalysis,
     pre_normalized: &str,
 ) -> OriginalTableRoleStats {
-    let mut stats = OriginalTableRoleStats { enum_inventory: enum_inventory(analysis), ..Default::default() };
+    let mut stats = OriginalTableRoleStats {
+        enum_inventory: enum_inventory(analysis),
+        ..Default::default()
+    };
     for candidate in candidates {
         for (fact_index, fact) in candidate.facts.iter().enumerate() {
             let anchor = (|| {
-                if fact.source_locator_ambiguous { return None; }
+                if fact.source_locator_ambiguous {
+                    return None;
+                }
                 let index = source_window_index(&candidate.id)?;
                 let window = sources.get(index)?;
                 let offset = fact.source_byte_offset?;
                 let quote = fact.evidence_quote.as_deref()?;
-                if quote.trim().is_empty() || window.get(offset..offset.checked_add(quote.len())?) != Some(quote) {
+                if quote.trim().is_empty()
+                    || window.get(offset..offset.checked_add(quote.len())?) != Some(quote)
+                {
                     return None;
                 }
                 let absolute = starts.get(index)?.checked_add(offset)?;
@@ -1699,20 +1835,27 @@ pub(super) fn original_table_role_stats(
                 stats.unmapped += 1;
                 continue;
             };
-            let (begin, end, is_exact) = match original_source_span(analysis, normalized, pre_normalized, absolute, quote) {
-                Ok(span) => span,
-                Err(error) => {
-                    match error {
-                        SourceMappingError::Missing => stats.missing_mapping += 1,
-                        SourceMappingError::Ambiguous => stats.ambiguous_mapping += 1,
-                        SourceMappingError::ChangedRow => stats.changed_source_row += 1,
+            let (begin, end, is_exact) =
+                match original_source_span(analysis, normalized, pre_normalized, absolute, quote) {
+                    Ok(span) => span,
+                    Err(error) => {
+                        match error {
+                            SourceMappingError::Missing => stats.missing_mapping += 1,
+                            SourceMappingError::Ambiguous => stats.ambiguous_mapping += 1,
+                            SourceMappingError::ChangedRow => stats.changed_source_row += 1,
+                        }
+                        stats.unmapped += 1;
+                        continue;
                     }
-                    stats.unmapped += 1;
-                    continue;
-                }
-            };
-            if is_exact { stats.exact_mapping += 1; } else { stats.row_mapping += 1; }
-            stats.assertion_spans.insert((candidate.id.clone(), fact_index), (begin, end, is_exact));
+                };
+            if is_exact {
+                stats.exact_mapping += 1;
+            } else {
+                stats.row_mapping += 1;
+            }
+            stats
+                .assertion_spans
+                .insert((candidate.id.clone(), fact_index), (begin, end, is_exact));
             let Some((table, row)) = analysis.source_row_at(begin) else {
                 stats.outside_table += 1;
                 continue;
@@ -1731,8 +1874,13 @@ pub(super) fn original_table_role_stats(
                 "parameter" => stats.parameter_row += 1,
                 "enum" => {
                     stats.enum_member_candidate += 1;
-                    let mut matches = stats.enum_inventory.iter_mut().flat_map(|table| table.members.iter_mut())
-                        .filter(|member| member.row_start == row.span.start && member.row_end == row.span.end);
+                    let mut matches = stats
+                        .enum_inventory
+                        .iter_mut()
+                        .flat_map(|table| table.members.iter_mut())
+                        .filter(|member| {
+                            member.row_start == row.span.start && member.row_end == row.span.end
+                        });
                     if let Some(member) = matches.next()
                         && matches.next().is_none()
                         && !member.duplicate_value
@@ -1745,7 +1893,7 @@ pub(super) fn original_table_role_stats(
                             exact_original_mapping: is_exact,
                         });
                     }
-                },
+                }
                 "key_value" => stats.key_value_row += 1,
                 _ => stats.other_table_row += 1,
             }
@@ -1765,18 +1913,41 @@ mod original_table_role_tests {
         let inventory = enum_inventory(&analysis);
         assert_eq!(inventory.len(), 2);
         assert_eq!(inventory[0].members.len(), 2);
-        assert!(inventory[0].members.iter().all(|m| m.duplicate_value && m.conflicting_description));
+        assert!(
+            inventory[0]
+                .members
+                .iter()
+                .all(|m| m.duplicate_value && m.conflicting_description)
+        );
         assert!(!inventory[1].members[0].duplicate_value);
     }
 
     #[test]
     fn explicit_headers_distinguish_table_contexts() {
-        assert_eq!(table_context_kind(&["Code", "Description"], &["17", "Busy"]), "enum");
-        assert_eq!(table_context_kind(&["Parameter", "Description"], &["speed", "Velocity"]), "parameter");
-        assert_eq!(table_context_kind(&["Key", "Value"], &["mode", "auto"]), "key_value");
-        assert_eq!(table_context_kind(&["Code", "Description"], &["", "Continuation"]), "other");
-        assert_eq!(table_context_kind(&["Code", "Code", "Description"], &["1", "2", "Busy"]), "other");
-        assert_eq!(table_context_kind(&["Code", "Description"], &["1"]), "other");
+        assert_eq!(
+            table_context_kind(&["Code", "Description"], &["17", "Busy"]),
+            "enum"
+        );
+        assert_eq!(
+            table_context_kind(&["Parameter", "Description"], &["speed", "Velocity"]),
+            "parameter"
+        );
+        assert_eq!(
+            table_context_kind(&["Key", "Value"], &["mode", "auto"]),
+            "key_value"
+        );
+        assert_eq!(
+            table_context_kind(&["Code", "Description"], &["", "Continuation"]),
+            "other"
+        );
+        assert_eq!(
+            table_context_kind(&["Code", "Code", "Description"], &["1", "2", "Busy"]),
+            "other"
+        );
+        assert_eq!(
+            table_context_kind(&["Code", "Description"], &["1"]),
+            "other"
+        );
     }
 }
 
@@ -1801,7 +1972,6 @@ pub(super) fn parameter_facts_in_document(
     normalized: &simplelexer::tablelexer::NormalizedTableText,
     original: &str,
 ) -> Vec<ParameterFact> {
-    let structure = SourceStructure::from_document(document);
     let lines: Vec<&str> = document.lines().collect();
     let mut inventory = Vec::new();
     let mut seen = std::collections::BTreeSet::new();
@@ -1812,12 +1982,9 @@ pub(super) fn parameter_facts_in_document(
             continue;
         };
         for fact in &candidate.facts {
-            if !matches!(
-                resolve_fact_type_with_flattened_tables(
-                    window, *start, document, fact, true, &structure
-                ),
-                Err(ResolutionFailure::NoSourceType)
-            ) {
+            // Parameter evidence is independent of message ownership.
+            // Still reject invalid or ambiguous source locations.
+            if fact.source_locator_ambiguous {
                 continue;
             }
             let Some(absolute) = fact
@@ -1829,7 +1996,13 @@ pub(super) fn parameter_facts_in_document(
             let Some(quote) = fact.evidence_quote.as_deref() else {
                 continue;
             };
-            if document.get(absolute..absolute.saturating_add(quote.len())) != Some(quote) {
+            let Some(offset) = fact.source_byte_offset else {
+                continue;
+            };
+            if quote.trim().is_empty()
+                || offset.checked_add(quote.len()).and_then(|end| window.get(offset..end)) != Some(quote)
+                || absolute.checked_add(quote.len()).and_then(|end| document.get(absolute..end)) != Some(quote)
+            {
                 continue;
             }
             // The candidate offset belongs to the normalized view. Only
@@ -1910,36 +2083,54 @@ pub(super) fn parameter_definitions(document: &str) -> Vec<ParameterDefinition> 
     parameter_definitions_from_analysis(&analysis)
 }
 
-pub(super) fn parameter_definitions_from_analysis(analysis: &simplelexer::tablelexer::DocumentAnalysis<'_>) -> Vec<ParameterDefinition> {
+pub(super) fn parameter_definitions_from_analysis(
+    analysis: &simplelexer::tablelexer::DocumentAnalysis<'_>,
+) -> Vec<ParameterDefinition> {
     let document = analysis.source;
     let tree = super::source_tree::SourceTree::from_analysis(analysis);
     let lines: Vec<_> = document.lines().collect();
     let mut offset = 0;
-    let offsets: Vec<_> = document.split_inclusive('\n').map(|line| {
-        let start = offset;
-        offset += line.len();
-        start
-    }).collect();
+    let offsets: Vec<_> = document
+        .split_inclusive('\n')
+        .map(|line| {
+            let start = offset;
+            offset += line.len();
+            start
+        })
+        .collect();
     let mut definitions = Vec::new();
     for table in &tree.tables {
-        let Some(header) = table.rows.first() else { continue };
+        let Some(header) = table.rows.first() else {
+            continue;
+        };
         let unique_column = |name: &str| {
-            let mut matches = header.cells.iter().enumerate()
+            let mut matches = header
+                .cells
+                .iter()
+                .enumerate()
                 .filter(|(_, cell)| cell.eq_ignore_ascii_case(name));
             let (index, _) = matches.next()?;
             matches.next().is_none().then_some(index)
         };
         let (Some(name), Some(description)) =
-            (unique_column("parameter"), unique_column("description")) else { continue };
+            (unique_column("parameter"), unique_column("description"))
+        else {
+            continue;
+        };
         // Keep the conservative evidence policy. Do not interpret
         // escaped pipes or inline code containing pipes as verified columns.
         if lines[header.line].contains('\\') || lines[header.line].contains('`') {
             continue;
         }
         for row in table.rows.iter().skip(1) {
-            let (Some(parameter), Some(detail)) = (row.cells.get(name), row.cells.get(description)) else { continue };
+            let (Some(parameter), Some(detail)) = (row.cells.get(name), row.cells.get(description))
+            else {
+                continue;
+            };
             if parameter.is_empty()
-                || !parameter.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+                || !parameter
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'_')
                 || !parameter.bytes().any(|b| b.is_ascii_alphabetic())
                 || parameter.eq_ignore_ascii_case("reserved")
                 || detail.is_empty()
@@ -1951,7 +2142,9 @@ pub(super) fn parameter_definitions_from_analysis(analysis: &simplelexer::tablel
             definitions.push(ParameterDefinition {
                 parameter: parameter.clone(),
                 description: detail.clone(),
-                section: table.section.map(|index| lines[tree.sections[index].heading_line].to_owned())
+                section: table
+                    .section
+                    .map(|index| lines[tree.sections[index].heading_line].to_owned())
                     .unwrap_or_default(),
                 header_line: header.line + 1,
                 row_line: row.line + 1,
@@ -1993,21 +2186,40 @@ pub(super) fn resolve_parameter_entities<'a>(
     definitions: &'a [ParameterDefinition],
     assertions: &'a [ParameterFact],
 ) -> ParameterResolution<'a> {
-    let mut entities: Vec<_> = definitions.iter().map(|definition| {
-        let properties = definition.columns.iter().enumerate().filter_map(|(index, header)| {
-            let kind = match header.to_ascii_lowercase().as_str() {
-                "type" | "data type" | "datatype" => "data_type",
-                "unit" | "units" => "unit",
-                "range" | "value range" => "value_range",
-                "allowed values" | "valid values" => "allowed_values",
-                _ => return None,
-            };
-            let value = definition.cells.get(index)?.as_str();
-            if value.is_empty() { return None; }
-            Some(ParameterProperty { kind, column: index + 1, value })
-        }).collect();
-        ParameterEntity { definition, properties, assertions: Vec::new(), assertion_semantics_verified: false }
-    }).collect();
+    let mut entities: Vec<_> = definitions
+        .iter()
+        .map(|definition| {
+            let properties = definition
+                .columns
+                .iter()
+                .enumerate()
+                .filter_map(|(index, header)| {
+                    let kind = match header.to_ascii_lowercase().as_str() {
+                        "type" | "data type" | "datatype" => "data_type",
+                        "unit" | "units" => "unit",
+                        "range" | "value range" => "value_range",
+                        "allowed values" | "valid values" => "allowed_values",
+                        _ => return None,
+                    };
+                    let value = definition.cells.get(index)?.as_str();
+                    if value.is_empty() {
+                        return None;
+                    }
+                    Some(ParameterProperty {
+                        kind,
+                        column: index + 1,
+                        value,
+                    })
+                })
+                .collect();
+            ParameterEntity {
+                definition,
+                properties,
+                assertions: Vec::new(),
+                assertion_semantics_verified: false,
+            }
+        })
+        .collect();
     let mut unresolved_assertions = Vec::new();
     for assertion in assertions {
         let start = assertion.source_byte_offset;
@@ -2023,13 +2235,24 @@ pub(super) fn resolve_parameter_entities<'a>(
         }
         // A trailing line ending is harmless; any substantive cross-row
         // evidence is not. Names are case-sensitive and never global keys.
-        let content_end = start + assertion.evidence_quote.trim_end_matches(['\r', '\n']).len();
+        let content_end = start
+            + assertion
+                .evidence_quote
+                .trim_end_matches(['\r', '\n'])
+                .len();
         let mut matches = definitions.iter().enumerate().filter(|(_, definition)| {
             definition.parameter == assertion.parameter
                 && start >= definition.source_byte_offset
-                && content_end <= definition.source_byte_offset.saturating_add(definition.row_quote.len())
-                && document.get(definition.source_byte_offset..definition.source_byte_offset.saturating_add(definition.row_quote.len()))
-                    == Some(definition.row_quote.as_str())
+                && content_end
+                    <= definition
+                        .source_byte_offset
+                        .saturating_add(definition.row_quote.len())
+                && document.get(
+                    definition.source_byte_offset
+                        ..definition
+                            .source_byte_offset
+                            .saturating_add(definition.row_quote.len()),
+                ) == Some(definition.row_quote.as_str())
         });
         if let Some((index, _)) = matches.next()
             && matches.next().is_none()
@@ -2039,7 +2262,10 @@ pub(super) fn resolve_parameter_entities<'a>(
             unresolved_assertions.push(assertion);
         }
     }
-    ParameterResolution { entities, unresolved_assertions }
+    ParameterResolution {
+        entities,
+        unresolved_assertions,
+    }
 }
 
 #[cfg(test)]
@@ -2115,7 +2341,7 @@ pub(super) struct ParameterStructureAudit {
     /// Exact source lines for facts outside recognized parameter tables.
     pub other_unresolved_lines: Vec<usize>,
     /// Facts in an explicit message table row declaring its own type.
-    pub explicit_message_row_lines: Vec<(usize, char)>,
+    pub explicit_message_row_lines: Vec<(usize, String)>,
     /// Facts in a message table row without an explicit type declaration.
     pub untyped_message_row_lines: Vec<usize>,
     /// Facts outside lexer-recognized message table rows.
@@ -2155,7 +2381,7 @@ pub(super) struct RemainingRowNeighbor {
 }
 
 /// Classify observed source cells without attaching continuation text to
-/// preceding parameters or treating reserved message types as parameters.
+/// preceding parameters or inferring semantic entity types.
 fn audit_parameter_row_kind(cells: &[String]) -> &'static str {
     let first = cells.first().map(|s| s.trim()).unwrap_or("");
     let second = cells.get(1).map(|s| s.trim()).unwrap_or("");
@@ -2165,10 +2391,8 @@ fn audit_parameter_row_kind(cells: &[String]) -> &'static str {
     let tokens: Vec<_> = first.split_whitespace().collect();
     if tokens.len() == 2
         && tokens[1].eq_ignore_ascii_case("reserved")
-        && tokens[0].len() == 1
-        && tokens[0].bytes().all(|b| b.is_ascii_alphabetic())
     {
-        return "reserved_message_type";
+        return "reserved_marker_candidate";
     }
     // A named optional key can be explicitly repeated in the value cell.
     // This is only a candidate: no ownership or fact verification follows.
@@ -2194,7 +2418,7 @@ fn audit_parameter_row_kind(cells: &[String]) -> &'static str {
             .all(|b| b.is_ascii_alphanumeric() || b == b'_')
         && !second.is_empty()
     {
-        return "parameter_name_candidate";
+        return "single_token_first_cell";
     }
     "unclassified_row"
 }
@@ -2276,8 +2500,8 @@ fn record_remaining_lexer_row(
             }
         }
         let first = row.cells.first().map(|cell| cell.text.trim()).unwrap_or("");
-        if kind == "reserved_message_type" {
-            // Use the same syntax-based classifier for every reserved type.
+        if kind == "reserved_marker_candidate" {
+            // Record the lexical marker without inferring an entity type.
             result.reserved_marker_lines.push(line);
         } else if first.is_empty() || first.split_whitespace().count() > 5 {
             // A syntactic continuation candidate, not an inferred parameter.
@@ -2481,7 +2705,7 @@ pub(super) fn parameter_structure_audit(
                 if let Some(owner) = structure.table_row_type_at(offset) {
                     result
                         .explicit_message_row_lines
-                        .push((index + 1, char::from(owner)));
+                        .push((index + 1, owner));
                 } else if structure.is_message_table_row_at(offset) {
                     result.untyped_message_row_lines.push(index + 1);
                 } else {
@@ -2656,14 +2880,14 @@ pub(super) fn unresolved_fact_inventory_in_document(
 }
 
 /// Conservative lexical mentions only. These are NOT source-proven identities:
-/// a one-letter token must be quoted and immediately followed by "message"
+/// a nonempty quoted token must be quoted and immediately followed by "message"
 /// or "command". The extractor never assigns ownership from these mentions.
-fn explicit_message_mentions(statement: &str) -> Vec<char> {
-    // Only quoted, single-letter tokens followed by "message"/"command", or
+fn explicit_message_mentions(statement: &str) -> Vec<String> {
+    // Only quoted, nonempty tokens followed by "message"/"command", or
     // connected to such a token through a comma/and/or enumeration.
     // A mention is not an identity and does not establish fact ownership.
     let chars: Vec<char> = statement.chars().collect();
-    let mut tokens: Vec<(char, usize, usize)> = Vec::new();
+    let mut tokens: Vec<(String, usize, usize)> = Vec::new();
     let mut i = 0;
     while i + 2 < chars.len() {
         let closing = match chars[i] {
@@ -2676,16 +2900,19 @@ fn explicit_message_mentions(statement: &str) -> Vec<char> {
                 continue;
             }
         };
-        if chars[i + 1].is_ascii_alphabetic() && chars[i + 2] == closing {
-            tokens.push((chars[i + 1], i, i + 3));
-            i += 3;
+        if let Some(end) = (i + 1..chars.len()).find(|&j| chars[j] == closing) {
+            let token: String = chars[i + 1..end].iter().collect();
+            if !token.trim().is_empty() && !token.chars().any(char::is_whitespace) {
+                tokens.push((token, i, end + 1));
+            }
+            i = end + 1;
         } else {
             i += 1;
         }
     }
     let mut mentions = std::collections::BTreeSet::new();
-    for (index, &(letter, _, end)) in tokens.iter().enumerate() {
-        let tail: String = chars[end..].iter().take(32).collect();
+    for (index, (identifier, _, end)) in tokens.iter().enumerate() {
+        let tail: String = chars[*end..].iter().take(32).collect();
         let tail = tail.trim_start().to_ascii_lowercase();
         let is_message = ["message", "command"].iter().any(|word| {
             tail.strip_prefix(word)
@@ -2694,19 +2921,19 @@ fn explicit_message_mentions(statement: &str) -> Vec<char> {
         if !is_message {
             continue;
         }
-        mentions.insert(letter);
+        mentions.insert(identifier.clone());
         // Walk backwards through a syntactically connected list of quoted
         // tokens, never across ordinary prose or unrelated quoted fields.
         let mut cursor = index;
         while cursor > 0 {
-            let (_, _, previous_end) = tokens[cursor - 1];
-            let (_, current_start, _) = tokens[cursor];
-            let separator: String = chars[previous_end..current_start].iter().collect();
+            let (_, _, previous_end) = &tokens[cursor - 1];
+            let (_, current_start, _) = &tokens[cursor];
+            let separator: String = chars[*previous_end..*current_start].iter().collect();
             let separator = separator.trim().to_ascii_lowercase();
             if !matches!(separator.as_str(), "," | ", or" | ", and" | "or" | "and") {
                 break;
             }
-            mentions.insert(tokens[cursor - 1].0);
+            mentions.insert(tokens[cursor - 1].0.clone());
             cursor -= 1;
         }
     }
@@ -2868,7 +3095,7 @@ pub(super) fn table_boundary_blocked_assignments(
             unique.entry(key).or_insert_with(|| {
                 format!(
                     "line={line} byte={absolute} previous_type={} statement={:?} evidence={:?}",
-                    old_type as char,
+                    old_type,
                     fact.statement.chars().take(160).collect::<String>(),
                     fact.evidence_quote
                         .as_deref()
@@ -2962,7 +3189,7 @@ pub(super) fn generic_table_identity_gains(
                 true,
                 &previous,
             );
-            if old == Ok(new_type) {
+            if old == Ok(new_type.clone()) {
                 continue;
             }
             let Some(absolute) = fact
@@ -2991,8 +3218,8 @@ pub(super) fn generic_table_identity_gains(
             );
             gains.entry(key).or_insert_with(|| format!(
                 "line={line} byte={absolute} row={}..{} row_type={:?} previous={old:?} new_type={} statement={:?} evidence={:?}",
-                range.start, range.end, row_type.map(char::from),
-                char::from(new_type),
+                range.start, range.end, row_type,
+                new_type,
                 fact.statement.chars().take(140).collect::<String>(),
                 fact.evidence_quote.as_deref().unwrap_or("")
                     .chars().take(140).collect::<String>(),
@@ -3062,7 +3289,7 @@ pub(super) fn flattened_table_identity_gains(
                 if line.starts_with('#') || is_table_caption(line) {
                     break;
                 }
-                if super::explicit_type_label(line) == Some(letter) && line.contains('|') {
+                if explicit_identity_label(line) == Some(letter.clone()) && line.contains('|') {
                     declaration = Some(i + 1);
                     break;
                 }
@@ -3074,7 +3301,7 @@ pub(super) fn flattened_table_identity_gains(
                 .or_insert_with(|| format!(
                     "line={} type={} declaration_line={} reason=flattened_table_continuation statement={:?} source={:?}",
                     line_index + 1,
-                    letter as char,
+                    letter,
                     declaration.map_or("unknown".into(), |n| n.to_string()),
                     snippet(&fact.statement),
                     snippet(source_line)
@@ -3441,7 +3668,7 @@ pub(super) fn flattened_gain_provenance_audit(
             else {
                 continue;
             };
-            if tree.flattened_table_owner(document, line_index) != Some(letter) {
+            if tree.flattened_table_owner(document, line_index) != Some(letter.clone()) {
                 continue;
             }
             let Some(source_line) = lines.get(line_index) else {
@@ -3452,19 +3679,19 @@ pub(super) fn flattened_gain_provenance_audit(
             let quote_region = nearest
                 .and_then(|at| crate::utils::stringutils::line_index_at_byte_offset(document, at))
                 .and_then(|index| tree.flattened_table_owner(document, index));
-            let same_owner_region = quote_region == Some(letter);
+            let same_owner_region = quote_region == Some(letter.clone());
             let distance = nearest.map(|at| at.abs_diff(absolute));
             let (statement_status, statement_occurrences, statement_in_owner) =
                 statement_anchor_audit(document, &fact.statement, absolute, |at| {
                     crate::utils::stringutils::line_index_at_byte_offset(document, at)
                         .and_then(|index| tree.flattened_table_owner(document, index))
-                        == Some(letter)
+                        == Some(letter.clone())
                 });
             let unique_statement_byte =
                 unique_statement_offset_in_owner(document, &fact.statement, |at| {
                     crate::utils::stringutils::line_index_at_byte_offset(document, at)
                         .and_then(|index| tree.flattened_table_owner(document, index))
-                        == Some(letter)
+                        == Some(letter.clone())
                 });
             // Stored offsets are parent-window-relative, unlike the
             // document-absolute diagnostic locator computed above.
@@ -3499,7 +3726,7 @@ pub(super) fn flattened_gain_provenance_audit(
             audit.entry((absolute, fact.statement.clone(), quote.to_owned()))
                 .or_insert_with(|| format!(
                     "line={} byte={} type={} status={} occurrences={} nearest_quote_byte={nearest:?} distance={distance:?} same_owner_region={same_owner_region} statement_status={statement_status} statement_occurrences={statement_occurrences} statement_in_owner={statement_in_owner} unique_statement_byte={unique_statement_byte:?} stored_statement_byte={stored_statement_byte:?} stored_statement_matches={stored_statement_matches:?} stored_statement_agrees={stored_statement_agrees:?} statement_line={statement_line:?} statement_distance_from_quote={statement_distance_from_quote:?} statement_window_relation={statement_window_relation} window_start={start} window_len={} statement={:?} quote={:?} source_line={:?}",
-                    line_index + 1, absolute, letter as char, status, occurrences,
+                    line_index + 1, absolute, letter, status, occurrences,
                     window.len(), snippet(&fact.statement), snippet(quote), snippet(source_line)
                 ));
         }
@@ -3551,19 +3778,12 @@ pub(super) fn resolved_source_facts_in_document(
 }
 
 #[cfg(test)]
-fn source_fact_type(source: &str, fact: &CandidateFact) -> Option<u8> {
+fn source_fact_type(source: &str, fact: &CandidateFact) -> Option<String> {
     resolve_fact_type(source, fact).ok()
 }
 
-fn canonical_type_path(letter: u8) -> String {
-    if letter.is_ascii_uppercase() {
-        format!(
-            "messages/upper_{}.md",
-            (letter as char).to_ascii_lowercase()
-        )
-    } else {
-        format!("messages/{}.md", letter as char)
-    }
+fn canonical_type_path(label: String) -> String {
+    super::encoded_message_path(&label)
 }
 
 /// Explain unresolved P4 facts without changing the acceptance policy.
@@ -3658,7 +3878,9 @@ pub(super) fn original_source_span(
     absolute: usize,
     quote: &str,
 ) -> Result<(usize, usize, bool), SourceMappingError> {
-    let end = absolute.checked_add(quote.len()).ok_or(SourceMappingError::Missing)?;
+    let end = absolute
+        .checked_add(quote.len())
+        .ok_or(SourceMappingError::Missing)?;
     if let Some(begin) = normalized.source_offset(absolute)
         && let Some(finish) = begin.checked_add(quote.len())
         && analysis.source.get(begin..finish) == Some(quote)
@@ -3666,13 +3888,30 @@ pub(super) fn original_source_span(
     {
         return Ok((begin, finish, true));
     }
-    let mut rows = normalized.rows.iter().filter(|row| row.rendered.start <= absolute && end <= row.rendered.end);
+    let mut rows = normalized
+        .rows
+        .iter()
+        .filter(|row| row.rendered.start <= absolute && end <= row.rendered.end);
     let row = rows.next().ok_or(SourceMappingError::Missing)?;
-    if rows.next().is_some() { return Err(SourceMappingError::Ambiguous); }
+    if rows.next().is_some() {
+        return Err(SourceMappingError::Ambiguous);
+    }
     let span = &row.source;
     if analysis.source.get(span.clone()).is_none()
         || analysis.source.get(span.clone()) != pre_normalized.get(span.clone())
-        || !analysis.source_row_at(span.start).is_some_and(|(_, row)| row.span.start == span.start && row.span.end == span.end)
-    { return Err(SourceMappingError::ChangedRow); }
+        || !analysis
+            .source_row_at(span.start)
+            .is_some_and(|(_, row)| row.span.start == span.start && row.span.end == span.end)
+    {
+        return Err(SourceMappingError::ChangedRow);
+    }
     Ok((span.start, span.end, false))
+}
+
+
+fn explicit_identity_label(statement: &str) -> Option<String> {
+    super::explicit_type_label(statement).map(str::to_owned)
+}
+fn section_identity_label(source: &str, line: usize) -> Option<String> {
+    super::section_type_for_line(source, line).map(str::to_owned)
 }

@@ -52,7 +52,7 @@ const MAX_MERGE_CHARS: usize = 20_000;
 const MAX_AUDIT_PASSES: usize = 2;
 const AUDIT_VERIFICATION_PASS: usize = MAX_AUDIT_PASSES;
 
-const CHECKPOINT_VERSION: u32 = 16;
+const CHECKPOINT_VERSION: u32 = 17;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ExtractionCheckpoint {
@@ -86,14 +86,6 @@ struct ExtractionCheckpoint {
     candidates: Vec<message_identity::MessageCandidate>,
     #[serde(default)]
     recovery_candidates: Vec<message_identity::MessageCandidate>,
-}
-
-// v7 stored the projection generation in the fact-review version field.
-// Recognize that already-completed projection without replaying LLM work.
-fn migrate_identity_projection_version(checkpoint: &mut ExtractionCheckpoint) {
-    if checkpoint.identity_projection_version == 0 && checkpoint.fact_audit_version == 7 {
-        checkpoint.identity_projection_version = 1;
-    }
 }
 
 /// One source-attributed, independently deduplicated specification assertion.
@@ -401,6 +393,8 @@ struct SegmentedFact {
 struct SegmentedFile {
     path: String,
     #[serde(default)]
+    identifier: Option<String>,
+    #[serde(default)]
     identity_segment_id: Option<String>,
     facts: Vec<SegmentedFact>,
 }
@@ -413,11 +407,48 @@ struct SegmentedWindow {
 
 // Protocol identifiers are case-sensitive: an uppercase and lowercase
 // one-letter type can denote distinct messages in any source specification.
-// For compatibility, a single-letter messages/<lowercase>.md path may denote
-// the uppercase type only when the source does not declare the lowercase type.
-// If both are declared, the uppercase path must use upper_<lowercase>.md.
-// Resolve this from explicit source declarations, never from protocol names.
+// Encoded paths preserve case and avoid filesystem-dependent identifier syntax.
+fn encoded_message_path(identifier: &str) -> String {
+    let encoded: String = identifier.bytes().map(|byte| format!("{byte:02x}")).collect();
+    let name: String = identifier.chars().take(32).map(|ch| {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' { ch } else { '-' }
+    }).collect();
+    format!("messages/id_{name}_{encoded}.md")
+}
+
+fn encoded_message_identifier(path: &str) -> Option<String> {
+    let slug = path.strip_prefix("messages/id_")?.strip_suffix(".md")?;
+    let hex = slug.rsplit_once('_').map_or(slug, |(_, hex)| hex);
+    if hex.is_empty() || !hex.len().is_multiple_of(2) || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    let bytes = (0..hex.len()).step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16))
+        .collect::<Result<Vec<_>, _>>().ok()?;
+    let identifier = String::from_utf8(bytes).ok()?;
+    // Accept historical hex-only paths, but require canonical spelling for new paths.
+    if slug.contains('_') && encoded_message_path(&identifier) != path {
+        return None;
+    }
+    Some(identifier)
+}
+
+fn source_declares_identifier(identifier: &str, source: &str) -> bool {
+    source.lines().any(|line| {
+        explicit_type_label(line.trim().trim_start_matches('#').trim()) == Some(identifier)
+    })
+}
+
 pub fn declared_message_identity(path: &str, source: &str) -> bool {
+    if let Some(identifier) = encoded_message_identifier(path) {
+        return source_declares_identifier(&identifier, source);
+    }
+    legacy_declared_message_identity(path, source)
+}
+
+// Compatibility only: historical single-letter paths and declarations.
+// Do not extend these heuristics to new identifier formats.
+fn legacy_declared_message_identity(path: &str, source: &str) -> bool {
     let slug = path
         .strip_prefix("messages/")
         .and_then(|s| s.strip_suffix(".md"))
@@ -477,28 +508,25 @@ fn parse_segmented_window(response: &str, source: &str) -> Result<ExtractedRecor
 // An explicit type label inside an assertion is stronger evidence of ownership
 // than the destination chosen by the model. Reject contradictory labels instead
 // of allowing a later quote audit to mark the wrong message as supported.
-fn explicit_type_label(statement: &str) -> Option<u8> {
+fn explicit_type_label(statement: &str) -> Option<&str> {
     let text = statement.trim_start().trim_start_matches('|').trim_start();
     let rest = text.strip_prefix("Type:")?.trim_start();
-    let letter = rest.as_bytes().first().copied()?;
-    if !letter.is_ascii_alphabetic() {
-        return None;
-    }
-    if rest
-        .as_bytes()
-        .get(1)
-        .is_some_and(|next| next.is_ascii_alphanumeric() || *next == b'_')
-    {
-        return None;
-    }
-    Some(letter)
+    let token = rest.split(|c: char| !c.is_alphanumeric() && c != '_').next()?;
+    (!token.is_empty()).then_some(token)
 }
 
-fn message_path_type(path: &str, identity_source: &str) -> Option<u8> {
+fn message_path_type(path: &str, identity_source: &str) -> Option<String> {
+    if let Some(identifier) = encoded_message_identifier(path) {
+        return Some(identifier);
+    }
+    legacy_message_path_type(path, identity_source)
+}
+
+fn legacy_message_path_type(path: &str, identity_source: &str) -> Option<String> {
     let slug = path.strip_prefix("messages/")?.strip_suffix(".md")?;
     if let Some(upper) = slug.strip_prefix("upper_") {
         return (upper.len() == 1 && upper.as_bytes()[0].is_ascii_lowercase())
-            .then(|| upper.as_bytes()[0].to_ascii_uppercase());
+            .then(|| char::from(upper.as_bytes()[0].to_ascii_uppercase()).to_string());
     }
     if slug.len() != 1 || !slug.as_bytes()[0].is_ascii_lowercase() {
         return None;
@@ -508,15 +536,15 @@ fn message_path_type(path: &str, identity_source: &str) -> Option<u8> {
     let has_upper = declared_message_identity(&upper_path, identity_source);
     let has_lower = identity_source
         .lines()
-        .any(|line| explicit_type_label(line.trim().trim_start_matches('#').trim()) == Some(lower));
+        .any(|line| explicit_type_label(line.trim().trim_start_matches('#').trim()).is_some_and(|id| id.as_bytes() == [lower]));
     if has_upper && has_lower {
         None
     } else {
-        Some(if has_upper {
+        Some(char::from(if has_upper {
             lower.to_ascii_uppercase()
         } else {
             lower
-        })
+        }).to_string())
     }
 }
 
@@ -524,7 +552,7 @@ fn message_path_type(path: &str, identity_source: &str) -> Option<u8> {
 // Only an explicit statement or source identity may resolve it.
 fn fact_message_path(
     path: &str,
-    fact_type: Option<u8>,
+    fact_type: Option<&str>,
     identity_source: &str,
 ) -> Result<String, String> {
     let Some(slug) = path
@@ -541,14 +569,14 @@ fn fact_message_path(
     let has_upper = declared_message_identity(&upper_path, identity_source);
     let has_lower = identity_source
         .lines()
-        .any(|line| explicit_type_label(line.trim().trim_start_matches('#').trim()) == Some(lower));
+        .any(|line| explicit_type_label(line.trim().trim_start_matches('#').trim()).is_some_and(|id| id.as_bytes() == [lower]));
     if has_upper && has_lower {
         return match fact_type {
-            Some(letter) if letter == lower => Ok(path.to_owned()),
-            Some(letter) if letter == lower.to_ascii_uppercase() => Ok(upper_path),
+            Some(letter) if letter.as_bytes() == [lower] => Ok(path.to_owned()),
+            Some(letter) if letter.as_bytes() == [lower.to_ascii_uppercase()] => Ok(upper_path),
             Some(letter) => Err(format!(
                 "Fact declares Type: {} but destination {} is a different message",
-                letter as char, path
+                letter, path
             )),
             None => Err(format!(
                 "Ambiguous uppercase/lowercase identity for {path}: fact has no explicit type evidence"
@@ -562,7 +590,7 @@ fn fact_message_path(
 // descriptive Type: A | ... entry does not establish an open-ended section.
 // Blank lines and new headings end ownership; unrelated source material must
 // remain unclassified rather than inherit a distant message type.
-fn section_type_for_line(source: &str, line_index: usize) -> Option<u8> {
+fn section_type_for_line(source: &str, line_index: usize) -> Option<&str> {
     let lines: Vec<&str> = source.lines().collect();
     if line_index >= lines.len() {
         return None;
@@ -579,7 +607,7 @@ fn section_type_for_line(source: &str, line_index: usize) -> Option<u8> {
         if let Some(letter) = explicit_type_label(heading)
             && heading.strip_prefix("Type:").is_some_and(|rest| {
                 let rest = rest.trim();
-                rest.len() == 1 && rest.as_bytes()[0].is_ascii_alphabetic()
+                rest == letter
             })
         {
             return Some(letter);
@@ -589,6 +617,23 @@ fn section_type_for_line(source: &str, line_index: usize) -> Option<u8> {
         }
     }
     None
+}
+
+// Legacy output naming adapter. This is not an entity identifier or a
+// source declaration. Keep compatibility policy out of extraction parsing.
+fn legacy_message_output_path(path: &str, identity_source: &str) -> String {
+    if let Some(slug) = path
+        .strip_prefix("messages/type_")
+        .and_then(|name| name.strip_suffix(".md"))
+        && slug.len() == 1
+        && slug.bytes().all(|byte| byte.is_ascii_lowercase())
+    {
+        let candidate = format!("messages/{slug}.md");
+        if declared_message_identity(&candidate, identity_source) {
+            return candidate;
+        }
+    }
+    path.to_owned()
 }
 
 // The declaration may be in a different chunk from the supporting fact.
@@ -633,24 +678,15 @@ fn parse_segmented_window_with_identity(
     let segments = evidence_segments(source);
     let mut result: ExtractedRecords = Vec::new();
     for file in parsed.files {
-        if !valid_spec_path(&file.path) {
-            return Err(format!("Invalid specification path: {}", file.path));
-        }
-        // Normalize the common model spelling "type_g" only when the source
-        // explicitly declares Type: G. Never infer identity from the filename.
-        let mut path = file.path.clone();
-        if let Some(slug) = path
-            .strip_prefix("messages/type_")
-            .and_then(|name| name.strip_suffix(".md"))
-            && slug.len() == 1
-            && slug.bytes().all(|byte| byte.is_ascii_lowercase())
-        {
-            let candidate = format!("messages/{slug}.md");
-            let declared = declared_message_identity(&candidate, identity_source);
-            if declared {
-                path = candidate;
+        let path = if let Some(identifier) = file.identifier.as_deref() {
+            explicit_message_destination(&file.path, identifier)
+                .ok_or("Invalid message identifier or destination")?
+        } else {
+            if !valid_spec_path(&file.path) {
+                return Err(format!("Invalid specification path: {}", file.path));
             }
-        }
+            legacy_message_output_path(&file.path, identity_source)
+        };
         let mut identity_id = file.identity_segment_id.as_deref();
         for fact in &file.facts {
             if let Some(id) = fact.identity_segment_id.as_deref() {
@@ -663,17 +699,25 @@ fn parse_segmented_window_with_identity(
                 identity_id = Some(id);
             }
         }
+        let declares_identity = |text: &str| {
+            if let Some(identifier) = file.identifier.as_deref() {
+                source_declares_identifier(identifier, text)
+            } else {
+                declared_message_identity(&path, text)
+            }
+        };
         if path.starts_with("messages/")
-            && !declared_message_identity(&path, identity_source)
+            && !declares_identity(identity_source)
             && !identity_id
                 .and_then(|id| segments.iter().find(|segment| segment.id == id))
-                .is_some_and(|segment| declared_message_identity(&path, &segment.text))
+                .is_some_and(|segment| declares_identity(&segment.text))
         {
             return Err(format!(
                 "Missing or invalid source-declared identity for {}",
                 file.path
             ));
         }
+        let expected_identity = file.identifier.clone().or_else(|| message_path_type(&path, identity_source));
         for fact in file.facts {
             let statement = fact.statement.trim();
             if statement.is_empty() || statement.chars().count() > 4_000 {
@@ -681,12 +725,12 @@ fn parse_segmented_window_with_identity(
             }
             if let (Some(actual), Some(expected)) = (
                 explicit_type_label(statement),
-                message_path_type(&path, identity_source),
+                expected_identity.as_deref(),
             ) && actual != expected
             {
                 return Err(format!(
                     "Fact declares Type: {} but destination {} requires Type: {}",
-                    actual as char, path, expected as char
+                    actual, path, expected
                 ));
             }
             let quote = segments
@@ -705,12 +749,12 @@ fn parse_segmented_window_with_identity(
                         explicit_type_label(&segment.text)
                             .or_else(|| section_type_for_line(source, segment.line_index))
                     }),
-                message_path_type(&path, identity_source),
+                expected_identity.as_deref(),
             ) && evidence_type != expected
             {
                 return Err(format!(
                     "Evidence declares Type: {} but destination {} requires Type: {}",
-                    evidence_type as char, path, expected as char
+                    evidence_type, path, expected
                 ));
             }
             let evidence_type = segments
@@ -726,11 +770,14 @@ fn parse_segmented_window_with_identity(
             {
                 return Err(format!(
                     "Fact Type: {} contradicts evidence Type: {}",
-                    a as char, b as char
+                    a, b
                 ));
             }
-            let destination =
-                fact_message_path(&path, statement_type.or(evidence_type), identity_source)?;
+            let destination = if file.identifier.is_some() {
+                path.clone()
+            } else {
+                fact_message_path(&path, statement_type.or(evidence_type), identity_source)?
+            };
             if let Some((_, existing)) = result
                 .iter_mut()
                 .find(|(existing_path, _)| existing_path == &destination)
@@ -796,6 +843,7 @@ fn parse_segmented_window_recoverable(
                         for fact in &parsed_file.facts {
                             let isolated = serde_json::json!({"files": [{
                                 "path": parsed_file.path,
+                                "identifier": parsed_file.identifier,
                                 "identity_segment_id": parsed_file.identity_segment_id,
                                 "facts": [fact],
                             }]});
@@ -1099,6 +1147,9 @@ fn canonical_message_path(path: &str, fragment: &str) -> Result<String, String> 
     if !path.starts_with("messages/") {
         return Ok(path.to_owned());
     }
+    if let Some(identifier) = encoded_message_identifier(path) {
+        return Ok(encoded_message_path(&identifier));
+    }
     let slug = path
         .strip_prefix("messages/")
         .and_then(|name| name.strip_suffix(".md"))
@@ -1188,10 +1239,7 @@ fn extraction_fingerprint(source: &str, prompts: &[&str]) -> String {
 
 /// Export the unverified inventory without overwriting any existing artifact.
 /// This is deliberately independent of checkpoint and message publication.
-fn export_parameter_inventory(
-    path: &Path,
-    facts: &[impl Serialize],
-) -> Result<(), String> {
+fn export_parameter_inventory(path: &Path, facts: &[impl Serialize]) -> Result<(), String> {
     use std::io::Write;
     let data = serde_json::to_vec_pretty(facts)
         .map_err(|err| format!("Cannot serialize parameter inventory: {err}"))?;
@@ -1238,6 +1286,7 @@ fn load_checkpoint(
     let checkpoint: ExtractionCheckpoint = serde_json::from_slice(&data)
         .map_err(|err| format!("Invalid extraction checkpoint: {err}"))?;
     if checkpoint.version != CHECKPOINT_VERSION
+        || !matches!(checkpoint.identity_projection_version, 0 | 3)
         || checkpoint.source_fingerprint != fingerprint
         || checkpoint.next_chunk > total_chunks
         || checkpoint.coverage_next_chunk > checkpoint.next_chunk
@@ -1584,6 +1633,17 @@ pub fn parse_file_records(response: &str) -> Result<Vec<(String, String)>, Strin
     Ok(records)
 }
 
+// Interpret model destinations without treating a proposed name as evidence.
+fn explicit_message_destination(path: &str, identifier: &str) -> Option<String> {
+    if identifier.is_empty() {
+        return None;
+    }
+    let encoded = encoded_message_path(identifier);
+    let raw_matches = !identifier.contains(['/', '\\']) &&
+        path.strip_prefix("messages/").and_then(|s| s.strip_suffix(".md")) == Some(identifier);
+    (path == "messages/" || path == encoded || raw_matches).then_some(encoded)
+}
+
 pub fn valid_spec_path(path: &str) -> bool {
     if matches!(path, "general.md" | "infrastructure.md") {
         return true;
@@ -1594,6 +1654,9 @@ pub fn valid_spec_path(path: &str) -> bool {
     else {
         return false;
     };
+    if slug.starts_with("id_") {
+        return encoded_message_identifier(path).is_some();
+    }
     !slug.is_empty()
         && slug
             .bytes()
@@ -1712,8 +1775,8 @@ fn write_spec_directory(
 }
 
 // The runtime prompt contracts are fingerprinted together with the source.
-const JSON_EXTRACT_PROMPT: &str = r#"Extract concise atomic protocol facts from numbered SOURCE segments. Return exactly one JSON object: {"files":[{"path":"general.md","facts":[{"statement":"short assertion","segment_id":"S1"}]}]}. Allowed paths: general.md, infrastructure.md, messages/<lowercase-slug>.md. For a messages/ file, include "identity_segment_id":"S2" ONLY when a local SOURCE segment explicitly declares its message name (for example Type: A). If the declaration is in another chunk, omit identity_segment_id; the workflow verifies identity against the full document. Every fact must cite one supporting segment_id. Never invent IDs. Put identity_segment_id ONLY on each file, NEVER inside facts. Do not invent paths such as messages/type_g.md when Type: G means messages/g.md. Keep uppercase and lowercase one-letter message types separate: when both X and x exist, write X to messages/upper_x.md and x to messages/x.md. Omit unsupported facts. Empty: {"files":[]}. No copied quotes, Markdown fences or commentary."#;
-const JSON_COVERAGE_PROMPT: &str = r#"Independently discover missing protocol messages from numbered SOURCE segments. Return exactly one JSON object: {"files":[{"path":"messages/<lowercase-slug>.md","identity_segment_id":"S1","facts":[{"statement":"short atomic assertion","segment_id":"S2"}]}]}. Empty: {"files":[]}. Include identity_segment_id only when a local SOURCE segment explicitly declares the message, not merely mentions it. Omit it when the declaration is elsewhere; the workflow validates the identity against the full document. Use existing segment IDs only. Put identity_segment_id ONLY on each file, NEVER inside facts. For one-letter message types, preserve case: when both X and x are declared, use messages/upper_x.md for X and messages/x.md for x. Never mix their facts. A Type: G row identifies messages/g.md, not messages/type_g.md. No general.md, infrastructure.md, copied quotes, Markdown or commentary."#;
+const JSON_EXTRACT_PROMPT: &str = r#"Extract concise atomic protocol facts from numbered SOURCE segments. Return exactly one JSON object: {"files":[{"path":"general.md","facts":[{"statement":"short assertion","segment_id":"S1"}]}]}. Allowed paths: general.md, infrastructure.md, messages/. For messages/ include an identifier field containing the exact declared identifier. For a messages/ file, include "identity_segment_id":"S2" ONLY when a local SOURCE segment explicitly declares its message name. If the declaration is in another chunk, omit identity_segment_id; the workflow verifies identity against the full document. Every fact must cite one supporting segment_id. Never invent IDs. Put identity_segment_id ONLY on each file, NEVER inside facts. Preserve the exact spelling of declared identifiers. Distinguish identifiers that differ in case. Return the identifier verbatim; Rust constructs the output filename. Never lowercase the identifier itself. A filename is not evidence of identity. Omit unsupported facts. Empty: {"files":[]}. No copied quotes, Markdown fences or commentary."#;
+const JSON_COVERAGE_PROMPT: &str = r#"Independently discover missing protocol messages from numbered SOURCE segments. Return exactly one JSON object: {"files":[{"path":"messages/","identifier":"exact declared identifier","identity_segment_id":"S1","facts":[{"statement":"short atomic assertion","segment_id":"S2"}]}]}. Empty: {"files":[]}. Include identity_segment_id only when a local SOURCE segment explicitly declares the message, not merely mentions it. Omit it when the declaration is elsewhere; the workflow validates the identity against the full document. Use existing segment IDs only. Put identity_segment_id ONLY on each file, NEVER inside facts. Preserve declared identifier spelling and case. Return the identifier verbatim; Rust constructs the output filename. Never combine facts of distinct identities. Derive declarations from the supplied source rather than assuming a particular identifier syntax. No general.md, infrastructure.md, copied quotes, Markdown or commentary."#;
 
 pub struct ChunkedTransformWorkflow<'a> {
     llm_call: LlmCall<'a>,
@@ -1765,6 +1828,46 @@ impl<'a> ChunkedTransformWorkflow<'a> {
 
 impl Workflow for ChunkedTransformWorkflow<'_> {
     fn execute(&self) -> WorkflowResult {
+        let read_flag = |name: &str| -> Result<bool, String> {
+            let result = match std::env::var(name) {
+                Ok(value) => crate::utils::stringutils::parse_optional_bool(Some(&value)),
+                Err(std::env::VarError::NotPresent) => Ok(false),
+                Err(err) => Err(err.to_string()),
+            };
+            result.map_err(|err| format!("{name}: {err}"))
+        };
+        let aifix_identity_replay = match read_flag("AIFIX_IDENTITY_REPLAY") {
+            Ok(enabled) => enabled,
+            Err(err) => return WorkflowResult::Error(err),
+        };
+        let aifix_semantic_verify = match read_flag("AIFIX_SEMANTIC_VERIFY") {
+            Ok(enabled) => enabled,
+            Err(err) => return WorkflowResult::Error(err),
+        };
+        let aifix_assertion_verify = match read_flag("AIFIX_ASSERTION_VERIFY") {
+            Ok(enabled) => enabled,
+            Err(err) => return WorkflowResult::Error(err),
+        };
+        let aifix_relation_extract = match read_flag("AIFIX_RELATION_EXTRACT") {
+            Ok(enabled) => enabled,
+            Err(err) => return WorkflowResult::Error(err),
+        };
+        let aifix_llm_table_roles = match read_flag("AIFIX_LLM_TABLE_ROLES") {
+            Ok(enabled) => enabled,
+            Err(err) => return WorkflowResult::Error(err),
+        };
+        let aifix_llm_structure = match read_flag("AIFIX_LLM_STRUCTURE") {
+            Ok(enabled) => enabled,
+            Err(err) => return WorkflowResult::Error(err),
+        };
+        let aifix_export_parameter_inventory = match read_flag("AIFIX_EXPORT_PARAMETER_INVENTORY") {
+            Ok(enabled) => enabled,
+            Err(err) => return WorkflowResult::Error(err),
+        };
+        let aifix_structure_llm_replay = match read_flag("AIFIX_STRUCTURE_LLM_REPLAY") {
+            Ok(enabled) => enabled,
+            Err(err) => return WorkflowResult::Error(err),
+        };
         let (input, output) = match self.paths() {
             Ok(paths) => paths,
             Err(err) => return WorkflowResult::Error(err),
@@ -1789,9 +1892,68 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         let normalized_tables = simplelexer::tablelexer::normalize_table_text(&pre_normalized);
         let masked_source = normalized_tables.text.clone();
         let row_mappings = normalized_tables.rows.clone();
+        // Advisory only: each stage has its own byte coordinate space.
+        let integrity_stages: Vec<_> = [
+            ("original", source.as_str()),
+            ("pre_normalized", pre_normalized.as_str()),
+            ("normalized_masked_source", masked_source.as_str()),
+        ].into_iter().map(|(stage, text)| {
+            let issues: Vec<_> = crate::utils::stringutils::encoded_angle_issues(text)
+                .into_iter().map(|(start, end, kind)| serde_json::json!({
+                    "start": start, "end": end, "kind": kind,
+                    "line": crate::utils::stringutils::line_index_at_byte_offset(text, start).map(|line| line + 1),
+                })).collect();
+            println!("## [CHUNKED] DOCUMENT INTEGRITY: stage={stage} findings={} (advisory)", issues.len());
+            serde_json::json!({"coordinate_space": stage, "issues": issues})
+        }).collect();
+        if let Ok(path) = std::env::var("AIFIX_COVERAGE_AUDIT_JSON") {
+            let report = serde_json::json!({
+                "schema_version": 1, "diagnostic_only": true, "stages": integrity_stages
+            });
+            if let Err(err) = fs::write(format!("{path}.document-integrity.json"), report.to_string()) {
+                return WorkflowResult::Error(format!("Cannot write document integrity report: {err}"));
+            }
+        }
         // The normalized view is retained for legacy evidence and checkpoints.
         // Its byte spans are NOT interchangeable with source_analysis spans.
         let table_analysis = simplelexer::tablelexer::DocumentAnalysis::parse(&masked_source);
+        // Compare only consecutive physical rows within one lexer table.
+        let mut continuation_candidates = Vec::new();
+        for block in &table_analysis.blocks {
+            let simplelexer::tablelexer::DocumentChunk::Table(table) = block else { continue; };
+            for pair in table.rows.windows(2) {
+                let (first, second) = (&pair[0], &pair[1]);
+                for (column, (left, right)) in first.cells.iter().zip(second.cells.iter()).enumerate() {
+                    if let Some(fragment) = crate::utils::stringutils::encoded_angle_continuation(
+                        left.text, right.text,
+                    ) {
+                        continuation_candidates.push(serde_json::json!({
+                            "table_start": table.span.start,
+                            "earlier_row": first.span.start,
+                            "later_row": second.span.start,
+                            "column": column,
+                            "earlier_cell": left.text.to_string(),
+                            "later_cell": right.text.to_string(),
+                            "relation": "text_continuation",
+                            "evidence_kind": "encoded_angle_delimiter",
+                            "decoded_fragment": fragment,
+                            "semantic_verified": false
+                        }));
+                    }
+                }
+            }
+        }
+        println!("## [CHUNKED] DELIMITER CONTINUATIONS: candidates={} (advisory)", continuation_candidates.len());
+        if let Ok(path) = std::env::var("AIFIX_COVERAGE_AUDIT_JSON") {
+            let report = serde_json::json!({
+                "schema_version": 1, "diagnostic_only": true,
+                "coordinate_space": "normalized_masked_source",
+                "candidates": continuation_candidates
+            });
+            if let Err(err) = fs::write(format!("{path}.delimiter-continuations.json"), report.to_string()) {
+                return WorkflowResult::Error(format!("Cannot write delimiter continuation report: {err}"));
+            }
+        }
         let identity_context = message_identity::DocumentIdentityContext {
             document: &masked_source,
             analysis: &table_analysis,
@@ -1860,7 +2022,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             },
             Err(err) => return WorkflowResult::Error(err),
         };
-        if std::env::var_os("AIFIX_IDENTITY_REPLAY").is_some()
+        if aifix_identity_replay
             && (checkpoint.next_chunk != parts.len()
                 || checkpoint.coverage_next_chunk != parts.len()
                 || checkpoint.recovery_chunk.is_some()
@@ -1870,7 +2032,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 "Identity replay requires a completed extraction and coverage checkpoint; no LLM calls were made".into(),
             );
         }
-        if output.exists() {
+        if !aifix_identity_replay && output.exists() {
             return WorkflowResult::Error(format!(
                 "Output directory already exists: {}",
                 output.display()
@@ -2482,26 +2644,48 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         );
         println!(
             "## [CHUNKED] ORIGINAL TABLE ROLES: parameter_row={} enum_member_candidate={} key_value_row={} other_table_row={} outside_table={} unmapped={} (candidate fact occurrences; context only)",
-            table_roles.parameter_row, table_roles.enum_member_candidate,
-            table_roles.key_value_row, table_roles.other_table_row,
-            table_roles.outside_table, table_roles.unmapped,
+            table_roles.parameter_row,
+            table_roles.enum_member_candidate,
+            table_roles.key_value_row,
+            table_roles.other_table_row,
+            table_roles.outside_table,
+            table_roles.unmapped,
         );
         println!(
             "## [CHUNKED] ORIGINAL SOURCE MAPPING: exact={} structural_row={} invalid_anchor={} missing_mapping={} ambiguous_mapping={} changed_source_row={} (structural context is not exact original evidence)",
-            table_roles.exact_mapping, table_roles.row_mapping,
-            table_roles.invalid_anchor, table_roles.missing_mapping,
-            table_roles.ambiguous_mapping, table_roles.changed_source_row,
+            table_roles.exact_mapping,
+            table_roles.row_mapping,
+            table_roles.invalid_anchor,
+            table_roles.missing_mapping,
+            table_roles.ambiguous_mapping,
+            table_roles.changed_source_row,
         );
-        let enum_members = table_roles.enum_inventory.iter().flat_map(|table| &table.members);
+        let enum_members = table_roles
+            .enum_inventory
+            .iter()
+            .flat_map(|table| &table.members);
         let member_count = enum_members.clone().count();
-        let linked = enum_members.clone().map(|member| member.assertion_contexts.len()).sum::<usize>();
+        let linked = enum_members
+            .clone()
+            .map(|member| member.assertion_contexts.len())
+            .sum::<usize>();
         println!(
             "## [CHUNKED] ENUM ENTITY RESOLUTION: tables={} members={} linked_contexts={} unlinked_contexts={} duplicate_rows={} conflicting_rows={} members_without_context={} (assertion semantics unverified)",
-            table_roles.enum_inventory.len(), member_count, linked,
+            table_roles.enum_inventory.len(),
+            member_count,
+            linked,
             table_roles.enum_member_candidate.saturating_sub(linked),
-            enum_members.clone().filter(|member| member.duplicate_value).count(),
-            enum_members.clone().filter(|member| member.conflicting_description).count(),
-            enum_members.filter(|member| member.assertion_contexts.is_empty()).count(),
+            enum_members
+                .clone()
+                .filter(|member| member.duplicate_value)
+                .count(),
+            enum_members
+                .clone()
+                .filter(|member| member.conflicting_description)
+                .count(),
+            enum_members
+                .filter(|member| member.assertion_contexts.is_empty())
+                .count(),
         );
         let html_grids = message_identity::html_grid_inventory(&source_analysis);
         let mut states = std::collections::BTreeMap::<String, usize>::new();
@@ -2520,7 +2704,12 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 }
             }
         }
-        println!("## [CHUNKED] HTML GRID INVENTORY: tables={} rows={} slots={:?} (structural only)", html_grids.len(), grid_rows, states);
+        println!(
+            "## [CHUNKED] HTML GRID INVENTORY: tables={} rows={} slots={:?} (structural only)",
+            html_grids.len(),
+            grid_rows,
+            states
+        );
         if let Ok(output) = std::env::var("AIFIX_COVERAGE_AUDIT_JSON") {
             let path = format!("{output}.html-grids.json");
             let report = serde_json::json!({
@@ -2538,10 +2727,14 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             }
         }
         let logical_rows = message_identity::logical_row_candidates(&source_analysis);
-        let continuation_rows = logical_rows.iter().filter(|row| row.source_rows.len() > 1).count();
+        let continuation_rows = logical_rows
+            .iter()
+            .filter(|row| row.source_rows.len() > 1)
+            .count();
         println!(
             "## [CHUNKED] LOGICAL ROW RECONSTRUCTION: continuation_candidates={} unresolved_rows={} (advisory only)",
-            continuation_rows, logical_rows.len() - continuation_rows,
+            continuation_rows,
+            logical_rows.len() - continuation_rows,
         );
         if let Ok(output) = std::env::var("AIFIX_COVERAGE_AUDIT_JSON") {
             let path = format!("{output}.logical-rows.json");
@@ -2551,16 +2744,24 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 "assertion_semantics_verified": false,
                 "rows": logical_rows,
             });
-            match std::fs::write(&path, serde_json::to_string_pretty(&report).unwrap_or_default()) {
+            match std::fs::write(
+                &path,
+                serde_json::to_string_pretty(&report).unwrap_or_default(),
+            ) {
                 Ok(()) => println!("## [CHUNKED] LOGICAL ROWS: wrote {path:?} (read-only)"),
                 Err(error) => eprintln!("## [CHUNKED] LOGICAL ROWS: {error}"),
             }
         }
-        let logical_groups = message_identity::logical_enum_groups(&source, &table_roles.enum_inventory);
+        let logical_groups =
+            message_identity::logical_enum_groups(&source, &table_roles.enum_inventory);
         println!(
             "## [CHUNKED] LOGICAL ENUM GROUPS: physical_tables={} logical_groups={} continuation_groups={} (advisory only)",
-            table_roles.enum_inventory.len(), logical_groups.len(),
-            logical_groups.iter().filter(|group| group.physical_header_offsets.len() > 1).count(),
+            table_roles.enum_inventory.len(),
+            logical_groups.len(),
+            logical_groups
+                .iter()
+                .filter(|group| group.physical_header_offsets.len() > 1)
+                .count(),
         );
         if let Ok(output) = std::env::var("AIFIX_COVERAGE_AUDIT_JSON") {
             let path = format!("{output}.enum-inventory.json");
@@ -2571,7 +2772,10 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 "tables": table_roles.enum_inventory,
                 "logical_groups": logical_groups,
             });
-            match std::fs::write(&path, serde_json::to_string_pretty(&report).unwrap_or_default()) {
+            match std::fs::write(
+                &path,
+                serde_json::to_string_pretty(&report).unwrap_or_default(),
+            ) {
                 Ok(()) => println!("## [CHUNKED] ENUM INVENTORY: wrote {path:?} (read-only)"),
                 Err(error) => eprintln!("## [CHUNKED] ENUM INVENTORY: {error}"),
             }
@@ -2616,20 +2820,31 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             "## [CHUNKED] P4 PARAMETER INVENTORY: {} distinct source-backed parameter assertions; separate from message identity, not published",
             parameter_inventory.len()
         );
-        let parameter_definitions = message_identity::parameter_definitions_from_analysis(&source_analysis);
+        let parameter_definitions =
+            message_identity::parameter_definitions_from_analysis(&source_analysis);
         println!(
             "## [CHUNKED] PARAMETER DEFINITIONS: {} explicit original-source table rows (no message ownership inferred)",
             parameter_definitions.len()
         );
         let parameter_resolution = message_identity::resolve_parameter_entities(
-            &source, &parameter_definitions, &parameter_inventory,
+            &source,
+            &parameter_definitions,
+            &parameter_inventory,
         );
         println!(
             "## [CHUNKED] PARAMETER ENTITY RESOLUTION: entities={} linked_assertions={} unresolved_assertions={} literal_properties={} (assertion semantics unverified)",
             parameter_resolution.entities.len(),
-            parameter_resolution.entities.iter().map(|entity| entity.assertions.len()).sum::<usize>(),
+            parameter_resolution
+                .entities
+                .iter()
+                .map(|entity| entity.assertions.len())
+                .sum::<usize>(),
             parameter_resolution.unresolved_assertions.len(),
-            parameter_resolution.entities.iter().map(|entity| entity.properties.len()).sum::<usize>(),
+            parameter_resolution
+                .entities
+                .iter()
+                .map(|entity| entity.properties.len())
+                .sum::<usize>(),
         );
         let audit = message_identity::parameter_structure_audit(
             &checkpoint.candidates,
@@ -2693,8 +2908,11 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 protocol_model::stage(&checkpoint.candidates, &source_windows, &table_analysis);
             let model_output = format!("{output}.protocol-model.json");
             match serde_json::to_string_pretty(&staged_model.with_source_entities(
-                &parameter_resolution, &table_roles.enum_inventory, &logical_groups,
-                &logical_rows, &html_grids,
+                &parameter_resolution,
+                &table_roles.enum_inventory,
+                &logical_groups,
+                &logical_rows,
+                &html_grids,
             )) {
                 Ok(json) => {
                     if let Err(err) = fs::write(&model_output, format!("{json}\n")) {
@@ -2753,7 +2971,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             }
 
             // Explicit opt-in, bounded, diagnostic-only LLM verification.
-            if std::env::var_os("AIFIX_SEMANTIC_VERIFY").is_some() {
+            if aifix_semantic_verify {
                 let limit = std::env::var("AIFIX_SEMANTIC_VERIFY_LIMIT")
                     .ok()
                     .and_then(|value| value.parse::<usize>().ok())
@@ -2804,22 +3022,36 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 }
             }
             // Separate opt-in: assertion correctness, not extraction coverage.
-            if std::env::var_os("AIFIX_ASSERTION_VERIFY").is_some() {
+            if aifix_assertion_verify {
                 let limit = std::env::var("AIFIX_SEMANTIC_VERIFY_LIMIT")
-                    .ok().and_then(|value| value.parse::<usize>().ok())
-                    .unwrap_or(12).min(200);
-                let mut tasks = coverage_audit::assertion_review_tasks(
-                    &checkpoint.candidates, &source_windows,
+                    .ok()
+                    .and_then(|value| value.parse::<usize>().ok())
+                    .unwrap_or(12)
+                    .min(200);
+                let mut tasks =
+                    coverage_audit::assertion_review_tasks(&checkpoint.candidates, &source_windows);
+                coverage_audit::attach_original_context(
+                    &mut tasks,
+                    &table_roles,
+                    &source_analysis,
+                    &source_starts,
+                    &masked_source,
+                    &normalized_tables,
+                    &pre_normalized,
                 );
-                coverage_audit::attach_original_context(&mut tasks, &table_roles, &source_analysis, &source_starts, &masked_source, &normalized_tables, &pre_normalized);
                 // Explicit model identity is required for persistent reuse.
                 let model_key = std::env::var("AIFIX_ASSERTION_CACHE_MODEL")
-                    .ok().filter(|value| !value.trim().is_empty());
+                    .ok()
+                    .filter(|value| !value.trim().is_empty());
                 let cache_path = format!("{output}.assertion-cache.json");
                 let mut cache: std::collections::BTreeMap<String, String> = if model_key.is_some() {
-                    fs::read_to_string(&cache_path).ok()
-                        .and_then(|json| serde_json::from_str(&json).ok()).unwrap_or_default()
-                } else { Default::default() };
+                    fs::read_to_string(&cache_path)
+                        .ok()
+                        .and_then(|json| serde_json::from_str(&json).ok())
+                        .unwrap_or_default()
+                } else {
+                    Default::default()
+                };
                 let mut reviews = Vec::new();
                 let mut calls = 0;
                 let mut cache_hits = 0;
@@ -2836,29 +3068,58 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                     }
                     let context = serde_json::to_string(task).expect("serialize assertion task");
                     let budget = self.llm_call.max_tokens().min(512);
-                    let key = model_key.as_ref().map(|model| serde_json::json!([
-                        4, model, coverage_audit::ASSERTION_VERIFIER_PROMPT, budget, 0.0, context
-                    ]).to_string());
-                    let cached = key.as_ref().and_then(|key| cache.get(key))
-                        .and_then(|response| coverage_audit::validate_assertion_judgment(task.source_excerpt, response));
+                    let key = model_key.as_ref().map(|model| {
+                        serde_json::json!([
+                            4,
+                            model,
+                            coverage_audit::ASSERTION_VERIFIER_PROMPT,
+                            budget,
+                            0.0,
+                            context
+                        ])
+                        .to_string()
+                    });
+                    let cached = key
+                        .as_ref()
+                        .and_then(|key| cache.get(key))
+                        .and_then(|response| {
+                            coverage_audit::validate_assertion_judgment(
+                                task.source_excerpt,
+                                response,
+                            )
+                        });
                     let (judgment, method) = if let Some(judgment) = cached {
                         cache_hits += 1;
                         (Some(judgment), "cache")
                     } else {
-                        if calls >= limit { continue; }
+                        if calls >= limit {
+                            continue;
+                        }
                         calls += 1;
                         let response = match self.llm_call.run_text_step_limited_with_temperature(
-                            coverage_audit::ASSERTION_VERIFIER_PROMPT, &context, budget, 0.0,
+                            coverage_audit::ASSERTION_VERIFIER_PROMPT,
+                            &context,
+                            budget,
+                            0.0,
                         ) {
                             Ok(response) => response,
                             Err(err) => return WorkflowResult::LlmCallResult(err),
                         };
-                        let judgment = coverage_audit::validate_assertion_judgment(task.source_excerpt, &response);
-                        if judgment.is_some() && let Some(key) = key {
+                        let judgment = coverage_audit::validate_assertion_judgment(
+                            task.source_excerpt,
+                            &response,
+                        );
+                        if judgment.is_some()
+                            && let Some(key) = key
+                        {
                             cache.insert(key, response);
                             let temp = format!("{cache_path}.tmp");
-                            if let Err(err) = fs::write(&temp, serde_json::to_vec(&cache).expect("serialize cache"))
-                                .and_then(|()| fs::rename(&temp, &cache_path)) {
+                            if let Err(err) = fs::write(
+                                &temp,
+                                serde_json::to_vec(&cache).expect("serialize cache"),
+                            )
+                            .and_then(|()| fs::rename(&temp, &cache_path))
+                            {
                                 eprintln!("## [CHUNKED] ASSERTION CACHE: {err}");
                             }
                         }
@@ -2879,28 +3140,55 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 match serde_json::to_string_pretty(&report) {
                     Ok(json) => {
                         if let Err(err) = fs::write(&path, format!("{json}\n")) {
-                            eprintln!("## [CHUNKED] ASSERTION VERIFY: unable to write {path:?}: {err}");
+                            eprintln!(
+                                "## [CHUNKED] ASSERTION VERIFY: unable to write {path:?}: {err}"
+                            );
                         } else {
-                            println!("## [CHUNKED] ASSERTION VERIFY: wrote {path:?} (diagnostic only)");
+                            println!(
+                                "## [CHUNKED] ASSERTION VERIFY: wrote {path:?} (diagnostic only)"
+                            );
                         }
                     }
-                    Err(err) => eprintln!("## [CHUNKED] ASSERTION VERIFY: serialization failed: {err}"),
+                    Err(err) => {
+                        eprintln!("## [CHUNKED] ASSERTION VERIFY: serialization failed: {err}")
+                    }
                 }
             }
             // Independent relation extraction, including verbatim assertions.
-            if std::env::var_os("AIFIX_RELATION_EXTRACT").is_some() {
-                let limit = std::env::var("AIFIX_RELATION_LIMIT").ok()
-                    .and_then(|value| value.parse::<usize>().ok()).unwrap_or(12).min(200);
-                let mut tasks = coverage_audit::assertion_review_tasks(&checkpoint.candidates, &source_windows);
-                coverage_audit::attach_original_context(&mut tasks, &table_roles, &source_analysis, &source_starts, &masked_source, &normalized_tables, &pre_normalized);
-                let model_key = std::env::var("AIFIX_ASSERTION_CACHE_MODEL").ok()
+            if aifix_relation_extract {
+                let limit = std::env::var("AIFIX_RELATION_LIMIT")
+                    .ok()
+                    .and_then(|value| value.parse::<usize>().ok())
+                    .unwrap_or(12)
+                    .min(200);
+                let mut tasks =
+                    coverage_audit::assertion_review_tasks(&checkpoint.candidates, &source_windows);
+                coverage_audit::attach_original_context(
+                    &mut tasks,
+                    &table_roles,
+                    &source_analysis,
+                    &source_starts,
+                    &masked_source,
+                    &normalized_tables,
+                    &pre_normalized,
+                );
+                let model_key = std::env::var("AIFIX_ASSERTION_CACHE_MODEL")
+                    .ok()
                     .filter(|value| !value.trim().is_empty());
                 let cache_path = format!("{output}.relation-cache.json");
                 let mut cache: std::collections::BTreeMap<String, String> = if model_key.is_some() {
-                    fs::read_to_string(&cache_path).ok().and_then(|json| serde_json::from_str(&json).ok()).unwrap_or_default()
-                } else { Default::default() };
-                let retry_limit = std::env::var("AIFIX_RELATION_RETRY_LIMIT").ok()
-                    .and_then(|value| value.parse::<usize>().ok()).unwrap_or(0).min(200);
+                    fs::read_to_string(&cache_path)
+                        .ok()
+                        .and_then(|json| serde_json::from_str(&json).ok())
+                        .unwrap_or_default()
+                } else {
+                    Default::default()
+                };
+                let retry_limit = std::env::var("AIFIX_RELATION_RETRY_LIMIT")
+                    .ok()
+                    .and_then(|value| value.parse::<usize>().ok())
+                    .unwrap_or(0)
+                    .min(200);
                 let mut retry_calls = 0;
                 let mut retry_cache_hits = 0;
                 let mut reviews = Vec::new();
@@ -2909,18 +3197,31 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 for task in &tasks {
                     let context = serde_json::to_string(task).expect("serialize relation task");
                     let budget = self.llm_call.max_tokens().min(1024);
-                    let key = model_key.as_ref().map(|model| serde_json::json!([
-                        3, model, coverage_audit::RELATION_PROMPT, budget, 0.0, context
-                    ]).to_string());
+                    let key = model_key.as_ref().map(|model| {
+                        serde_json::json!([
+                            3,
+                            model,
+                            coverage_audit::RELATION_PROMPT,
+                            budget,
+                            0.0,
+                            context
+                        ])
+                        .to_string()
+                    });
                     let cached = key.as_ref().and_then(|key| cache.get(key)).cloned();
                     let (response, method) = if let Some(response) = cached {
                         cache_hits += 1;
                         (response, "cache")
                     } else {
-                        if calls >= limit { continue; }
+                        if calls >= limit {
+                            continue;
+                        }
                         calls += 1;
                         let response = match self.llm_call.run_text_step_limited_with_temperature(
-                            coverage_audit::RELATION_PROMPT, &context, budget, 0.0,
+                            coverage_audit::RELATION_PROMPT,
+                            &context,
+                            budget,
+                            0.0,
                         ) {
                             Ok(response) => response,
                             Err(err) => return WorkflowResult::LlmCallResult(err),
@@ -2928,8 +3229,12 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                         if let Some(key) = key {
                             cache.insert(key, response.clone());
                             let temp = format!("{cache_path}.tmp");
-                            if let Err(err) = fs::write(&temp, serde_json::to_vec(&cache).expect("serialize relation cache"))
-                                .and_then(|()| fs::rename(&temp, &cache_path)) {
+                            if let Err(err) = fs::write(
+                                &temp,
+                                serde_json::to_vec(&cache).expect("serialize relation cache"),
+                            )
+                            .and_then(|()| fs::rename(&temp, &cache_path))
+                            {
                                 eprintln!("## [CHUNKED] RELATION CACHE: {err}");
                             }
                         }
@@ -2939,18 +3244,29 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                     let mut retry = None;
                     if review.status != "valid" {
                         let retry_budget = self.llm_call.max_tokens().min(4096);
-                        let retry_key = model_key.as_ref().map(|model| serde_json::json!([
-                            "relation_retry_v2", model, coverage_audit::RELATION_PROMPT,
-                            retry_budget, 0.0, context
-                        ]).to_string());
-                        let cached_retry = retry_key.as_ref().and_then(|key| cache.get(key)).cloned();
+                        let retry_key = model_key.as_ref().map(|model| {
+                            serde_json::json!([
+                                "relation_retry_v2",
+                                model,
+                                coverage_audit::RELATION_PROMPT,
+                                retry_budget,
+                                0.0,
+                                context
+                            ])
+                            .to_string()
+                        });
+                        let cached_retry =
+                            retry_key.as_ref().and_then(|key| cache.get(key)).cloned();
                         let retry_response = if let Some(raw) = cached_retry {
                             retry_cache_hits += 1;
                             Some(raw)
                         } else if retry_calls < retry_limit && retry_key.is_some() {
                             retry_calls += 1;
                             let raw = match self.llm_call.run_text_step_limited_with_temperature(
-                                coverage_audit::RELATION_PROMPT, &context, retry_budget, 0.0,
+                                coverage_audit::RELATION_PROMPT,
+                                &context,
+                                retry_budget,
+                                0.0,
                             ) {
                                 Ok(raw) => raw,
                                 Err(err) => return WorkflowResult::LlmCallResult(err),
@@ -2958,15 +3274,22 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                             if let Some(key) = retry_key {
                                 cache.insert(key, raw.clone());
                                 let temp = format!("{cache_path}.tmp");
-                                if let Err(err) = fs::write(&temp, serde_json::to_vec(&cache).expect("serialize relation cache"))
-                                    .and_then(|()| fs::rename(&temp, &cache_path)) {
+                                if let Err(err) = fs::write(
+                                    &temp,
+                                    serde_json::to_vec(&cache).expect("serialize relation cache"),
+                                )
+                                .and_then(|()| fs::rename(&temp, &cache_path))
+                                {
                                     eprintln!("## [CHUNKED] RELATION CACHE: {err}");
                                 }
                             }
                             Some(raw)
-                        } else { None };
+                        } else {
+                            None
+                        };
                         if let Some(raw) = retry_response {
-                            let result = coverage_audit::review_relations(task.source_excerpt, &raw);
+                            let result =
+                                coverage_audit::review_relations(task.source_excerpt, &raw);
                             retry = Some(serde_json::json!({
                                 "raw_response": raw, "review": result, "token_budget": retry_budget,
                             }));
@@ -2980,11 +3303,63 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                     }));
                 }
                 let normalized = coverage_audit::normalized_hypotheses(&reviews);
+                let references = protocol_model::reference_candidates(
+                    &staged_model,
+                    &parameter_resolution,
+                    &table_roles.enum_inventory,
+                    &logical_groups,
+                    &normalized,
+                    &reviews,
+                    (&table_roles, &source_analysis),
+                );
+                let reference_path = format!("{output}.reference-candidates.json");
+                if let Err(err) = fs::write(
+                    &reference_path,
+                    serde_json::to_vec_pretty(&references).expect("serialize reference candidates"),
+                ) {
+                    eprintln!("## [CHUNKED] REFERENCE CANDIDATES: {err}");
+                } else {
+                    println!(
+                        "## [CHUNKED] REFERENCE CANDIDATES: wrote {reference_path:?} (diagnostic only)"
+                    );
+                }
+                let referenced = protocol_model::referenced_hypotheses(&normalized, &references);
+                let referenced_path = format!("{output}.referenced-hypotheses.json");
+                if let Err(err) = fs::write(
+                    &referenced_path,
+                    serde_json::to_vec_pretty(&referenced)
+                        .expect("serialize referenced hypotheses"),
+                ) {
+                    eprintln!("## [CHUNKED] REFERENCED HYPOTHESES: {err}");
+                } else {
+                    println!(
+                        "## [CHUNKED] REFERENCED HYPOTHESES: wrote {referenced_path:?} (diagnostic only)"
+                    );
+                }
+                let equivalence = protocol_model::candidate_equivalence_groups(&referenced);
+                let equivalence_path = format!("{output}.candidate-equivalence.json");
+                if let Err(err) = fs::write(
+                    &equivalence_path,
+                    serde_json::to_vec_pretty(&equivalence)
+                        .expect("serialize candidate equivalence"),
+                ) {
+                    eprintln!("## [CHUNKED] CANDIDATE EQUIVALENCE: {err}");
+                } else {
+                    println!(
+                        "## [CHUNKED] CANDIDATE EQUIVALENCE: wrote {equivalence_path:?} (diagnostic only)"
+                    );
+                }
                 let normalized_path = format!("{output}.normalized-hypotheses.json");
-                if let Err(err) = fs::write(&normalized_path, serde_json::to_vec_pretty(&normalized).expect("serialize normalized hypotheses")) {
+                if let Err(err) = fs::write(
+                    &normalized_path,
+                    serde_json::to_vec_pretty(&normalized)
+                        .expect("serialize normalized hypotheses"),
+                ) {
                     eprintln!("## [CHUNKED] NORMALIZED HYPOTHESES: {err}");
                 } else {
-                    println!("## [CHUNKED] NORMALIZED HYPOTHESES: wrote {normalized_path:?} (diagnostic only)");
+                    println!(
+                        "## [CHUNKED] NORMALIZED HYPOTHESES: wrote {normalized_path:?} (diagnostic only)"
+                    );
                 }
                 let report = serde_json::json!({
                     "schema_version": 5, "diagnostic_only": true, "eligible_tasks": tasks.len(),
@@ -2993,10 +3368,15 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                     "reviews": reviews,
                 });
                 let path = format!("{output}.semantic-relations.json");
-                if let Err(err) = fs::write(&path, serde_json::to_vec_pretty(&report).expect("serialize relation report")) {
+                if let Err(err) = fs::write(
+                    &path,
+                    serde_json::to_vec_pretty(&report).expect("serialize relation report"),
+                ) {
                     eprintln!("## [CHUNKED] RELATION EXTRACT: {err}");
                 } else {
-                    println!("## [CHUNKED] RELATION EXTRACT: wrote {path:?} (unverified hypotheses)");
+                    println!(
+                        "## [CHUNKED] RELATION EXTRACT: wrote {path:?} (unverified hypotheses)"
+                    );
                 }
             }
             let evidence_output = format!("{output}.evidence-coverage.json");
@@ -3110,15 +3490,140 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 line,
             );
         }
+        // Independent opt-in diagnostic: one bounded table sample per call.
+        if aifix_llm_table_roles {
+            let mut reports = Vec::new();
+            let mut cache_hits = 0usize;
+            let mut llm_calls = 0usize;
+            let mut failed_calls = 0usize;
+            let mut stopped = false;
+            let mut fatal_call_error = None;
+            let output = std::env::var("AIFIX_COVERAGE_AUDIT_JSON")
+                .unwrap_or_else(|_| "coverage-audit.json".to_owned());
+            let cache_dir = std::path::PathBuf::from(format!("{output}.table-role-cache"));
+            let cache_model = std::env::var("AIFIX_ASSERTION_CACHE_MODEL").ok()
+                .filter(|model| !model.trim().is_empty());
+            for block in &table_analysis.blocks {
+                let simplelexer::tablelexer::DocumentChunk::Table(table) = block else {
+                    continue;
+                };
+                if stopped {
+                    reports.push(serde_json::json!({"table_start": table.span.start, "status": "skipped_after_call_failure"}));
+                    continue;
+                }
+                let rows: Vec<_> = table.rows.iter().take(12).map(|row| llm_structure::RowEvidence {
+                    line: crate::utils::stringutils::line_index_at_byte_offset(&masked_source, row.span.start).unwrap_or(0) + 1,
+                    start: row.span.start,
+                    previous: None,
+                    next: None,
+                    cells: row.cells.iter().map(|cell| cell.text.to_string()).collect(),
+                }).collect();
+                if rows.is_empty() {
+                    reports.push(serde_json::json!({"table_start": table.span.start, "status": "empty_table"}));
+                    continue;
+                }
+                let context = masked_source[..table.span.start].lines().rev()
+                    .find(|line| line.trim_start().starts_with('#')).unwrap_or("");
+                let prompt = llm_structure::table_role_prompt(table.span.start, context, &rows);
+                if prompt.len() > 24000 {
+                    reports.push(serde_json::json!({"table_start": table.span.start, "status": "sample_too_large"}));
+                    continue;
+                }
+                let mut responses = Vec::new();
+                let mut call_failed = false;
+                let mut call_error = None;
+                for attempt in 0..2 {
+                    let cache_key = cache_model.as_ref().map(|model| serde_json::json!({
+                        "version": 1, "model": model, "prompt": prompt, "attempt": attempt,
+                        "temperature": 0.2, "max_tokens": self.llm_call.max_tokens().min(1024)
+                    }));
+                    let cache_path = cache_dir.join(format!("{}-{attempt}.json", table.span.start));
+                    if let Some(key) = &cache_key
+                        && let Ok(bytes) = fs::read(&cache_path)
+                        && let Ok(entry) = serde_json::from_slice::<serde_json::Value>(&bytes)
+                        && entry["key"] == *key
+                        && let Some(response) = entry["response"].as_str()
+                    {
+                        let check = llm_structure::table_role_report(table.span.start, &rows, &[response.to_owned()]);
+                        if check["accepted"].as_array().is_some_and(|items| !items.is_empty()) {
+                            cache_hits += 1;
+                            responses.push(response.to_owned());
+                            continue;
+                        }
+                    }
+                    llm_calls += 1;
+                    match self.llm_call.run_text_step_limited_with_temperature(
+                        &prompt, "Return only the requested JSON object.",
+                        self.llm_call.max_tokens().min(1024), 0.2,
+                    ) {
+                        Ok(response) => {
+                            let check = llm_structure::table_role_report(table.span.start, &rows, std::slice::from_ref(&response));
+                            if let Some(key) = cache_key
+                                && check["accepted"].as_array().is_some_and(|items| !items.is_empty())
+                            {
+                                let entry = serde_json::json!({"key": key, "response": response});
+                                let temp = cache_path.with_extension("tmp");
+                                if let Err(err) = fs::create_dir_all(&cache_dir)
+                                    .and_then(|_| fs::write(&temp, entry.to_string()))
+                                    .and_then(|_| fs::rename(&temp, &cache_path))
+                                {
+                                    eprintln!("## [CHUNKED] TABLE ROLE CACHE: {err}");
+                                }
+                            }
+                            responses.push(response);
+                        },
+                        Err(err) => {
+                            call_failed = true;
+                            failed_calls += 1;
+                            let detail = err.to_string();
+                            eprintln!("## [CHUNKED] TABLE ROLES: LLM call failed: {detail}");
+                            fatal_call_error = Some(err);
+                            call_error = Some(detail);
+                            break;
+                        }
+                    }
+                }
+                let mut report = llm_structure::table_role_report(table.span.start, &rows, &responses);
+                report["message_declaration_column_candidate"] = serde_json::json!(
+                    llm_structure::agreed_message_declaration_column(table.span.start, &rows, &responses)
+                );
+                report["call_failed"] = serde_json::json!(call_failed);
+                report["call_error"] = serde_json::json!(call_error);
+                report["status"] = serde_json::json!(if call_failed { "call_failed" } else { "completed" });
+                reports.push(report);
+                if call_failed { stopped = true; }
+            }
+            let path = format!("{output}.table-roles.json");
+            let report = serde_json::json!({"schema_version": 1, "diagnostic_only": true,
+                "coordinate_space": "normalized_masked_source", "sample_row_limit": 12,
+                "cache_hits": cache_hits, "llm_calls": llm_calls, "failed_calls": failed_calls,
+                "tables": reports});
+            if let Err(err) = fs::write(&path, serde_json::to_vec_pretty(&report).expect("serialize table roles")) {
+                eprintln!("## [CHUNKED] TABLE ROLES: {err}");
+            } else {
+                println!("## [CHUNKED] TABLE ROLES: wrote {path:?} (diagnostic only)");
+            }
+            if let Some(err) = fatal_call_error {
+                return WorkflowResult::LlmCallResult(err);
+            }
+        }
         // Opt-in shadow analysis: never changes the checkpoint, facts or identity projection.
-        if std::env::var_os("AIFIX_LLM_STRUCTURE").is_some() {
+        let llm_structure_enabled = aifix_llm_structure;
+        if llm_structure_enabled || !continuation_candidates.is_empty() {
             // Include the complete normalized-document lexer row and its immediate neighbors,
             // even when those neighbors have no unresolved facts of their own.
-            let targets: std::collections::BTreeSet<_> = audit
+            let mut targets: std::collections::BTreeSet<_> = audit
                 .remaining_row_neighbors
                 .iter()
                 .map(|neighbor| neighbor.row_start)
                 .collect();
+            for candidate in &continuation_candidates {
+                for field in ["earlier_row", "later_row"] {
+                    if let Some(start) = candidate[field].as_u64().and_then(|n| usize::try_from(n).ok()) {
+                        targets.insert(start);
+                    }
+                }
+            }
             let mut rows = std::collections::BTreeMap::new();
             for block in &table_analysis.blocks {
                 let simplelexer::tablelexer::DocumentChunk::Table(table) = block else {
@@ -3158,7 +3663,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             if !rows.is_empty() {
                 let prompt = llm_structure::prompt(&rows);
                 let mut responses = Vec::new();
-                for attempt in 0..3 {
+                for attempt in 0..if llm_structure_enabled { 3 } else { 0 } {
                     let response = match self.llm_call.run_text_step_limited_with_temperature(
                         &prompt,
                         "Return only source-backed structural row relationships in JSON.",
@@ -3186,12 +3691,19 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                     );
                 }
                 println!(
-                    "## [CHUNKED] LLM STRUCTURE SUMMARY: attempts=3 valid={} proposals={} (read-only; no identity inferred)",
+                    "## [CHUNKED] LLM STRUCTURE SUMMARY: attempts={} valid={} proposals={} (read-only; no identity inferred)",
+                    responses.len(),
                     valid,
                     ranked.len()
                 );
                 let graph =
                     llm_structure::source_graph(&rows, &ranked, valid, &coverage.unmatched_rows);
+                let continuation_report = llm_structure::continuation_graph_report(&graph, &continuation_candidates);
+                if let Ok(output) = std::env::var("AIFIX_COVERAGE_AUDIT_JSON")
+                    && let Err(err) = fs::write(format!("{output}.continuation-graph.json"), continuation_report.to_string())
+                {
+                    return WorkflowResult::Error(format!("Cannot write continuation graph: {err}"));
+                }
                 let units = llm_structure::semantic_units(&graph);
                 println!(
                     "## [CHUNKED] SEMANTIC UNITS: count={} (source-anchored, majority-supported continuation links; proposed only)",
@@ -3233,8 +3745,11 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                     .with_semantic_units(&graph, &units, &hypothetical);
                     let model_output = format!("{output}.protocol-model.json");
                     match serde_json::to_string_pretty(&model.with_source_entities(
-                        &parameter_resolution, &table_roles.enum_inventory, &logical_groups,
-                &logical_rows, &html_grids,
+                        &parameter_resolution,
+                        &table_roles.enum_inventory,
+                        &logical_groups,
+                        &logical_rows,
+                        &html_grids,
                     )) {
                         Ok(json) => {
                             if let Err(err) = fs::write(&model_output, format!("{json}\n")) {
@@ -3362,8 +3877,8 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 }
             }
         }
-        if std::env::var_os("AIFIX_EXPORT_PARAMETER_INVENTORY").is_some() {
-            if std::env::var_os("AIFIX_IDENTITY_REPLAY").is_none() {
+        if aifix_export_parameter_inventory {
+            if !aifix_identity_replay {
                 return WorkflowResult::Error(
                     "Parameter inventory export requires AIFIX_IDENTITY_REPLAY=1".into(),
                 );
@@ -3378,13 +3893,16 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             }
             let definitions_destination =
                 input.with_file_name(format!("{stem}_parameter-definitions.json"));
-            if let Err(err) = export_parameter_inventory(&definitions_destination, &parameter_definitions) {
+            if let Err(err) =
+                export_parameter_inventory(&definitions_destination, &parameter_definitions)
+            {
                 return WorkflowResult::Error(err);
             }
             let entities_destination =
                 input.with_file_name(format!("{stem}_parameter-entities.json"));
             if let Err(err) = export_parameter_inventory(
-                &entities_destination, std::slice::from_ref(&parameter_resolution),
+                &entities_destination,
+                std::slice::from_ref(&parameter_resolution),
             ) {
                 return WorkflowResult::Error(err);
             }
@@ -3402,7 +3920,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         // Explicit, read-only deterministic replay. This deliberately stops
         // before fact auditing and publication; neither invokes the model nor
         // mutates the checkpoint or an existing output directory.
-        if std::env::var_os("AIFIX_IDENTITY_REPLAY").is_some() {
+        if aifix_identity_replay {
             // Shadow-only structural replay. All positions are in the original
             // masked source; this never changes candidates or identity decisions.
             let explicit_tables: Vec<_> = table_analysis
@@ -3497,7 +4015,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             // Opt-in LLM experiment: still read-only, never changes identity
             // decisions, checkpoint, or output files. Keep the model budget
             // bounded and show competing interpretations rather than a winner.
-            if std::env::var_os("AIFIX_STRUCTURE_LLM_REPLAY").is_some() {
+            if aifix_structure_llm_replay {
                 let html_tables =
                     structure_inference::html_table_spans(&masked_source, &table_analysis);
                 println!(
@@ -3883,10 +4401,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         // BEFORE reviewing facts. The model's proposed filenames are never
         // used as canonical identities. Existing non-message facts survive.
         // The version gate makes checkpoint resume idempotent.
-        // Migrate already projected v7 checkpoints without replaying the
-        // extraction or invalidating their completed fact review.
-        migrate_identity_projection_version(&mut checkpoint);
-        if checkpoint.identity_projection_version != 2 {
+        if checkpoint.identity_projection_version == 0 {
             let source_windows: Vec<&str> = parts.iter().map(|part| part.text.as_str()).collect();
             let (groups, mut unresolved) = message_identity::resolved_source_facts_in_document(
                 &checkpoint.candidates,
@@ -3969,7 +4484,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
             println!(
                 "## [CHUNKED] IDENTITY CONSOLIDATION: {accepted} source-backed candidate occurrences -> {consolidated} distinct typed message facts; {unresolved} unresolved candidate facts kept in checkpoint, not published"
             );
-            checkpoint.identity_projection_version = 2;
+            checkpoint.identity_projection_version = 3;
             checkpoint.fact_audit_version = 8;
             checkpoint.fact_audit_cursor = 0;
             if checkpoint.audit.is_some() {

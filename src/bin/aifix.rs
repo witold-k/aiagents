@@ -268,5 +268,7 @@ pub fn main() {
         args.debug,
     );
 
-    ailoop.run();
+    if !ailoop.run() {
+        std::process::exit(1);
+    }
 }

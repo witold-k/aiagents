@@ -224,7 +224,7 @@ before canonical message assignment**. This is not yet the behavior of
 #### Algorithm review and known limitations (24 October 2026)
 
 The current implementation is intentionally conservative; **do not use its
-output for code generation without manual verification**.
+output as verified without manual verification**.
 
 1. **Source provenance is now anchored to the original chunk.** New
    candidate facts persist a verified byte offset into their original source
@@ -422,23 +422,6 @@ converted into generated Rust metadata during the build.
 
 The following capabilities are planned before the first broader presentation
 of the project. They are **not yet claimed as implemented or validated**.
-
-### Code generation from Markdown specifications
-
-Use Markdown specifications produced by **Minuru** as input to `aifix` code
-generation workflows. Two initial application areas are planned:
-
-* **Message catalogs:** generate serialization and deserialization code from
-  documented message definitions, including sequences of messages or fields.
-  Validate lengths, field constraints, optional values, and error handling
-  against the specification.
-* **Embedded register access:** generate register and bit-field access code
-  from Markdown hardware documentation, including addresses, access modes,
-  masks, and other documented constraints.
-
-The intended pipeline is **source documents → Minuru → Markdown → aiagents →
-generated code → build and tests**. The Markdown extraction pipeline uses Minuru via `pdf_to_text_wrapper` and
-already exists separately; generation and end-to-end verification remain planned.
 
 ## Direction
 

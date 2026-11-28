@@ -48,6 +48,10 @@ Use `-m` for additional literal task instructions; place it before `-a/--args`, 
 
 ## Experimental protocol extraction
 
+G8 introduces a diagnostic `TableRoleHypothesis` contract in `llm_structure`: table roles and identifier columns are proposed independently of header spelling, with exact cell evidence validated against supplied rows. Set `AIFIX_LLM_TABLE_ROLES=1` to classify normalized lexer tables in a read-only shadow pass (two attempts, first 12 rows, 24000-byte prompt limit). The report is `<AIFIX_COVERAGE_AUDIT_JSON>.table-roles.json` (default `coverage-audit.json.table-roles.json`). Competing hypotheses are retained; legacy ownership remains active. Responses use the shared string utilities to remove code fences before strict JSON parsing. Rejections distinguish JSON/schema errors from invalid source evidence or roles. Calls are capped at 1024 output tokens; a required call failure preserves a partial report and aborts the workflow. The report includes the returned call error, cache_hits, llm_calls, failed_calls and explicit statuses for skipped tables. Column roles also include timestamp, duration, quantity and status. With `AIFIX_ASSERTION_CACHE_MODEL` set, validated attempts are cached individually in `<AIFIX_COVERAGE_AUDIT_JSON>.table-role-cache` using exact prompt and model keys and revalidated on read. No semantic verification is performed.
+
+Table-role hypotheses additionally distinguish entity kind, row structure and scope independently of the primary role. These optional fields preserve compatibility with older responses; their labels are validated, but their semantic correctness is not established. Table hypotheses now allow identifier columns for enumerations and properties, multiple non-exclusive functions, and optional per-column roles with exact sampled-cell evidence. The legacy primary role remains for compatibility. These are diagnostic hypotheses; row reconstruction, original-source mapping and semantic verification remain outstanding.
+
 `extract_message_tables` stages source-attributed facts from overlapping document windows. The current P4 implementation keeps unresolved facts and separates uppercase/lowercase protocol identities. It does **not** guarantee semantic correctness or completeness.
 
 To inspect a **completed** extraction checkpoint without another model call, checkpoint write or publication:
@@ -56,7 +60,9 @@ To inspect a **completed** extraction checkpoint without another model call, che
 AIFIX_IDENTITY_REPLAY=1 aifix -t extract_message_tables -a document.md
 ```
 
-The replay is diagnostic only. Its identity resolver still depends on local source-window signals; generic document-wide definition ownership remains work in progress. The [current status snapshot](docs/current_status.md) records the latest supplied checkpoint metrics with explicit denominators and limitations. The workflow also emits evidence-coverage, semantic-review, conservative codegen-readiness, and a **language-neutral diagnostic protocol model** (`coverage-audit.json.protocol-model.json`). That model retains lexical assemblies and voted table continuations separately from verified protocol definitions; it does not establish canonical message owners or a code-generation-ready schema. See [chunked extraction](docs/chunked_transform.md) and the [task guide](docs/tasks/extract_message_tables/README.md) for the boundaries of these reports. Historical measurements belong in [project status history](docs/project_status_history.md).
+The replay is diagnostic only. Its identity resolver still depends on local source-window signals; generic document-wide definition ownership remains work in progress. The [current status snapshot](docs/current_status.md) records the latest supplied checkpoint metrics with explicit denominators and limitations. The workflow also emits evidence-coverage, semantic-review, and a **language-neutral diagnostic protocol model** (`coverage-audit.json.protocol-model.json`). That model retains lexical assemblies and voted table continuations separately from verified protocol definitions; it does not establish canonical message owners. See [chunked extraction](docs/chunked_transform.md) and the [task guide](docs/tasks/extract_message_tables/README.md) for the boundaries of these reports. Historical measurements belong in [project status history](docs/project_status_history.md).
+
+The independent parameter inventory retains source-backed assertions even when message ownership is unresolved. Coverage audit schema 2 separates inventory counts from unresolved-message coverage. Enum definitions are retained structurally, but assertion linking remains incomplete. See the current status for measured limitations.
 
 ## Architecture
 
@@ -75,7 +81,6 @@ flowchart TD
     W --> E[Document extraction workflow]
     S[Independent Simplelexer library] --> E
     E --> M[Diagnostic protocol model]
-    M -. future gated input .-> G[Code generation]
 ```
 
 Rust owns orchestration, file-access policy, deterministic checks and report
@@ -108,8 +113,6 @@ flowchart TD
     R -. planned .-> V
     V --> J[Separate diagnostic verdict reports]
     J -. planned controlled promotion .-> M
-    M --> Q[Codegen readiness diagnostics]
-    Q -. future validated schema .-> G[Code generation]
 ```
 
 Completed extraction checkpoints can be replayed without repeating extraction.
@@ -184,7 +187,7 @@ response budget. They are separate opt-ins.
 | `AIFIX_ASSERTION_VERIFY` | Optional assertion correctness verification |
 | `AIFIX_SEMANTIC_VERIFY_LIMIT` | Per-verifier task limit, default 12, maximum 200 |
 
-Verification flags are presence-based: unset a flag to disable it.
+The extraction flags `AIFIX_IDENTITY_REPLAY`, `AIFIX_SEMANTIC_VERIFY`, `AIFIX_ASSERTION_VERIFY`, `AIFIX_RELATION_EXTRACT`, `AIFIX_LLM_TABLE_ROLES`, `AIFIX_LLM_STRUCTURE`, `AIFIX_EXPORT_PARAMETER_INVENTORY` and `AIFIX_STRUCTURE_LLM_REPLAY` accept unset, `0` or `false` to disable and `1` or `true` to enable. Other values are errors. Other environment switches have not yet been audited; unset them to disable.
 Assertion tasks require a nonempty exact quote at the recorded window-relative
 UTF-8 offset and a nonambiguous locator. The initial implementation checks the
 first eligible tasks in checkpoint order. Verdicts are supported, contradicted,
@@ -201,13 +204,11 @@ For an audit base of `coverage-audit.json`, suffixes include
 `.protocol-model.json`, `.enum-inventory.json`, `.logical-rows.json`,
 `.html-grids.json`, `.evidence-coverage.json`, `.missing-locators.json`,
 `.semantic-review.json`, `.semantic-verification.json` (optional),
-`.assertion-verification.json` (optional), and `.codegen-readiness.json`.
+and `.assertion-verification.json` (optional).
 These reports are diagnostic; they are not a validated protocol specification.
 
 Before promoting a semantic result, require explicit evidence, valid references,
-conflict handling and independent evaluation. Before automatic code generation,
-require a validated language-neutral schema and regression tests across multiple
-independent documents. Build/test success and stable replay counters alone
+conflict handling and independent evaluation. Require regression tests across multiple independent documents. Build/test success and stable replay counters alone
 cannot establish semantic correctness. Preserve extraction checkpoints when
 testing new diagnostic stages.
 
@@ -215,10 +216,7 @@ testing new diagnostic stages.
 
 R1–R7 structural consolidation and P4 source-entity projection are implemented.
 P5 projects structural relationships and unresolved reference candidates.
-P6 currently implements initial assertion tasks, response validation and
-opt-in execution; the new implementation still requires build and regression
-validation. P6 relationship tasks, richer context, caching and promotion remain
-open. P7 automatic protocol code generation is gated and not established.
+P6 includes assertion and relation hypotheses, source-context mapping, cached reviews, a document-scoped entity registry, reference candidates and conservative candidate equivalence groups. Semantic reference verification and controlled promotion remain open. See the dated [current status](docs/current_status.md) for merge gates.
 
 ## Structural analysis and semantic resolution
 
@@ -240,7 +238,7 @@ semantic correctness or complete output equivalence.
 
 ## Next extraction milestone
 
-Complete semantic verification and relationship resolution, and explain the missing exact statement locators without confusing normalized statements with source quotations. Complete deterministic scoped-context transitions and validate a source-grounded, language-independent schema against **multiple independent documents**. Code generation remains a separate, gated project. See [current status](docs/current_status.md) and [TODO](TODO.md).
+Complete semantic verification and relationship resolution, and explain the missing exact statement locators without confusing normalized statements with source quotations. Complete deterministic scoped-context transitions and validate a source-grounded, language-independent schema against **multiple independent documents**. See [current status](docs/current_status.md) and [TODO](TODO.md).
 
 ## Design and safety
 
@@ -313,7 +311,7 @@ baseline and optional voted-structure export. It borrows the existing parameter
 resolution, physical enum tables and logical enum groups. Original-source UTF-8
 byte coordinates remain distinct from normalized message evidence. Definitions
 and literal properties are not validated wire types; assertions remain unverified.
-No message ownership, canonical fact changes or code generation are implied.
+No message ownership or canonical fact changes are implied.
 The export is additive (schema version 1 retained). Logical groups reference
 physical tables by header offset. P4d.2 adds `source_entities.logical_rows` and `source_entities.html_grids`.
 Both reuse the existing original-source inventories, including unresolved rows
@@ -519,3 +517,42 @@ Duplicate IDs retain all entries and are listed in ambiguous_ids; consumers
 must not resolve ambiguous IDs automatically. Names are labels, not identity
 keys. No reference resolution, ownership inference, additional parsing or
 model calls are introduced. The outer protocol-model schema remains additive.
+
+
+## Domain independence
+
+The document is the source of semantic identities and schema hypotheses.
+Production extraction must not prefer vocabulary from a particular protocol.
+Identifiers are case-sensitive strings in the semantic entity model; filenames
+are presentation artifacts, not evidence of identity. Lexical declarations,
+references, examples and verified identities must remain distinct.
+
+Simplelexer is an independent structural parsing library. Protocol-specific
+schema discovery and semantic interpretation belong in aiagents.
+
+Regression fixtures should cover alphabetic, numeric, hexadecimal, multi-token
+and case-distinct identifiers, varied table schemas and example formats.
+A successful replay of a single protocol is not sufficient evidence of
+generality.
+
+Current limitation: legacy message projection and source ownership still
+contain single-letter identifier and fixed table-schema heuristics. These
+must be generalized before claiming protocol-independent extraction.
+
+### Document integrity diagnostics
+
+Before chunk extraction, the workflow reports advisory mixed or unmatched encoded angle delimiters in the original, masked and table-normalized document. With `AIFIX_COVERAGE_AUDIT_JSON` set, it writes `<audit-path>.document-integrity.json` with stage-local byte spans and line numbers. Findings may also represent legitimate literal text or delimiters split across physical lines; they do not prove conversion damage. No source text is repaired or modified by this audit.
+
+The integrity audit also reports adjacent physical row continuation candidates in `<audit-path>.delimiter-continuations.json`. It compares corresponding physical cell positions within a single normalized lexer table, preserves both cell texts and row offsets, and proposes a decoded delimiter fragment without changing source or assigning ownership. Entity decoding shares the quote-matching implementation and preserves character-to-byte spans.
+
+The continuation graph diagnostic (`<audit-path>.continuation-graph.json`) validates adjacent row and cell evidence against the existing source graph, preserving syntactic evidence separately from LLM votes. Competing non-continuation relations mark a candidate contested. It can run without LLM structure calls and does not promote reconstructed fragments to entities.
+
+### Workflow failures and checkpoint compatibility
+
+Explicit workflow errors and LLM request failures terminate the agent loop; failed workflows return exit status 1. Extraction boolean flags accept unset/0/false or 1/true; invalid values fail before extraction. Checkpoint schema 17 rejects earlier schemas without migration or modification. New explicit extraction and deferred message identities use `messages/id_<readable-name>_<utf8-hex>.md`, including single-character identifiers. The readable name is limited to 32 characters and sanitized; the hex suffix preserves exact case and bytes. Existing output directories are not overwritten automatically.
+
+### Foundation milestone: semantic reference resolution and generic document understanding
+
+The current feature branch is a stabilization candidate, not a verified extraction release. The registry, reference-gap diagnostics and candidate-equivalence reports retain ambiguity and provenance; no automatic semantic promotion is performed. Table-role consensus exposes `message_declaration_column_candidate` only when at least two valid attempts agree on independent message declarations and the identifier column. This remains diagnostic: neither header cells nor arbitrary rows become identities. Explicit extraction identifiers are validated directly against source declarations rather than inferred from filenames. Legacy Type/Description, section and example heuristics remain active in other paths. G8 is incomplete.
+
+See [merge readiness and measured status](docs/current_status.md), [architecture](docs/architecture_diagrams.md) and [TODO](TODO.md). A fresh schema-17 extraction and controlled baseline comparison are required before claiming regression-free behavior. Do not migrate checkpoints.

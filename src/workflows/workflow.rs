@@ -24,6 +24,11 @@ impl WorkflowResult {
         }
     }
 
+    /// Explicit workflow errors and request failures cannot be repaired by repeating the workflow.
+    pub fn is_terminal_failure(&self) -> bool {
+        matches!(self, Self::Error(_)) || self.request_failure()
+    }
+
     pub fn request_failure(&self) -> bool {
         match self {
             Self::LlmCallResult(result) => result.is_request_error(),
