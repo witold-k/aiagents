@@ -1386,6 +1386,8 @@ pub(super) struct EnumMember {
     pub duplicate_value: bool,
     pub conflicting_description: bool,
     pub assertion_contexts: Vec<EnumAssertionContext>,
+    pub overlapping_mapped_assertions: usize,
+    pub contained_mapped_assertions: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -1430,6 +1432,8 @@ fn enum_inventory(analysis: &simplelexer::tablelexer::DocumentAnalysis) -> Vec<E
                 duplicate_value: false,
                 conflicting_description: false,
                 assertion_contexts: Vec::new(),
+                overlapping_mapped_assertions: 0,
+                contained_mapped_assertions: 0,
             });
         }
         let mut values = std::collections::BTreeMap::<String, (usize, String, bool)>::new();
@@ -1896,6 +1900,18 @@ pub(super) fn original_table_role_stats(
                 }
                 "key_value" => stats.key_value_row += 1,
                 _ => stats.other_table_row += 1,
+            }
+        }
+    }
+    // Diagnose missing links independently of table-role classification.
+    // A mapped span is positional evidence only, not semantic support.
+    for member in stats.enum_inventory.iter_mut().flat_map(|table| &mut table.members) {
+        for &(begin, end, _) in stats.assertion_spans.values() {
+            if begin < member.row_end && end > member.row_start {
+                member.overlapping_mapped_assertions += 1;
+                if begin >= member.row_start && end <= member.row_end {
+                    member.contained_mapped_assertions += 1;
+                }
             }
         }
     }
