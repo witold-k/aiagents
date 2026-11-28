@@ -601,9 +601,11 @@ fn classified_enum_rows_use_roles_not_headers_and_preserve_unsampled_rows() {
     };
     let rows = vec![
         row(10, &["Meaning", "Token"]),
+        row(15, &[":---", "---:"]),
         row(20, &["Available", "A"]),
         row(30, &["Unavailable", "a"]),
         row(40, &["", "B"]),
+        row(50, &["---", "---"]),
     ];
     let response = serde_json::json!({
         "table_start": 10, "role": "enumeration",
@@ -616,14 +618,15 @@ fn classified_enum_rows_use_roles_not_headers_and_preserve_unsampled_rows() {
         ]
     });
     let responses = vec![response.to_string(), response.to_string()];
-    let result = classified_enum_rows(10, &rows[..2], &rows, &responses).unwrap();
-    assert_eq!(result["members"].as_array().unwrap().len(), 2);
+    let result = classified_enum_rows(10, &rows[..3], &rows, &responses).unwrap();
+    assert_eq!(result["members"].as_array().unwrap().len(), 3);
     assert_eq!(result["members"][1]["value"], "a");
     assert_eq!(result["members"][1]["description"], "Unavailable");
+    assert_eq!(result["members"][2]["value"], "---");
     assert_eq!(result["unresolved_rows"], serde_json::json!([40]));
-    assert!(classified_enum_rows(10, &rows[..2], &rows, &responses[..1]).is_none());
+    assert!(classified_enum_rows(10, &rows[..3], &rows, &responses[..1]).is_none());
     let mut conflicting = response.clone();
     conflicting["role"] = serde_json::json!("properties");
-    assert!(classified_enum_rows(10, &rows[..2], &rows,
+    assert!(classified_enum_rows(10, &rows[..3], &rows,
         &[response.to_string(), conflicting.to_string()]).is_none());
 }
