@@ -3594,6 +3594,16 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                 report["message_declaration_column_candidate"] = serde_json::json!(
                     llm_structure::agreed_message_declaration_column(table.span.start, &rows, &responses)
                 );
+                let all_rows: Vec<_> = table.rows.iter().map(|row| llm_structure::RowEvidence {
+                    line: crate::utils::stringutils::line_index_at_byte_offset(&masked_source, row.span.start).unwrap_or(0) + 1,
+                    start: row.span.start,
+                    previous: None,
+                    next: None,
+                    cells: row.cells.iter().map(|cell| cell.text.to_string()).collect(),
+                }).collect();
+                report["classified_enum_rows"] = llm_structure::classified_enum_rows(
+                    table.span.start, &rows, &all_rows, &responses,
+                ).unwrap_or(serde_json::Value::Null);
                 report["call_failed"] = serde_json::json!(call_failed);
                 report["call_error"] = serde_json::json!(call_error);
                 report["status"] = serde_json::json!(if call_failed { "call_failed" } else { "completed" });
