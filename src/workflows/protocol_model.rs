@@ -40,9 +40,42 @@ struct SourceEntities<'a> {
     logical_enum_groups: &'a [super::message_identity::LogicalEnumGroup],
     logical_rows: &'a [super::message_identity::LogicalRowCandidate],
     html_grids: &'a [serde_json::Value],
+    literal_enum_mappings: Vec<LiteralEnumMapping<'a>>,
     relationships: Vec<SourceRelationship>,
     relationship_review: RelationshipReview,
     entity_registry: EntityRegistry,
+}
+
+/// Literal table observations, independent of extracted assertions and ownership.
+#[derive(Serialize)]
+struct LiteralEnumMapping<'a> {
+    member_id: String,
+    table_header_offset: usize,
+    row_start: usize,
+    row_end: usize,
+    value: &'a str,
+    description: &'a str,
+    duplicate_value: bool,
+    conflicting_description: bool,
+    status: &'static str,
+}
+
+fn literal_enum_mappings(
+    tables: &[super::message_identity::EnumTable],
+) -> Vec<LiteralEnumMapping<'_>> {
+    tables.iter().flat_map(|table| {
+        table.members.iter().map(move |member| LiteralEnumMapping {
+            member_id: format!("enum_member:{}:{}", table.header_offset, member.row_start),
+            table_header_offset: table.header_offset,
+            row_start: member.row_start,
+            row_end: member.row_end,
+            value: &member.value,
+            description: &member.description,
+            duplicate_value: member.duplicate_value,
+            conflicting_description: member.conflicting_description,
+            status: "literal_source_mapping",
+        })
+    }).collect()
 }
 
 #[derive(Serialize)]
@@ -408,6 +441,7 @@ impl ProtocolModel {
                 logical_enum_groups,
                 logical_rows,
                 html_grids,
+                literal_enum_mappings: literal_enum_mappings(enum_tables),
                 relationships: enum_relationships(enum_tables, logical_enum_groups),
                 relationship_review: review_relationships(
                     self,
