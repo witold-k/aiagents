@@ -3611,7 +3611,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
                             let mut rows = table.rows.iter().filter(|row| row.span.start == start);
                             let row = rows.next()?;
                             if rows.next().is_some() { return None; }
-                            let quote = masked_source.get(row.span.clone())?;
+                            let quote = masked_source.get(row.span.start..row.span.end)?;
                             let (begin, end, _) = message_identity::original_source_span(
                                 &source_analysis, &normalized_tables, &pre_normalized, start, quote,
                             ).ok()?;
