@@ -1883,7 +1883,7 @@ pub(super) fn original_table_role_stats(
     pre_normalized: &str,
 ) -> OriginalTableRoleStats {
     original_table_role_stats_with_inventory(
-        candidates, sources, starts, document, normalized, analysis, pre_normalized,
+        candidates, sources, starts, document, normalized, (analysis, pre_normalized),
         enum_inventory(analysis),
     )
 }
@@ -1894,10 +1894,10 @@ pub(super) fn original_table_role_stats_with_inventory(
     starts: &[usize],
     document: &str,
     normalized: &simplelexer::tablelexer::NormalizedTableText,
-    analysis: &simplelexer::tablelexer::DocumentAnalysis,
-    pre_normalized: &str,
+    original: (&simplelexer::tablelexer::DocumentAnalysis, &str),
     enum_inventory: Vec<EnumTable>,
 ) -> OriginalTableRoleStats {
+    let (analysis, pre_normalized) = original;
     let mut stats = OriginalTableRoleStats {
         enum_inventory,
         ..Default::default()

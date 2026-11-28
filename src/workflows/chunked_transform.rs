@@ -2799,7 +2799,7 @@ impl Workflow for ChunkedTransformWorkflow<'_> {
         let table_roles = if let Some(inventory) = classified_inventory {
             message_identity::original_table_role_stats_with_inventory(
                 &checkpoint.candidates, &source_windows, &source_starts,
-                &masked_source, &normalized_tables, &source_analysis, &pre_normalized,
+                &masked_source, &normalized_tables, (&source_analysis, &pre_normalized),
                 inventory,
             )
         } else {
